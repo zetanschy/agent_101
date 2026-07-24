@@ -5,8 +5,11 @@
 #   bash scripts/setup-cloud.sh
 set -euo pipefail
 
-echo "== fetch the lerobot fork (le101) =="
-[ -d thirdparty/le101 ] || git clone --depth 1 https://github.com/zetanschy/le101 thirdparty/le101
+echo "== fetch the lerobot fork (le101 submodule) =="
+# If cloned with --recursive it's already here; otherwise init the submodule,
+# falling back to a direct clone if this isn't a git checkout.
+git submodule update --init --recursive thirdparty/le101 2>/dev/null \
+  || { [ -e thirdparty/le101/pyproject.toml ] || git clone --depth 1 https://github.com/zetanschy/le101 thirdparty/le101; }
 
 echo "== install: cu128 torch, then editable fork (training + pi + LoRA) =="
 python -m pip install -q --upgrade pip
