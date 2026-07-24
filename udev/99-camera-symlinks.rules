@@ -1,0 +1,6 @@
+# Stable device names for the SO-ARM101 cameras, keyed by USB serial so the
+# path never changes even when /dev/videoN renumbers across reboots/replugs.
+# Only the capture node (index 0) gets the symlink, not the metadata node.
+
+# Front camera — Logitech C270 HD (046d:0825, serial 01010650) -> /dev/cam-front
+ACTION=="add", SUBSYSTEM=="video4linux", ATTR{index}=="0", ATTRS{idVendor}=="046d", ATTRS{idProduct}=="0825", ATTRS{serial}=="01010650", SYMLINK+="cam-front"

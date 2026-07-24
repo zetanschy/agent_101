@@ -1,0 +1,9 @@
+# Disable USB autosuspend for the SO-ARM101 cameras.
+# These UVC cams draw the full 500mA USB-2 budget; idle autosuspend + a weak
+# motherboard port can brown them out and cause disconnect/re-enumerate mid-run.
+# Keeping the port powered ("on") avoids suspend/resume-induced drops.
+# NOTE: this is a mitigation — a powered USB hub is the real fix for brownouts.
+# grip — USB 2.0 Camera (0bdc:2125), replaced the old 1e45:0209
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bdc", ATTR{idProduct}=="2125", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="0825", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="046d", ATTR{idProduct}=="094c", TEST=="power/control", ATTR{power/control}="on"

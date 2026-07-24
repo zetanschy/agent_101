@@ -1,0 +1,6 @@
+# Pin v4l2 controls for the grip camera "USB 2.0 Camera"
+#   idVendor=0bdc  idProduct=2125  serial=SN0001
+# Matches by stable USB serial, so it works no matter which /dev/videoN the
+# camera enumerates as. Only the capture node (index 0), not the metadata node.
+# Runs the apply-script via systemd-run so the retry loop survives the udev event.
+ACTION=="add", SUBSYSTEM=="video4linux", ATTR{index}=="0", ATTRS{idVendor}=="0bdc", ATTRS{idProduct}=="2125", ATTRS{serial}=="SN0001", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/usbcam-controls.sh $devnode"

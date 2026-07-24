@@ -1,0 +1,22 @@
+# Local data / model outputs
+outputs/
+data/
+*.mp4
+wandb/
+
+# HF / caches
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor
+.vscode/
+.idea/
+
+# Keep .env tracked (no secrets in it) but ignore local overrides.
+.env.local
+
+# Saved rerun recordings (large)
+rrd/

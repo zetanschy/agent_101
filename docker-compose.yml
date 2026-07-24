@@ -1,0 +1,51 @@
+services:
+  lerobot:
+    build: .
+    image: agent101/lerobot
+    env_file: .env
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      # Persist HF datasets/models + auth token across container runs.
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      # Version-controlled arm calibration (overrides the HF cache path above).
+      - ./calibration:/root/.cache/huggingface/lerobot/calibration
+      # X11 socket for rerun (--display_data=true).
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    environment:
+      - DISPLAY=${DISPLAY}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      # rerun viewer renders via Mesa software Vulkan (lavapipe) — reliable over
+      # X11 without NVIDIA Vulkan passthrough. GPU stays free for training (CUDA).
+      # To use a GPU-accelerated viewer instead, comment the next line out once
+      # the NVIDIA Vulkan ICD is available in the container.
+      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      - XDG_RUNTIME_DIR=/tmp/runtime-root
+    # Serial buses (leader + follower) and cameras.
+    # Cameras are pinned by USB serial (the stable /dev/v4l/by-id/* path) to a
+    # FIXED node inside the container, so host /dev/videoN renumbering never
+    # points a camera at the wrong device. The container node numbers match the
+    # CAM_*_INDEX values in .env.
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+      - /dev/ttyACM1:/dev/ttyACM1
+      # front — Logitech C270 (serial 01010650)      -> CAM_FRONT_INDEX=4
+      - /dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_01010650-video-index0:/dev/video4
+      # grip  — USB 2.0 Camera (0bdc:2125, serial SN0001) -> CAM_GRIP_INDEX=6
+      - /dev/v4l/by-id/usb-USB_2.0_Camera_USB_2.0_Camera_SN0001-video-index0:/dev/video6
+      # side  — Logitech Brio 100 — DISCONNECTED (2-cam setup: front + grip only).
+      # Re-add this line if you plug the Brio back in for --cams 3:
+      # - /dev/v4l/by-id/usb-046d_Brio_100_2520APYCH8Q8-video-index0:/dev/video1
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # PyTorch DataLoader workers pass tensors via /dev/shm; Docker's 64MB default
+    # overflows ("No space left on device" on /torch_*). Bump it for viz/training.
+    shm_size: "8gb"
+    stdin_open: true
+    tty: true
