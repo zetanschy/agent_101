@@ -21,9 +21,12 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all
       # rerun viewer renders via Mesa software Vulkan (lavapipe) — reliable over
       # X11 without NVIDIA Vulkan passthrough. GPU stays free for training (CUDA).
-      # To use a GPU-accelerated viewer instead, comment the next line out once
-      # the NVIDIA Vulkan ICD is available in the container.
-      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+      # To use a GPU-accelerated viewer instead, comment the next two lines out
+      # once the NVIDIA Vulkan ICD is available in the container.
+      # (Debian base names the lavapipe ICD lvp_icd.json — NOT lvp_icd.x86_64.json;
+      #  WGPU_BACKEND=vulkan forces lavapipe over GL/llvmpipe, which lacks R32Float.)
+      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+      - WGPU_BACKEND=vulkan
       - XDG_RUNTIME_DIR=/tmp/runtime-root
     # Serial buses (leader + follower) and cameras.
     # Cameras are pinned by USB serial (the stable /dev/v4l/by-id/* path) to a

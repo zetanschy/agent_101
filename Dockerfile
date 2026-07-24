@@ -12,7 +12,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     MUJOCO_GL=egl \
     XDG_RUNTIME_DIR=/tmp/runtime-root \
-    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+    VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
+    WGPU_BACKEND=vulkan
 
 # System deps: build tools, ffmpeg/av, feetech serial, audio/geos (lerobot deps),
 # v4l-utils for cameras, plus Mesa software Vulkan + X libs for the rerun viewer.
