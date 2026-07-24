@@ -6,6 +6,9 @@ services:
     working_dir: /workspace
     volumes:
       - ./:/workspace
+      # Live-editable lerobot fork: patch thirdparty/le101 on the host and it
+      # takes effect immediately (editable install points at /opt/le101).
+      - ./thirdparty/le101:/opt/le101
       # Persist HF datasets/models + auth token across container runs.
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       # Version-controlled arm calibration (overrides the HF cache path above).

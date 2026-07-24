@@ -1,0 +1,29 @@
+# Training-only compose: GPU + dataset, NO robot devices / cameras / X11.
+# Use on a cloud GPU box (or any machine) to fine-tune from a pushed dataset.
+#   docker compose -f docker-compose.train.yml run --rm train bash scripts/train.sh --dataset <id> --name <run>
+services:
+  train:
+    build: .
+    image: agent101/lerobot
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      # Live-editable lerobot fork (patch thirdparty/le101 on the host).
+      - ./thirdparty/le101:/opt/le101
+      # HF cache: dataset + base model download here, and it persists.
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - HF_TOKEN=${HF_TOKEN:-}     # for private datasets + pushing checkpoints
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+    shm_size: "16gb"              # DataLoaders need it; more than the robot compose
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    stdin_open: true
+    tty: true
