@@ -21,6 +21,7 @@ case "$cmd" in
   shell|bash) grant_display; $RUN bash "$@" ;;
   teleop)    grant_display; $RUN ./scripts/teleop.sh "$@" ;;
   record)    grant_display; $RUN ./scripts/record.sh "$@" ;;
+  infer)     grant_display; $RUN ./scripts/infer.sh "$@" ;;   # run a trained policy (sync/rtc/async)
   data)      grant_display; $RUN ./scripts/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
   calibrate) $RUN ./scripts/calibrate.sh "$@" ;;
   login)     $RUN hf auth login "$@" ;;      # cache HF token in the volume
@@ -33,6 +34,7 @@ robot — lerobot in docker for the SO-ARM101
   ./robot calibrate follower    calibrate an arm (follower|leader)
   ./robot teleop [--cams 3]     teleoperate (2 cams default)
   ./robot record --name N --task "..." [--episodes 50] [--cams 3] [--push]
+  ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
   ./robot data list                    list recorded datasets
   ./robot data viz --name N [--episode 0]      visualize an episode (scrubbable)
   ./robot data upload --name N                 push a dataset to Hugging Face
