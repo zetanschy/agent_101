@@ -27,7 +27,16 @@ case "$cmd" in
              $DC run --rm -p "${port}:8000" lerobot python webui/app.py ;;
   data)      grant_display; $RUN ./scripts/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
   calibrate) $RUN ./scripts/calibrate.sh "$@" ;;
-  login)     $RUN hf auth login "$@" ;;      # cache HF token in the volume
+  login)     bash ./scripts/login.sh "$@" ;;  # HF + wandb tokens -> .env.local (host-side)
+  train)     # LoRA fine-tune on the GPU compose (no robot devices / cameras / X11).
+             # Secrets come from .env.local via env_file; an exported value wins
+             # because `run -e` overrides env_file.
+             envargs=()
+             for v in HF_TOKEN WANDB_API_KEY; do
+               if [ -n "${!v:-}" ]; then envargs+=(-e "$v=${!v}"); fi
+             done
+             $DC -f docker-compose.train.yml run --rm "${envargs[@]}" \
+               train bash scripts/train.sh "$@" ;;
   run)       grant_display; $RUN "$@" ;;      # raw: ./robot run lerobot-train ...
   help|-h|--help|"")
     cat <<'EOF'
@@ -37,6 +46,8 @@ robot — lerobot in docker for the SO-ARM101
   ./robot calibrate follower    calibrate an arm (follower|leader)
   ./robot teleop [--cams 3]     teleoperate (2 cams default)
   ./robot record --name N --task "..." [--episodes 50] [--cams 3] [--push]
+  ./robot train --dataset U/D --name RUN [--steps 20000] [--batch 16] [--push]
+                                LoRA fine-tune on the GPU (wandb on if logged in)
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
   ./robot webui                        browser control panel: home/infer/record/params
   ./robot home                         move follower to calibrated-zero pose
@@ -44,8 +55,10 @@ robot — lerobot in docker for the SO-ARM101
   ./robot data viz --name N [--episode 0]      visualize an episode (scrubbable)
   ./robot data upload --name N                 push a dataset to Hugging Face
   ./robot data delete --name N --episodes 3,5  remove episodes (add --new-name to keep source)
+  ./robot data repair --name N [--apply]       fix "Episode length mismatch" before delete
+  ./robot data merge  --name OUT --from A,B,C  concatenate datasets into one
   ./robot doctor                pre-flight: check cameras stream + USB health
-  ./robot login                 log in to Hugging Face (once)
+  ./robot login                 store HF + wandb tokens once (./robot login --status)
   ./robot stop                  force-stop a wedged run (if ctrl-c won't quit)
   ./robot shell                 drop into a container shell
   ./robot run <lerobot-cmd ...> run any lerobot command raw

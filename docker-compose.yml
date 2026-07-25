@@ -2,7 +2,12 @@ services:
   lerobot:
     build: .
     image: agent101/lerobot
-    env_file: .env
+    env_file:
+      - .env
+      # Tokens from `./robot login` (HF_TOKEN, WANDB_API_KEY). Optional, gitignored,
+      # and last so it overrides .env. Lets `--push` work without an interactive login.
+      - path: .env.local
+        required: false
     working_dir: /workspace
     volumes:
       - ./:/workspace

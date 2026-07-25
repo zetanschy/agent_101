@@ -1,11 +1,21 @@
 # Training-only compose: GPU + dataset, NO robot devices / cameras / X11.
 # Use on a cloud GPU box (or any machine) to fine-tune from a pushed dataset.
-#   docker compose -f docker-compose.train.yml run --rm train bash scripts/train.sh --dataset <id> --name <run>
+#   ./robot train --dataset <id> --name <run>          <- normal way (forwards secrets)
+#   docker compose -f docker-compose.train.yml run --rm train bash scripts/train.sh ...
 services:
   train:
     build: .
     image: agent101/lerobot
     working_dir: /workspace
+    env_file:
+      - .env                       # shared config (WANDB_PROJECT, dataset defaults)
+      # HF_TOKEN (private datasets + checkpoint push) and WANDB_API_KEY, written by
+      # `./robot login`. Optional + gitignored; keep secrets OUT of tracked .env.
+      # NOTE: deliberately not repeated under `environment:` — an entry there that
+      # interpolates to empty would override these with "". `./robot train` forwards
+      # an exported value with `run -e`, which does take precedence.
+      - path: .env.local
+        required: false
     volumes:
       - ./:/workspace
       # Live-editable lerobot fork (patch thirdparty/le101 on the host).
@@ -15,8 +25,6 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - HF_TOKEN=${HF_TOKEN:-}     # for private datasets + pushing checkpoints
-      - WANDB_API_KEY=${WANDB_API_KEY:-}
     shm_size: "16gb"              # DataLoaders need it; more than the robot compose
     deploy:
       resources:

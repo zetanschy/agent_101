@@ -22,8 +22,12 @@ python -c "import torch; ok=torch.cuda.is_available(); print('CUDA:', ok, '| GPU
 cat <<'EOF'
 
 == next steps ==
-1) hf auth login                 # token with WRITE access (pull dataset, push checkpoints)
+1) bash scripts/login.sh         # HF (WRITE) + wandb keys in one go -> .env.local
+                                 # or copy .env.local over from your workstation:
+                                 #   scp .env.local user@box:agent_101/
+                                 # train.sh turns wandb on by itself once a key exists.
 2) bash scripts/train.sh --dataset <you>/<dataset> --name pi05_run --push
    (LoRA + bf16 + grad-checkpointing -> fits ~24GB. Drop --push to keep it local.)
 3) checkpoints land in outputs/train/pi05_run/ — pushed to the Hub if you passed --push.
+   Loss curves show up in wandb automatically (project agent_101).
 EOF
