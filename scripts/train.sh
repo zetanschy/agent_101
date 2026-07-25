@@ -31,14 +31,16 @@
 # --rename-map '<json>' (e.g. add side->right_wrist_0_rgb for 3-cam), or --no-rename.
 set -euo pipefail
 
-# WANDB_* config comes from .env (project/entity) and .env.local (the secret key),
-# so it works both in the container and on a bare cloud box. Already-exported vars
-# win; commented-out lines are skipped by the WANDB_* filter.
+# Credentials/config from .env (project/entity) and .env.local (the secrets), so
+# this works both in the container and on a bare cloud box. HF_TOKEN is included
+# because outside docker nothing else loads it — compose's env_file does that job
+# in the container, and without it --push fails whoami even after ./robot login.
+# Already-exported vars win; commented-out lines are skipped by the prefix filter.
 root="$(cd "$(dirname "$0")/.." && pwd)"
 for f in "$root/.env" "$root/.env.local"; do
   [ -f "$f" ] || continue
   while IFS='=' read -r k v; do
-    case "$k" in WANDB_*) ;; *) continue ;; esac
+    case "$k" in WANDB_*|HF_TOKEN) ;; *) continue ;; esac
     if [ -z "${!k:-}" ] && [ -n "$v" ]; then export "$k=$v"; fi
   done < "$f"
 done
