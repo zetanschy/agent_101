@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal web UI to operate the SO-ARM101 policy: move home, run inference
-(sync/rtc/async), optionally record the rollout, pick a model, tune params.
+"""Web UI backend for the SO-ARM101 policy.
 
-Runs INSIDE the robot container (has serial + camera + GPU access). One robot
-operation at a time; work is launched as a subprocess so it cleanly releases the
-robot between runs. Reuses scripts/infer.sh for inference and webui/home.py for home.
+Inference uses a PERSISTENT worker (webui/infer_worker.py): you 'Load' a model
+once (slow pi05 load happens here) and then Start/Stop the rollout loop as many
+times as you like without reloading. 'Home' runs webui/home.py (mutually
+exclusive with a loaded model, since both drive the robot).
 """
 import glob
 import os
@@ -14,22 +14,6 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-
-_FPS = float(os.environ.get("CAM_FPS", "30") or 30)
-# sync mode logs "running slower (X Hz)"; RTC logs "real_delay=N" (control steps).
-_LAT_RE = re.compile(r"running slower \(([0-9.]+) Hz\)|real_delay=([0-9]+)")
-
-
-def latency_ms(log: str):
-    """Most recent inference latency estimate (ms) parsed from the rollout log."""
-    best = None
-    for m in _LAT_RE.finditer(log):
-        if m.group(1):
-            hz = float(m.group(1))
-            best = 1000.0 / hz if hz > 0 else best
-        elif m.group(2):
-            best = int(m.group(2)) * (1000.0 / _FPS)
-    return round(best) if best else None
 
 import uvicorn
 from fastapi import Body, FastAPI
@@ -41,54 +25,140 @@ LOGDIR = ROOT / "outputs"
 LOGDIR.mkdir(parents=True, exist_ok=True)
 LOGFILE = LOGDIR / "webui_run.log"
 DEFAULT_POLICY = "zetanschy/pi05_lora_cap_tu_cup"
+RENAME = ('{"observation.images.front": "observation.images.base_0_rgb", '
+          '"observation.images.grip": "observation.images.left_wrist_0_rgb"}')
+
+_FPS = float(os.environ.get("CAM_FPS", "30") or 30)
+_LAT_RE = re.compile(r"running slower \(([0-9.]+) Hz\)|real_delay=([0-9]+)")
 
 app = FastAPI()
 _lock = threading.Lock()
-_proc: subprocess.Popen | None = None
-_op: str | None = None
-_meta: dict = {}
+_worker: subprocess.Popen | None = None   # persistent inference worker
+_loaded: dict | None = None               # signature of what's loaded
+_home: subprocess.Popen | None = None      # one-shot home process
 
 
-def _running() -> bool:
-    return _proc is not None and _proc.poll() is None
+# ---------- helpers ----------
+def latency_stats(log: str):
+    """Latency samples (ms) for the CURRENT run (since the last RUN_START):
+    last / mean / p50 / p95 / min / max / n."""
+    start = log.rfind("RUN_START")
+    seg = log[start:] if start >= 0 else log
+    s = []
+    for m in _LAT_RE.finditer(seg):
+        if m.group(1):
+            hz = float(m.group(1))
+            if hz > 0:
+                s.append(1000.0 / hz)
+        elif m.group(2):
+            s.append(int(m.group(2)) * (1000.0 / _FPS))
+    if not s:
+        return None
+    ss = sorted(s)
+
+    def pct(p):
+        return ss[min(len(ss) - 1, int(p / 100.0 * len(ss)))]
+
+    return {"last": round(s[-1]), "mean": round(sum(ss) / len(ss)),
+            "p50": round(pct(50)), "p95": round(pct(95)),
+            "min": round(ss[0]), "max": round(ss[-1]), "n": len(ss)}
 
 
-def _start(op: str, cmd: list[str], meta: dict):
-    global _proc, _op, _meta
-    with _lock:
-        if _running():
-            return False, f"busy: '{_op}' is running — stop it first"
-        LOGFILE.write_text("")
-        fh = open(LOGFILE, "ab", buffering=0)
-        _proc = subprocess.Popen(
-            cmd, cwd=str(ROOT), stdout=fh, stderr=subprocess.STDOUT,
-            start_new_session=True, env=os.environ.copy(),
-        )
-        _op, _meta = op, meta
-        return True, "started"
+def cameras_json(n: int = 2) -> str:
+    w = os.environ.get("CAM_WIDTH", "640"); h = os.environ.get("CAM_HEIGHT", "480")
+    fps = os.environ.get("CAM_FPS", "30"); fourcc = os.environ.get("CAM_FOURCC", "MJPG")
+
+    def frag(name, idx):
+        return (f'{name}: {{type: opencv, index_or_path: {idx}, '
+                f'width: {w}, height: {h}, fps: {fps}, fourcc: "{fourcc}"}}')
+
+    parts = [frag("front", os.environ.get("CAM_FRONT_INDEX", "4")),
+             frag("grip", os.environ.get("CAM_GRIP_INDEX", "6"))]
+    if n >= 3:
+        parts.append(frag("side", os.environ.get("CAM_SIDE_INDEX", "1")))
+    return "{ " + ",".join(parts) + "}"
 
 
-def _stop() -> str | None:
-    global _op
-    with _lock:
-        op = _op
-        if _running():
-            try:
-                pgid = os.getpgid(_proc.pid)
-                os.killpg(pgid, signal.SIGINT)
-                for _ in range(20):
-                    if _proc.poll() is not None:
-                        break
-                    time.sleep(0.1)
-                if _proc.poll() is None:
-                    os.killpg(pgid, signal.SIGKILL)
-            except Exception:
-                pass
-        _op = None
-        return op
+def rollout_args(p: dict):
+    policy = p.get("policy") or DEFAULT_POLICY
+    mode = p.get("mode", "rtc")
+    if mode not in ("sync", "rtc"):   # async isn't supported by the worker (rename)
+        mode = "rtc"
+    args = [
+        f"--policy.path={policy}",
+        f"--robot.type={os.environ.get('ROBOT_TYPE', 'so101_follower')}",
+        f"--robot.port={os.environ.get('ROBOT_PORT', '/dev/ttyACM1')}",
+        f"--robot.id={os.environ.get('ROBOT_ID', 'zetans_follower')}",
+        f"--robot.cameras={cameras_json(int(p.get('cams', 2)))}",
+        f"--task={p['task']}",
+        f"--inference.type={mode}",
+        "--policy.device=cuda", "--policy.dtype=bfloat16",
+        "--display_data=false", "--duration=0",
+        f"--rename_map={RENAME}",
+    ]
+    if str(p.get("steps", "") or "").strip():
+        args.append(f"--policy.num_inference_steps={p['steps']}")
+    if mode == "rtc" and str(p.get("horizon", "") or "").strip():
+        args.append(f"--inference.rtc.execution_horizon={p['horizon']}")
+    rec = str(p.get("record", "") or "").strip()
+    if rec:
+        args += [f"--dataset.repo_id=eval_{rec}", f"--dataset.single_task={p['task']}"]
+    sig = {"policy": policy, "mode": mode, "task": p["task"],
+           "steps": str(p.get("steps", "")), "horizon": str(p.get("horizon", "")),
+           "cams": int(p.get("cams", 2)), "record": rec}
+    return args, sig
 
 
-def list_models() -> list[str]:
+def _alive(proc):
+    return proc is not None and proc.poll() is None
+
+
+def _send(cmd: str):
+    if _alive(_worker):
+        try:
+            _worker.stdin.write((cmd + "\n").encode())
+            _worker.stdin.flush()
+        except Exception:
+            pass
+
+
+def _log_text():
+    return LOGFILE.read_text(errors="replace") if LOGFILE.exists() else ""
+
+
+def _is_running(log: str) -> bool:
+    return log.rfind("RUN_START") > log.rfind("RUN_STOP")
+
+
+def _wait_marker(marker: str, timeout: float) -> bool:
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if marker in _log_text():
+            return True
+        if not _alive(_worker):
+            return marker in _log_text()
+        time.sleep(0.5)
+    return False
+
+
+def _wait_new_marker(marker: str, since_len: int, timeout: float) -> bool:
+    """Wait for `marker` to appear in the log AFTER position since_len (avoids
+    matching a stale marker from an earlier command)."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if marker in _log_text()[since_len:]:
+            return True
+        if not _alive(_worker):
+            return marker in _log_text()[since_len:]
+        time.sleep(0.3)
+    return False
+
+
+def _err(msg, code=409):
+    return JSONResponse({"ok": False, "msg": msg}, status_code=code)
+
+
+def list_models():
     models = [DEFAULT_POLICY]
     for p in glob.glob(str(ROOT / "outputs/train/*/")):
         pp = Path(p)
@@ -96,13 +166,14 @@ def list_models() -> list[str]:
             models.append(str(pp))
     for p in sorted(glob.glob(str(ROOT / "outputs/train/*/checkpoints/*/"))):
         models.append(str(Path(p)))
-    out: list[str] = []
+    out = []
     for m in models:
         if m not in out:
             out.append(m)
     return out
 
 
+# ---------- endpoints ----------
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (WEBUI / "index.html").read_text()
@@ -115,44 +186,119 @@ def models():
 
 @app.get("/api/status")
 def status():
-    full = LOGFILE.read_text(errors="replace") if LOGFILE.exists() else ""
-    return {"running": _running(), "op": _op if _running() else None,
-            "meta": _meta if _running() else {}, "log": full[-8000:],
-            "latency_ms": latency_ms(full)}
+    log = _log_text()
+    return {
+        "loaded": _alive(_worker),
+        "loaded_sig": _loaded,
+        "running": _alive(_worker) and _is_running(log),
+        "homing": _alive(_home),
+        "latency": latency_stats(log),
+        "log": log[-8000:],
+    }
 
 
-@app.post("/api/home")
-def home():
-    ok, msg = _start("home", ["python", str(WEBUI / "home.py")], {})
-    return JSONResponse({"ok": ok, "msg": msg}, status_code=200 if ok else 409)
+@app.post("/api/load")
+def load(body: dict = Body(...)):
+    if not (body.get("task") or "").strip():
+        return _err("task is required", 400)
+    if _alive(_home):
+        return _err("busy: homing — wait for it to finish", 409)
+    args, sig = rollout_args(body)
+    global _worker, _loaded
+    with _lock:
+        if _alive(_worker) and _loaded == sig:
+            return {"ok": True, "msg": "already loaded", "loaded": sig}
+        if _alive(_worker):          # different config -> unload old first
+            _send("quit")
+            try:
+                _worker.wait(timeout=15)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(_worker.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+        LOGFILE.write_text("")
+        fh = open(LOGFILE, "ab", buffering=0)
+        _worker = subprocess.Popen(
+            ["python", "webui/infer_worker.py", *args], cwd=str(ROOT),
+            stdin=subprocess.PIPE, stdout=fh, stderr=subprocess.STDOUT,
+            env=os.environ.copy(), start_new_session=True,
+        )
+        _loaded = None
+    if _wait_marker("MODEL_LOADED", 300):
+        _loaded = sig
+        return {"ok": True, "loaded": sig}
+    return _err("load failed — see the log", 500)
 
 
 @app.post("/api/infer")
-def infer(body: dict = Body(...)):
-    task = (body.get("task") or "").strip()
-    if not task:
-        return JSONResponse({"ok": False, "msg": "task is required"}, status_code=400)
-    policy = body.get("policy") or DEFAULT_POLICY
-    mode = body.get("mode", "rtc")
-    if mode not in ("sync", "rtc", "async"):
-        mode = "rtc"
-    cmd = ["bash", "scripts/infer.sh", "--no-display",
-           "--policy", policy, "--task", task,
-           "--duration", str(body.get("duration", 60)),
-           "--cams", str(body.get("cams", 2)), f"--{mode}"]
-    steps = str(body.get("steps", "") or "").strip()
-    if steps:
-        cmd += ["--steps", steps]
-    if body.get("record"):
-        cmd += ["--record", str(body["record"]).strip()]
-    ok, msg = _start("infer", cmd, {"mode": mode, "policy": policy})
-    return JSONResponse({"ok": ok, "msg": msg, "cmd": " ".join(cmd)},
-                        status_code=200 if ok else 409)
+def infer():
+    if not _alive(_worker):
+        return _err("no model loaded — press Load first", 409)
+    _send("run")
+    return {"ok": True}
 
 
 @app.post("/api/stop")
 def stop():
-    return {"ok": True, "stopped": _stop()}
+    _send("stop")           # stops the loop, keeps the model resident
+    return {"ok": True}
+
+
+@app.post("/api/unload")
+def unload():
+    global _worker, _loaded
+    with _lock:
+        if _alive(_worker):
+            _send("quit")
+            try:
+                _worker.wait(timeout=15)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(_worker.pid), signal.SIGKILL)
+                except Exception:
+                    pass
+        _worker = None
+        _loaded = None
+    return {"ok": True}
+
+
+@app.post("/api/steps")
+def steps(body: dict = Body(...)):
+    if not _alive(_worker):
+        return _err("no model loaded", 409)
+    n = str(body.get("steps", "") or "").strip()
+    if not n:
+        return _err("steps required", 400)
+    since = len(_log_text())
+    _send(f"steps {int(n)}")
+    _wait_new_marker("STEPS_SET", since, 5)
+    return {"ok": True, "steps": int(n)}
+
+
+@app.post("/api/home")
+def home():
+    global _home
+    # Model loaded -> home via the worker (it owns the robot); no unload needed.
+    # The worker stops any running loop and winds it down before homing.
+    if _alive(_worker):
+        since = len(_log_text())
+        _send("home")
+        if _wait_new_marker("HOME_DONE", since, 60):
+            return {"ok": True, "via": "worker"}
+        return _err("home may not have completed — check the log", 500)
+    # No model -> one-shot home subprocess.
+    with _lock:
+        if _alive(_home):
+            return _err("already homing", 409)
+        LOGFILE.write_text("")
+        fh = open(LOGFILE, "ab", buffering=0)
+        _home = subprocess.Popen(
+            ["python", "webui/home.py"], cwd=str(ROOT),
+            stdout=fh, stderr=subprocess.STDOUT,
+            env=os.environ.copy(), start_new_session=True,
+        )
+    return {"ok": True, "via": "subprocess"}
 
 
 if __name__ == "__main__":

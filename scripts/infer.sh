@@ -21,7 +21,7 @@ cd "$(dirname "$0")"
 source ./common.sh
 
 policy="zetanschy/pi05_lora_cap_tu_cup"; task=""; duration=60; cams=2; mode=sync
-display="${DISPLAY_DATA}"; recname=""; isteps=""; extra=()
+display="${DISPLAY_DATA}"; recname=""; isteps=""; horizon=10; extra=()
 rename='{"observation.images.front": "observation.images.base_0_rgb", "observation.images.grip": "observation.images.left_wrist_0_rgb"}'
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -34,6 +34,7 @@ while [ $# -gt 0 ]; do
     --async)      mode=async; shift ;;
     --record)     recname="$2"; shift 2 ;;   # also record the rollout to eval_<name>
     --steps)      isteps="$2"; shift 2 ;;     # policy denoising steps (lower = faster)
+    --horizon)    horizon="$2"; shift 2 ;;    # RTC execution horizon (actions/chunk before recompute)
     --no-display) display=false; shift ;;
     --rename-map) rename="$2"; shift 2 ;;
     --no-rename)  rename=""; shift ;;
@@ -49,7 +50,7 @@ camjson="$(cameras_json "$cams")"
 case "$mode" in
   sync|rtc)
     inf=(--inference.type="$mode")
-    [ "$mode" = rtc ] && inf+=(--inference.rtc.execution_horizon=10)
+    [ "$mode" = rtc ] && inf+=(--inference.rtc.execution_horizon="$horizon")
     run lerobot-rollout \
       --policy.path="$policy" \
       "${robot_args[@]}" \
