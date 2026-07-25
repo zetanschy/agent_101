@@ -40,5 +40,8 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu12
 COPY thirdparty/le101 /opt/le101
 RUN pip install --no-cache-dir -e "/opt/le101[feetech,core_scripts,training,pi,peft]"
 
+# Web UI backend (small; last layer so it doesn't invalidate the lerobot layer).
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
+
 WORKDIR /workspace
 CMD ["bash"]

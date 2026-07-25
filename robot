@@ -22,6 +22,9 @@ case "$cmd" in
   teleop)    grant_display; $RUN ./scripts/teleop.sh "$@" ;;
   record)    grant_display; $RUN ./scripts/record.sh "$@" ;;
   infer)     grant_display; $RUN ./scripts/infer.sh "$@" ;;   # run a trained policy (sync/rtc/async)
+  home)      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
+  webui)     port="${WEBUI_PORT:-8000}"; echo "web UI -> http://localhost:${port}"
+             $DC run --rm -p "${port}:8000" lerobot python webui/app.py ;;
   data)      grant_display; $RUN ./scripts/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
   calibrate) $RUN ./scripts/calibrate.sh "$@" ;;
   login)     $RUN hf auth login "$@" ;;      # cache HF token in the volume
@@ -35,6 +38,8 @@ robot — lerobot in docker for the SO-ARM101
   ./robot teleop [--cams 3]     teleoperate (2 cams default)
   ./robot record --name N --task "..." [--episodes 50] [--cams 3] [--push]
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
+  ./robot webui                        browser control panel: home/infer/record/params
+  ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
   ./robot data viz --name N [--episode 0]      visualize an episode (scrubbable)
   ./robot data upload --name N                 push a dataset to Hugging Face

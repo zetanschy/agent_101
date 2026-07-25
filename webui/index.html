@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SO-ARM101 · inference</title>
+<style>
+  :root { color-scheme: dark; --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --fg:#e6e9ef; --mut:#8b93a3; --acc:#4c8bf5; --ok:#2ecc71; --bad:#e5533c; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 20px; }
+  h1 { font-size:18px; margin:0 0 16px; display:flex; align-items:center; gap:10px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--mut); }
+  .dot.run { background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:10px 0 4px; }
+  input, select, button { font:inherit; }
+  input, select { width:100%; padding:8px 10px; background:#0c0e12; color:var(--fg); border:1px solid var(--line); border-radius:7px; }
+  .row { display:flex; gap:10px; } .row > * { flex:1; }
+  button { cursor:pointer; border:1px solid var(--line); background:#222732; color:var(--fg); padding:10px 14px; border-radius:8px; font-weight:600; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.danger  { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .btns { display:flex; gap:10px; margin-top:14px; }
+  .chk { display:flex; align-items:center; gap:8px; margin-top:12px; }
+  .chk input { width:auto; }
+  pre { background:#0a0c10; border:1px solid var(--line); border-radius:8px; padding:12px; height:300px; overflow:auto; white-space:pre-wrap; font:12px/1.45 ui-monospace,monospace; margin:0; }
+  .msg { font-size:12px; color:var(--mut); min-height:16px; margin-top:8px; }
+  .hint { font-size:11px; color:var(--mut); margin-top:4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1><span id="dot" class="dot"></span> SO-ARM101 · inference <span id="opname" style="color:var(--mut);font-weight:400"></span>
+    <span id="lat" style="margin-left:auto;font-size:13px;font-weight:600;color:var(--acc);font-variant-numeric:tabular-nums"></span>
+  </h1>
+
+  <div class="grid">
+    <div class="panel">
+      <label>Model / policy</label>
+      <select id="model"></select>
+      <label>…or custom path / HF repo</label>
+      <input id="modelCustom" placeholder="e.g. zetanschy/pi05_something" />
+
+      <label>Task instruction</label>
+      <input id="task" value="Put the cap into the red cup" />
+
+      <div class="row">
+        <div><label>Mode</label>
+          <select id="mode">
+            <option value="rtc">rtc (smooth · recommended)</option>
+            <option value="sync">sync (exact · ~2 Hz)</option>
+            <option value="async">async (server/client)</option>
+          </select>
+        </div>
+        <div><label>Cameras</label>
+          <select id="cams"><option>2</option><option>3</option></select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div><label>Duration (s, 0=∞)</label><input id="duration" type="number" value="60" min="0" /></div>
+        <div><label>Denoise steps</label><input id="steps" type="number" placeholder="default 10" min="1" /></div>
+      </div>
+
+      <div class="chk"><input type="checkbox" id="rec" /><label for="rec" style="margin:0">Record rollout to <code>eval_&lt;name&gt;</code></label></div>
+      <input id="recName" placeholder="cap_to_cup_eval" style="margin-top:6px" />
+
+      <div class="hint" id="asyncHint" style="display:none">⚠ async needs a policy whose camera names match the robot — the pi05 LoRA (renamed cams) won't work in async; use rtc/sync.</div>
+
+      <div class="btns">
+        <button id="btnInfer" class="primary">▶ Start inference</button>
+        <button id="btnStop" class="danger" disabled>■ Stop</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <label>Manual</label>
+      <button id="btnHome" style="width:100%">🏠 Move Home (calibrated zero)</button>
+      <div class="hint">Interpolates all joints to 0° over ~2s. Make sure the workspace is clear.</div>
+      <div class="msg" id="msg"></div>
+
+      <label style="margin-top:16px">Live log</label>
+      <pre id="log">idle.</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = (p, opt) => fetch(p, opt).then(r => r.json());
+
+async function loadModels() {
+  const d = await api('/api/models');
+  $('model').innerHTML = d.models.map(m => `<option value="${m}">${m}</option>`).join('');
+}
+function policy() { return ($('modelCustom').value.trim()) || $('model').value; }
+
+$('mode').onchange = () => { $('asyncHint').style.display = $('mode').value === 'async' ? 'block' : 'none'; };
+
+$('btnHome').onclick = async () => {
+  const r = await api('/api/home', {method:'POST'});
+  $('msg').textContent = r.ok ? 'homing…' : r.msg;
+};
+$('btnInfer').onclick = async () => {
+  const body = {
+    policy: policy(), task: $('task').value, mode: $('mode').value,
+    duration: +$('duration').value, cams: +$('cams').value,
+    steps: $('steps').value, record: $('rec').checked ? ($('recName').value.trim() || 'eval') : null,
+  };
+  const r = await api('/api/infer', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+  $('msg').textContent = r.ok ? 'starting inference…' : r.msg;
+};
+$('btnStop').onclick = async () => { await api('/api/stop', {method:'POST'}); $('msg').textContent = 'stopping…'; };
+
+async function poll() {
+  try {
+    const s = await api('/api/status');
+    $('dot').className = 'dot' + (s.running ? ' run' : '');
+    $('opname').textContent = s.running ? `· ${s.op}${s.meta?.mode ? ' ('+s.meta.mode+')' : ''}` : '';
+    $('lat').textContent = (s.latency_ms != null) ? `⏱ ${s.latency_ms} ms / inference` : '';
+    $('btnStop').disabled = !s.running;
+    $('btnInfer').disabled = s.running;
+    $('btnHome').disabled = s.running;
+    if (s.log) { const el = $('log'); const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20; el.textContent = s.log; if (atBottom) el.scrollTop = el.scrollHeight; }
+  } catch (e) {}
+  setTimeout(poll, 1000);
+}
+loadModels(); poll();
+</script>
+</body>
+</html>

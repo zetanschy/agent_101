@@ -21,7 +21,7 @@ cd "$(dirname "$0")"
 source ./common.sh
 
 policy="zetanschy/pi05_lora_cap_tu_cup"; task=""; duration=60; cams=2; mode=sync
-display="${DISPLAY_DATA}"; extra=()
+display="${DISPLAY_DATA}"; recname=""; isteps=""; extra=()
 rename='{"observation.images.front": "observation.images.base_0_rgb", "observation.images.grip": "observation.images.left_wrist_0_rgb"}'
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -32,6 +32,8 @@ while [ $# -gt 0 ]; do
     --sync)       mode=sync; shift ;;
     --rtc)        mode=rtc; shift ;;
     --async)      mode=async; shift ;;
+    --record)     recname="$2"; shift 2 ;;   # also record the rollout to eval_<name>
+    --steps)      isteps="$2"; shift 2 ;;     # policy denoising steps (lower = faster)
     --no-display) display=false; shift ;;
     --rename-map) rename="$2"; shift 2 ;;
     --no-rename)  rename=""; shift ;;
@@ -41,6 +43,8 @@ done
 [ -n "$task" ] || { echo "need --task \"<instruction>\"  (VLAs like pi05 require it)" >&2; exit 1; }
 camjson="$(cameras_json "$cams")"
 [ -n "$rename" ] && renameargs=(--rename_map="$rename") || renameargs=()
+[ -n "$isteps" ] && stepargs=(--policy.num_inference_steps="$isteps") || stepargs=()
+[ -n "$recname" ] && recargs=(--dataset.repo_id="eval_${recname}" --dataset.single_task="$task" --dataset.num_episodes=1) || recargs=()
 
 case "$mode" in
   sync|rtc)
@@ -57,6 +61,8 @@ case "$mode" in
       --display_data="$display" \
       "${inf[@]}" \
       "${renameargs[@]}" \
+      "${stepargs[@]}" \
+      "${recargs[@]}" \
       "${extra[@]}"
     ;;
   async)

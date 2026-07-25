@@ -1,0 +1,13 @@
+# Keep the Docker build context small + fast. thirdparty/le101 source IS needed
+# (the Dockerfile COPYs it), but its .git and the big local dirs are not.
+.git
+thirdparty/le101/.git
+rrd/
+outputs/
+data/
+*.mp4
+wandb/
+**/__pycache__/
+*.pyc
+.claude/
+.env.local
