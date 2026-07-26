@@ -74,20 +74,30 @@ ask() { # KEY  LABEL  URL   -> ensure the key has a value
 }
 
 # --- verification ---------------------------------------------------------
-# Run where the libs live: this python if it has them (cloud box), else the
-# image via plain `docker run` — no compose, so no robot devices or GPU needed.
+# Verify where the credentials will actually be USED, which is the image whenever
+# there is one — a random host python (conda, system) can be years out of date and
+# fail on keys that work fine in the container. Only fall back to host python when
+# there is no image, i.e. a bare cloud box installed by setup-cloud.sh.
+verify_env="(none)"
+if command -v docker >/dev/null 2>&1 && docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  verify_env="the $IMAGE container"
+elif python -c "import huggingface_hub, wandb" >/dev/null 2>&1; then
+  verify_env="this host python ($(python -c 'import sys;print(sys.executable)'))"
+fi
+
 in_env() { # CMD...  (passes the tokens through, nothing is printed by us)
-  if python -c "import huggingface_hub, wandb" >/dev/null 2>&1; then
-    env HF_TOKEN="${HF_TOKEN:-}" WANDB_API_KEY="${WANDB_API_KEY:-}" bash -lc "$1"
-  elif command -v docker >/dev/null 2>&1; then
-    docker run --rm --entrypoint bash \
-      -e HF_TOKEN="${HF_TOKEN:-}" -e WANDB_API_KEY="${WANDB_API_KEY:-}" \
-      -v "${HOME}/.cache/huggingface:/root/.cache/huggingface" \
-      "$IMAGE" -lc "$1"
-  else
-    echo "(no python with huggingface_hub/wandb and no docker — skipping verify)" >&2
-    return 0
-  fi
+  case "$verify_env" in
+    "the $IMAGE container")
+      docker run --rm --entrypoint bash \
+        -e HF_TOKEN="${HF_TOKEN:-}" -e WANDB_API_KEY="${WANDB_API_KEY:-}" \
+        -v "${HOME}/.cache/huggingface:/root/.cache/huggingface" \
+        "$IMAGE" -lc "$1" ;;
+    "(none)")
+      echo "(no $IMAGE image and no python with huggingface_hub/wandb — skipping verify)" >&2
+      return 0 ;;
+    *)
+      env HF_TOKEN="${HF_TOKEN:-}" WANDB_API_KEY="${WANDB_API_KEY:-}" bash -lc "$1" ;;
+  esac
 }
 
 echo "credentials in $envfile:"
@@ -105,7 +115,7 @@ if [ "$verify" = 1 ]; then
   # Exported values win over the file, matching what ./robot train forwards.
   export HF_TOKEN="${HF_TOKEN:-$(get HF_TOKEN)}"
   export WANDB_API_KEY="${WANDB_API_KEY:-$(get WANDB_API_KEY)}"
-  echo "verifying (needs network):"
+  echo "verifying in $verify_env (needs network):"
   # Both CLIs read the token from the env and exit non-zero on a bad one.
   if [ "$do_hf" = 1 ] || [ "$status" = 1 ]; then
     if [ -z "$HF_TOKEN" ]; then
@@ -115,8 +125,19 @@ if [ "$verify" = 1 ]; then
   fi
   if [ "$do_wb" = 1 ] || [ "$status" = 1 ]; then
     if [ -n "$WANDB_API_KEY" ]; then
-      # Filters wandb's netrc/debug-log chatter — both live inside the throwaway container.
-      in_env 'set -o pipefail; wandb login --verify "$WANDB_API_KEY" 2>&1 | grep -vE "netrc|debug-cli" | sed "s/^/  W\&B: /"' || rc=1
+      # Captured rather than streamed so an outdated wandb can be named as the cause.
+      if out=$(in_env 'wandb login --verify "$WANDB_API_KEY" 2>&1'); then
+        echo "$out" | grep -vE "netrc|debug-cli" | sed 's/^/  W\&B: /'
+      else
+        echo "$out" | grep -vE "netrc|debug-cli" | tail -3 | sed 's/^/  W\&B: /'
+        if echo "$out" | grep -q "must be 40 characters"; then
+          echo "  W&B: ^ that is the OLD 40-char key rule. Your key is the newer"
+          echo "       wandb_v1_ format, and that wandb is too old to accept it."
+          echo "       fix: pip install -U wandb   (or ./robot build, so this verifies"
+          echo "       in the container, which is where training reads the key anyway)"
+        fi
+        rc=1
+      fi
     else
       echo "  W&B: no key — skipped"
     fi
