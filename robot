@@ -10,6 +10,17 @@ RUN="$DC run --rm lerobot"
 # Let the container's X clients talk to the host display (best effort).
 grant_display() { command -v xhost >/dev/null 2>&1 && xhost +local:root >/dev/null 2>&1 || true; }
 
+# Run a command in the GPU-only training compose: no serial devices, cameras or
+# X11, so this works on a machine with a GPU and no arms attached. Secrets come
+# from .env.local via env_file; an exported value wins because `run -e` overrides it.
+train_run() {
+  local envargs=()
+  for v in HF_TOKEN WANDB_API_KEY; do
+    if [ -n "${!v:-}" ]; then envargs+=(-e "$v=${!v}"); fi
+  done
+  $DC -f docker-compose.train.yml run --rm "${envargs[@]}" train "$@"
+}
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   build)     $DC build "$@" ;;
@@ -28,15 +39,8 @@ case "$cmd" in
   data)      grant_display; $RUN ./scripts/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
   calibrate) $RUN ./scripts/calibrate.sh "$@" ;;
   login)     bash ./scripts/login.sh "$@" ;;  # HF + wandb tokens -> .env.local (host-side)
-  train)     # LoRA fine-tune on the GPU compose (no robot devices / cameras / X11).
-             # Secrets come from .env.local via env_file; an exported value wins
-             # because `run -e` overrides env_file.
-             envargs=()
-             for v in HF_TOKEN WANDB_API_KEY; do
-               if [ -n "${!v:-}" ]; then envargs+=(-e "$v=${!v}"); fi
-             done
-             $DC -f docker-compose.train.yml run --rm "${envargs[@]}" \
-               train bash scripts/train.sh "$@" ;;
+  train)     train_run bash scripts/train.sh "$@" ;;    # LoRA fine-tune on the GPU
+  preflight) train_run bash scripts/preflight.sh "$@" ;; # check GPU/VRAM/RAM/disk first
   run)       grant_display; $RUN "$@" ;;      # raw: ./robot run lerobot-train ...
   help|-h|--help|"")
     cat <<'EOF'
@@ -46,6 +50,7 @@ robot — lerobot in docker for the SO-ARM101
   ./robot calibrate follower    calibrate an arm (follower|leader)
   ./robot teleop [--cams 3]     teleoperate (2 cams default)
   ./robot record --name N --task "..." [--episodes 50] [--cams 3] [--push]
+  ./robot preflight [--smoke]   check GPU/VRAM/RAM/disk before a long run
   ./robot train --dataset U/D --name RUN [--steps 20000] [--batch 16] [--push]
                                 LoRA fine-tune on the GPU (wandb on if logged in)
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy

@@ -170,7 +170,7 @@ PY
 
 if [ "$smoke" = 0 ]; then
   echo
-  echo "now prove the full path:  bash scripts/preflight.sh --smoke --batch <n>"
+  echo "now prove the full path: re-run with  --smoke --batch <n>"
   exit 0
 fi
 

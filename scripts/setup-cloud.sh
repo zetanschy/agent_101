@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# One-shot setup for a fresh cloud GPU box (Vast.ai / RunPod) to fine-tune with
-# the le101 fork (lerobot 0.6.1 — LoRA/RL). Assumes a CUDA base image + Python 3.12.
-#   git clone https://github.com/zetanschy/agent_101 && cd agent_101
+# One-shot setup for a box WITHOUT Docker — a rented GPU (Vast.ai / RunPod) where
+# you install straight onto the host. Assumes a CUDA base image + Python 3.12.
+#   git clone --recursive https://github.com/zetanschy/agent_101 && cd agent_101
 #   bash scripts/setup-cloud.sh
+#
+# On your own machine you do NOT need this: the image already has everything, so
+#   ./robot build && ./robot preflight && ./robot train --dataset ... --name ...
+# The training compose has no serial/camera devices, so it runs on a GPU box with
+# no arms attached. Docker also keeps this identical across machines, which the
+# host install cannot (python version, driver, system ffmpeg all vary).
 set -euo pipefail
 
 echo "== fetch the lerobot fork (le101 submodule) =="
