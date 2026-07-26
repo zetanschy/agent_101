@@ -26,7 +26,9 @@ cat <<'EOF'
                                  # or copy .env.local over from your workstation:
                                  #   scp .env.local user@box:agent_101/
                                  # train.sh turns wandb on by itself once a key exists.
-2) bash scripts/train.sh --dataset <you>/<dataset> --name pi05_run --push
+2) bash scripts/preflight.sh             # gpu kernels, vram, ram, disk, cpu, python
+   bash scripts/preflight.sh --smoke     # 20 real steps: proves the batch fits
+3) bash scripts/train.sh --dataset <you>/<dataset> --name pi05_run --push
    (LoRA + bf16 + grad-checkpointing -> fits ~24GB. Drop --push to keep it local.)
 3) checkpoints land in outputs/train/pi05_run/ — pushed to the Hub if you passed --push.
    Loss curves show up in wandb automatically (project agent_101).
