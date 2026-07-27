@@ -118,7 +118,7 @@
             <div class="num"><label>Interp. multiplier</label><input id="interp" type="number" placeholder="1" min="1" /></div>
             <div class="chk" style="align-items:flex-end;padding-bottom:8px"><input type="checkbox" id="compile" /><label for="compile" style="margin:0">torch.compile</label></div>
           </div>
-          <div class="hint">Interpolation smooths between action steps. compile speeds up the forward pass, but adds a slow first inference.</div>
+          <div class="hint">Interpolation smooths between action steps. <b>compile does nothing on pi0/pi05</b> — lerobot excludes them, and its rollout passes torch.compile both <code>mode</code> and <code>options</code>, which always fails (harmless warning in the log).</div>
         </div>
 
         <div class="hint"><span class="tag">⚡</span> applies to the loaded model instantly. Everything else takes effect on <b>Load</b>.</div>
