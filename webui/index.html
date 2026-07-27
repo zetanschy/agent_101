@@ -29,6 +29,12 @@
   .mt { margin-top:8px; }
   .stepwrap { display:flex; gap:7px; align-items:flex-end; margin-top:8px; }
   .stepwrap > div { flex:1; }
+  /* tuning groups: one block per scope (policy / mode / execution) */
+  .grp { border:1px solid var(--line); border-radius:8px; padding:9px 10px 10px; margin-top:9px; }
+  .grp:first-of-type { margin-top:2px; }
+  .glabel { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); font-weight:700; margin-bottom:7px; }
+  .glabel .only { color:var(--acc); }
+  .tag { display:inline-block; font-size:9px; padding:1px 4px; border-radius:4px; background:#2b3444; color:var(--acc); vertical-align:1px; }
   button { cursor:pointer; border:1px solid var(--line); background:#232936; color:var(--fg); padding:9px 12px; border-radius:8px; font-weight:600; }
   button:hover:not(:disabled) { border-color:var(--acc); }
   button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
@@ -72,13 +78,50 @@
         </div>
         <div class="row mt">
           <div class="num"><label>Duration (0=∞)</label><input id="duration" type="number" value="60" min="0" /></div>
-          <div class="num"><label>RTC horizon</label><input id="horizon" type="number" value="10" min="1" /></div>
         </div>
-        <div class="stepwrap">
-          <div class="num"><label>Denoise steps</label><input id="steps" type="number" placeholder="10" min="1" /></div>
-          <button id="btnSteps" class="ghost" disabled title="apply to the loaded model, no reload">⚡ live</button>
+      </div>
+
+      <div class="panel">
+        <h2>Tuning — <span id="tuneMode">rtc</span></h2>
+
+        <div class="grp">
+          <div class="glabel">Policy · any mode</div>
+          <div class="stepwrap" style="margin-top:0">
+            <div class="num"><label>Denoise steps <span class="tag">⚡</span></label><input id="steps" type="number" placeholder="10" min="1" /></div>
+            <button id="btnSteps" class="ghost" disabled title="apply to the loaded model, no reload">⚡ live</button>
+          </div>
+          <div class="hint">Flow-matching steps per inference. 10 = pi05 default; lower is faster, less accurate.</div>
+          <div class="stepwrap">
+            <div class="num"><label>Action steps / chunk <span class="tag">⚡</span></label><input id="actionSteps" type="number" placeholder="50" min="1" max="50" /></div>
+            <button id="btnActionSteps" class="ghost" disabled title="apply to the loaded model, no reload">⚡ live</button>
+          </div>
+          <div class="hint">Actions executed per inference. 50 (default) = <b>1.7 s open-loop</b> at 30 fps; 10–15 re-plans far more often. Biggest lever in sync.</div>
         </div>
-        <div class="hint">Params apply on Load. Denoise steps also changeable live (⚡).</div>
+
+        <div class="grp" id="grpSync" hidden>
+          <div class="glabel">sync <span class="only">· active</span></div>
+          <div class="hint">sync exposes no engine params of its own — the arm holds still while the policy thinks, then plays the whole chunk. Shorten <b>action steps</b> above to cut the open-loop window, or switch to rtc to keep it moving.</div>
+        </div>
+
+        <div class="grp" id="grpRtc">
+          <div class="glabel">rtc <span class="only">· active</span></div>
+          <div class="row">
+            <div class="num"><label>Execution horizon</label><input id="horizon" type="number" value="10" min="1" /></div>
+            <div class="num"><label>Queue threshold</label><input id="queueThreshold" type="number" placeholder="30" min="1" /></div>
+          </div>
+          <div class="hint">Actions run per chunk before recomputing, and the queue depth that triggers the next inference.</div>
+        </div>
+
+        <div class="grp">
+          <div class="glabel">Execution · any mode</div>
+          <div class="row">
+            <div class="num"><label>Interp. multiplier</label><input id="interp" type="number" placeholder="1" min="1" /></div>
+            <div class="chk" style="align-items:flex-end;padding-bottom:8px"><input type="checkbox" id="compile" /><label for="compile" style="margin:0">torch.compile</label></div>
+          </div>
+          <div class="hint">Interpolation smooths between action steps. compile speeds up the forward pass, but adds a slow first inference.</div>
+        </div>
+
+        <div class="hint"><span class="tag">⚡</span> applies to the loaded model instantly. Everything else takes effect on <b>Load</b>.</div>
       </div>
 
       <div class="panel">
@@ -134,9 +177,22 @@ function policy() { return ($('modelCustom').value.trim()) || $('model').value; 
 function params() {
   return { policy: policy(), task: $('task').value, mode: $('mode').value,
     duration: +$('duration').value, cams: +$('cams').value,
-    steps: $('steps').value, horizon: $('horizon').value,
+    steps: $('steps').value, action_steps: $('actionSteps').value,
+    horizon: $('horizon').value, queue_threshold: $('queueThreshold').value,
+    interp: $('interp').value, compile: $('compile').checked,
     record: $('rec').checked ? ($('recName').value.trim() || 'eval') : null };
 }
+
+// Only show the group that belongs to the selected engine — sync and rtc take
+// different knobs, and showing both invites tuning one that is ignored.
+function syncModeUI() {
+  const m = $('mode').value;
+  $('tuneMode').textContent = m;
+  $('grpRtc').hidden  = m !== 'rtc';
+  $('grpSync').hidden = m !== 'sync';
+}
+$('mode').onchange = syncModeUI;
+syncModeUI();
 const post = (p, body) => api(p, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body||{})});
 
 $('btnLoad').onclick   = () => act(async () => { const r = await post('/api/load', params()); $('msg').textContent = r.ok ? 'loaded ✓ — press Start' : ('load failed: '+(r.msg||'')); }, 'loading model… (slow — pi05)');
@@ -144,7 +200,8 @@ $('btnUnload').onclick = () => act(async () => { await post('/api/unload'); $('m
 $('btnStart').onclick  = () => act(async () => { const r = await post('/api/infer'); $('msg').textContent = r.ok ? 'running…' : r.msg; });
 $('btnStop').onclick   = () => act(async () => { await post('/api/stop'); $('msg').textContent = 'stopped (loaded)'; });
 $('btnHome').onclick   = () => act(async () => { const r = await post('/api/home'); $('msg').textContent = r.ok ? 'home done ✓' : r.msg; }, 'homing…');
-$('btnSteps').onclick  = () => act(async () => { const r = await post('/api/steps', {steps: $('steps').value}); $('msg').textContent = r.ok ? `steps → ${r.steps} (live)` : r.msg; });
+$('btnSteps').onclick  = () => act(async () => { const r = await post('/api/steps', {steps: $('steps').value}); $('msg').textContent = r.ok ? `denoise steps → ${r.steps} (live)` : r.msg; });
+$('btnActionSteps').onclick = () => act(async () => { const r = await post('/api/action-steps', {action_steps: $('actionSteps').value}); $('msg').textContent = r.ok ? `action steps → ${r.action_steps} (live, queue flushed)` : r.msg; });
 
 async function poll() {
   try {
@@ -164,6 +221,7 @@ async function poll() {
       $('btnStop').disabled   = !running;
       $('btnHome').disabled   = homing;
       $('btnSteps').disabled  = !loaded;
+      $('btnActionSteps').disabled = !loaded;
     }
     if (s.log) { const el = $('log'); const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20; el.textContent = s.log; if (atBottom) el.scrollTop = el.scrollHeight; }
   } catch (e) {}

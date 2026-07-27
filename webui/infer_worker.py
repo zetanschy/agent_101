@@ -82,6 +82,22 @@ def set_steps(ctx, n):
     print(f"STEPS_SET {n}", flush=True)
 
 
+def set_action_steps(ctx, n):
+    """Actions executed per inference (sync mode's open-loop window).
+
+    select_action() re-reads config.n_action_steps whenever the queue drains, so
+    this is live like num_inference_steps — but the queue may still hold up to 50
+    actions from the previous chunk, so drop them or the change only lands ~1.7s
+    later (50 ticks at 30fps).
+    """
+    policy = ctx.policy.policy
+    policy.config.n_action_steps = int(n)
+    queue = getattr(policy, "_action_queue", None)
+    if queue is not None:
+        queue.clear()
+    print(f"ACTION_STEPS_SET {n}", flush=True)
+
+
 def main():
     _capture()  # parses sys.argv (the rollout args) into a RolloutConfig
     cfg = _holder["cfg"]
@@ -133,6 +149,11 @@ def main():
                     set_steps(ctx, int(cmd.split()[1]))    # live — no reload
                 except Exception as e:  # noqa: BLE001
                     print(f"STEPS_ERROR: {e}", flush=True)
+            elif cmd.startswith("actionsteps "):
+                try:
+                    set_action_steps(ctx, int(cmd.split()[1]))   # live — no reload
+                except Exception as e:  # noqa: BLE001
+                    print(f"ACTION_STEPS_ERROR: {e}", flush=True)
             elif cmd == "quit":
                 shutdown.set()
                 break

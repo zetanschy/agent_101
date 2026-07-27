@@ -96,15 +96,42 @@ def rollout_args(p: dict):
         "--display_data=false", "--duration=0",
         f"--rename_map={RENAME}",
     ]
-    if str(p.get("steps", "") or "").strip():
+    def num(key):
+        return str(p.get(key, "") or "").strip()
+
+    # --- policy knobs (both modes) ---
+    if num("steps"):
         args.append(f"--policy.num_inference_steps={p['steps']}")
-    if mode == "rtc" and str(p.get("horizon", "") or "").strip():
-        args.append(f"--inference.rtc.execution_horizon={p['horizon']}")
+    # Actions executed per inference. pi05 ships 50, i.e. 1.7s open-loop at 30fps;
+    # lower values re-plan more often, which matters most in sync.
+    if num("action_steps"):
+        args.append(f"--policy.n_action_steps={p['action_steps']}")
+
+    # --- mode-specific ---
+    # sync has no engine params of its own (SyncInferenceConfig is empty), so
+    # everything tunable for sync lives on the policy above.
+    if mode == "rtc":
+        if num("horizon"):
+            args.append(f"--inference.rtc.execution_horizon={p['horizon']}")
+        if num("queue_threshold"):
+            args.append(f"--inference.queue_threshold={p['queue_threshold']}")
+
+    # --- execution (both modes) ---
+    if num("interp"):
+        args.append(f"--interpolation_multiplier={p['interp']}")
+    if p.get("compile"):
+        args.append("--use_torch_compile=true")
+
     rec = str(p.get("record", "") or "").strip()
     if rec:
         args += [f"--dataset.repo_id=eval_{rec}", f"--dataset.single_task={p['task']}"]
+    # Every knob is part of the signature: changing any of them must force a
+    # reload rather than silently reporting "already loaded".
     sig = {"policy": policy, "mode": mode, "task": p["task"],
-           "steps": str(p.get("steps", "")), "horizon": str(p.get("horizon", "")),
+           "steps": num("steps"), "action_steps": num("action_steps"),
+           "horizon": num("horizon") if mode == "rtc" else "",
+           "queue_threshold": num("queue_threshold") if mode == "rtc" else "",
+           "interp": num("interp"), "compile": bool(p.get("compile")),
            "cams": int(p.get("cams", 2)), "record": rec}
     return args, sig
 
@@ -273,7 +300,25 @@ def steps(body: dict = Body(...)):
     since = len(_log_text())
     _send(f"steps {int(n)}")
     _wait_new_marker("STEPS_SET", since, 5)
+    if _loaded is not None:          # so a later Load with the same value isn't a needless reload
+        _loaded["steps"] = str(int(n))
     return {"ok": True, "steps": int(n)}
+
+
+@app.post("/api/action-steps")
+def action_steps(body: dict = Body(...)):
+    """Live-change the sync open-loop window without reloading the model."""
+    if not _alive(_worker):
+        return _err("no model loaded", 409)
+    n = str(body.get("action_steps", "") or "").strip()
+    if not n:
+        return _err("action_steps required", 400)
+    since = len(_log_text())
+    _send(f"actionsteps {int(n)}")
+    _wait_new_marker("ACTION_STEPS_SET", since, 5)
+    if _loaded is not None:          # keep the signature honest so Load isn't skipped later
+        _loaded["action_steps"] = str(int(n))
+    return {"ok": True, "action_steps": int(n)}
 
 
 @app.post("/api/home")
