@@ -36,11 +36,14 @@ for f in .env .env.local; do
 done
 
 force=0; cfg="pi05_soarm101_lora_cap_to_cup"; args=()
+# The config name is only ever the FIRST argument, and only if it is not a flag.
+# Everything after it is forwarded verbatim, so flags that take a separate value
+# (`--num-workers 2`) keep their value instead of it being mistaken for the config.
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then cfg="$1"; shift; fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --force-norm-stats) force=1; shift ;;
-    -*) args+=("$1"); shift ;;
-    *)  cfg="$1"; shift ;;          # first bare word is the config name
+    *) args+=("$1"); shift ;;
   esac
 done
 
