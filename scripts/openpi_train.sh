@@ -16,6 +16,13 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# JAX preallocates only 75% of VRAM by default, i.e. ~18GB of a 24GB card — under the
+# 22.5GB openpi documents for LoRA fine-tuning, so it OOMs before the model even fits.
+# The compose services set this; a bare box (setup-openpi-cloud.sh) has nothing that
+# would, so set it here and let an explicit value from the caller win.
+export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}"
+echo "XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_PYTHON_CLIENT_MEM_FRACTION"
+
 force=0; cfg="pi05_soarm101_lora_cap_to_cup"; args=()
 while [ $# -gt 0 ]; do
   case "$1" in
