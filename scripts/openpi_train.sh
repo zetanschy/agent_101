@@ -23,6 +23,18 @@ cd "$(dirname "$0")/.."
 export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}"
 echo "XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_PYTHON_CLIENT_MEM_FRACTION"
 
+# Credentials from .env / .env.local, same loader as train.sh. Needed because
+# `bash scripts/login.sh` on a Docker-less box writes .env.local, and openpi's
+# train.py wants WANDB_API_KEY (wandb_enabled defaults True) while the dataset pull
+# wants HF_TOKEN if it is ever private. Already-exported values win.
+for f in .env .env.local; do
+  [ -f "$f" ] || continue
+  while IFS='=' read -r k v; do
+    case "$k" in WANDB_*|HF_TOKEN) ;; *) continue ;; esac
+    if [ -z "${!k:-}" ] && [ -n "$v" ]; then export "$k=$v"; fi
+  done < "$f"
+done
+
 force=0; cfg="pi05_soarm101_lora_cap_to_cup"; args=()
 while [ $# -gt 0 ]; do
   case "$1" in
