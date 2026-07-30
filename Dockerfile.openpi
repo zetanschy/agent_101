@@ -1,0 +1,85 @@
+# openpi (JAX) inference image — a REFERENCE stack, separate from the main image.
+#
+# Why separate: openpi pins jax[cuda12]==0.5.3, torch==2.7.1 and lerobot to an
+# upstream commit, all of which fight the training image (torch cu128 + the le101
+# fork). Here JAX owns the GPU and torch is CPU-only, because torch is used solely
+# by lerobot for serial/camera I/O in the eval loop — no tensors touch the GPU.
+#
+#   ./robot openpi-eval --policy <checkpoint dir or hf repo> --task "..."
+#
+# openpi's own dependency set is NOT installed (--no-deps): it would pull the
+# upstream lerobot over our fork, plus private i2rt and pyrealsense2 that nothing
+# on the inference path imports. The list below is what `openpi.training.config`
+# and `openpi.policies.policy_config` actually reach, verified by import.
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    XDG_RUNTIME_DIR=/tmp/runtime-root \
+    XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+
+# Same system deps as the main image (serial for feetech motors, v4l for cameras,
+# ffmpeg/geos/portaudio for lerobot's imports).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential git curl pkg-config \
+        ffmpeg v4l-utils libglib2.0-0 libgl1 libegl1 \
+        libusb-1.0-0-dev speech-dispatcher libgeos-dev portaudio19-dev \
+    && mkdir -p /tmp/runtime-root && chmod 700 /tmp/runtime-root \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir --upgrade pip
+
+# CPU torch first, so the le101 install below can't drag in CUDA wheels that would
+# then contend with JAX over the GPU.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.7,<2.12" "torchvision>=0.22,<0.27"
+
+# Our lerobot fork. `feetech` is what the eval loop needs (SO101Follower +
+# OpenCVCameraConfig), but `dataset` is required too: openpi's policy_config imports
+# training.checkpoints -> training.data_loader -> lerobot.datasets, which hard-fails
+# without it even though we never load a dataset here.
+COPY thirdparty/le101 /opt/le101
+RUN pip install --no-cache-dir -e "/opt/le101[feetech,dataset]"
+
+# JAX on GPU + exactly what the openpi inference path imports. The set was derived
+# by walking every module `openpi.training.config` and `policy_config` reach:
+#   - pytest: openpi imports it at module level in models_pytorch/gemma_pytorch.py,
+#     so it is a runtime dependency here whether we like it or not.
+#   - transformers is pinned to 4.53.2 to match the transformers_replace patch below.
+#   - tensorflow / tensorflow_datasets / dlimp are deliberately absent: the only
+#     importer (training/droid_rlds_dataset.py) imports them inside a function.
+RUN pip install --no-cache-dir "jax[cuda12]==0.5.3" \
+        "flax==0.10.2" "orbax-checkpoint==0.11.13" "jaxtyping==0.2.36" \
+        "ml_collections==1.0.0" "beartype==0.19.0" "transformers==4.53.2" \
+        "augmax>=0.3.4" "equinox>=0.11.8" "etils[epath]" "treescope>=0.1.7" \
+        "numpydantic>=1.6.6" "dm-tree>=0.1.8" "flatbuffers>=24.3.25" \
+        "fsspec[gcs]>=2024.6.0" "tqdm-loggable>=0.2" "tyro>=0.9.5" \
+        "sentencepiece>=0.2.0" "einops>=0.8.0" "filelock>=3.16.1" \
+        "optax" "chex" "pandas" "safetensors" "tqdm" "pytest" \
+        "wandb>=0.19.1"    # scripts/train.py imports it; TrainConfig.wandb_enabled defaults True
+
+COPY thirdparty/openpi /opt/openpi
+# openpi_client is a separate workspace package, imported by transforms.py and
+# policies/policy.py — both on the inference path.
+RUN pip install --no-cache-dir --no-deps -e /opt/openpi \
+    && pip install --no-cache-dir --no-deps -e /opt/openpi/packages/openpi-client
+
+# openpi ships patched transformers modules and checks for them at runtime on the
+# pytorch path (models_pytorch/pi0_pytorch.py). We serve via JAX so it is not
+# strictly required, but the version is pinned to match, so apply it as their README
+# instructs rather than leaving a landmine for a future pytorch checkpoint.
+RUN cp -r /opt/openpi/src/openpi/models_pytorch/transformers_replace/* \
+        "$(python -c 'import transformers,pathlib;print(pathlib.Path(transformers.__file__).parent)')/"
+
+# Fail the build rather than a robot run if the import surface regressed.
+RUN python -c "\
+import jax; \
+from openpi.training import config as c; \
+from openpi.policies import policy_config; \
+from lerobot.robots.so_follower import SO101Follower; \
+cfg = c.get_config('pi05_soarm101_lora'); \
+print('openpi + lerobot import OK | jax', jax.__version__); \
+print('pi05_soarm101_lora:', cfg.model.__class__.__name__, 'horizon =', cfg.model.action_horizon)"
+
+WORKDIR /workspace
+CMD ["bash"]

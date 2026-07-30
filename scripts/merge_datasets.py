@@ -87,6 +87,25 @@ def check_consistent(root: Path) -> list[str]:
     return sorted(str(b) for b in bad)
 
 
+def joint_units(root: Path) -> str:
+    """Whether actions are in degrees or lerobot's normalized RANGE_M100_100.
+
+    Nothing in info.json records this, and the two are indistinguishable by dtype or
+    shape — but normalized values clamp at exactly ±100, while degrees overshoot it
+    (a real SO-101 wrist_roll reaches -166). lerobot 0.6.1 added use_degrees and
+    defaults it to True, so datasets recorded either side of that upgrade disagree,
+    and merging them teaches contradictory actions for identical poses.
+    """
+    stats = root / "meta" / "stats.json"
+    if not stats.exists():
+        return "unknown"
+    action = json.loads(stats.read_text()).get("action")
+    if not action:
+        return "unknown"
+    lo, hi = min(action["min"]), max(action["max"])
+    return "degrees" if lo < -100.5 or hi > 100.5 else "normalized"
+
+
 def shadow(src_root: Path, tmp: Path, robot_type: str, features: dict) -> Path:
     """A read-only stand-in for src_root with robot_type/features overridden.
 
@@ -143,6 +162,18 @@ def main() -> int:
         for s, bad in broken.items():
             print(f"  {s}: episodes {', '.join(bad)}", file=sys.stderr)
             print(f"    fix: ./robot data repair --name {s.split('/')[-1]} --apply", file=sys.stderr)
+        return 1
+
+    # Units are the one incompatibility the fps/features/robot_type checks miss, and it
+    # is silent: the merge succeeds and only the fine-tune comes out worse.
+    units = {s: joint_units(r) for s, r in zip(sources, roots, strict=True)}
+    if len({u for u in units.values() if u != "unknown"}) > 1:
+        print("\nthese sources use DIFFERENT joint units — merging them teaches the policy", file=sys.stderr)
+        print("two conventions for the same physical pose:", file=sys.stderr)
+        for s, u in units.items():
+            print(f"  {u:11s} {s}", file=sys.stderr)
+        print("\nlerobot 0.6.1 added use_degrees (default True); anything recorded before it", file=sys.stderr)
+        print("is normalized ±100. Merge one group at a time, or re-record the odd ones out.", file=sys.stderr)
         return 1
 
     infos = [json.loads((r / "meta" / "info.json").read_text()) for r in roots]

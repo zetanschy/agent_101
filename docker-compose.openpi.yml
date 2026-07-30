@@ -1,0 +1,86 @@
+# openpi (JAX) inference on the real arm — the reference stack for comparing
+# against lerobot pi05. Devices mirror docker-compose.yml; no X11, since the eval
+# script has no viewer.
+#   ./robot openpi-eval --policy <dir|hf repo> --task "..." [--actions 15]
+services:
+  openpi:
+    build:
+      context: .
+      dockerfile: Dockerfile.openpi
+    image: agent101/openpi
+    working_dir: /workspace
+    env_file:
+      - .env
+      - path: .env.local          # HF_TOKEN for pulling a checkpoint from the Hub
+        required: false
+    volumes:
+      - ./:/workspace
+      - ./thirdparty/le101:/opt/le101
+      - ./thirdparty/openpi:/opt/openpi
+      # openpi's own cache: paligemma tokenizer + checkpoints it downloads. Already
+      # populated on this machine, so mounting it avoids re-fetching.
+      - ${HOME}/.cache/openpi:/root/.cache/openpi
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      # Version-controlled arm calibration, same as docker-compose.yml. Without this
+      # lerobot finds no calibration and drops into its interactive "move the arm to
+      # the middle of its range" prompt — and a re-calibration would invalidate the
+      # absolute joint targets every one of these policies was trained on.
+      - ./calibration:/root/.cache/huggingface/lerobot/calibration
+      # Where the orbax checkpoints were downloaded by hand.
+      - ${HOME}/Downloads/hf_models:/checkpoints:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+    devices:
+      # Follower arm only — the eval loop drives the follower, no leader needed.
+      - /dev/ttyACM1:/dev/ttyACM1
+      # front — Logitech C270 (serial 01010650)          -> CAM_FRONT_INDEX=4
+      - /dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_01010650-video-index0:/dev/video4
+      # grip  — USB 2.0 Camera (0bdc:2125, serial SN0001) -> CAM_GRIP_INDEX=6
+      - /dev/v4l/by-id/usb-USB_2.0_Camera_USB_2.0_Camera_SN0001-video-index0:/dev/video6
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: "8gb"
+    stdin_open: true
+    tty: true
+
+  # Training / norm-stats: same image, GPU only — no serial or camera devices, so it
+  # runs on a box with no arm attached. openpi writes ./checkpoints/<config>/<exp>/
+  # and ./assets/<config>/ relative to the working dir, both gitignored.
+  openpi-train:
+    build:
+      context: .
+      dockerfile: Dockerfile.openpi
+    image: agent101/openpi
+    working_dir: /workspace
+    env_file:
+      - .env
+      - path: .env.local          # HF_TOKEN + WANDB_API_KEY
+        required: false
+    volumes:
+      - ./:/workspace
+      - ./thirdparty/le101:/opt/le101
+      - ./thirdparty/openpi:/opt/openpi
+      # Base weights land here (gs://openpi-assets), so they survive --rm.
+      - ${HOME}/.cache/openpi:/root/.cache/openpi
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: "16gb"              # JAX dataloader workers
+    stdin_open: true
+    tty: true

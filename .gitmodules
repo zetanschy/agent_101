@@ -1,3 +1,6 @@
 [submodule "thirdparty/le101"]
 	path = thirdparty/le101
 	url = https://github.com/zetanschy/le101.git
+[submodule "thirdparty/openpi"]
+	path = thirdparty/openpi
+	url = https://github.com/zetanschy/openpi.git

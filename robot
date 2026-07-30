@@ -21,6 +21,15 @@ train_run() {
   $DC -f docker-compose.train.yml run --rm "${envargs[@]}" train "$@"
 }
 
+# Same, for the openpi (JAX) image: GPU only, no serial/camera devices.
+openpi_run() {
+  local envargs=()
+  for v in HF_TOKEN WANDB_API_KEY; do
+    if [ -n "${!v:-}" ]; then envargs+=(-e "$v=${!v}"); fi
+  done
+  $DC -f docker-compose.openpi.yml run --rm "${envargs[@]}" openpi-train "$@"
+}
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   build)     $DC build "$@" ;;
@@ -41,6 +50,20 @@ case "$cmd" in
   login)     bash ./scripts/login.sh "$@" ;;  # HF + wandb tokens -> .env.local (host-side)
   train)     train_run bash scripts/train.sh "$@" ;;    # LoRA fine-tune on the GPU
   preflight) train_run bash scripts/preflight.sh "$@" ;; # check GPU/VRAM/RAM/disk first
+  openpi-eval|openpi)   # reference stack: openpi (JAX) policy on the real arm
+             $DC -f docker-compose.openpi.yml run --rm openpi \
+               python scripts/evaluate_openpi.py "$@" ;;
+  openpi-build) $DC -f docker-compose.openpi.yml build "$@" ;;
+  # openpi training (GPU only, no arm). Norm stats MUST run first: openpi does not
+  # compute them during training, and without them the run trains on wrong statistics.
+  # openpi's scripts live in the submodule (/opt/openpi), but we stay in /workspace so
+  # its ./checkpoints and ./assets land in this repo (gitignored) instead of inside the
+  # submodule checkout.
+  openpi-norm-stats)
+             openpi_run python /opt/openpi/scripts/compute_norm_stats.py \
+               --config-name "${1:-pi05_soarm101_lora_cap_to_cup}" "${@:2}" ;;
+  openpi-train)
+             openpi_run bash scripts/openpi_train.sh "$@" ;;   # computes norm stats if absent
   run)       grant_display; $RUN "$@" ;;      # raw: ./robot run lerobot-train ...
   help|-h|--help|"")
     cat <<'EOF'
@@ -54,6 +77,9 @@ robot — lerobot in docker for the SO-ARM101
   ./robot train --dataset U/D --name RUN [--steps 20000] [--batch 16] [--push]
                                 LoRA fine-tune on the GPU (wandb on if logged in)
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
+  ./robot openpi-build                 build the openpi (JAX) reference image
+  ./robot openpi-eval --policy P --task "..." [--actions 15] [--dry-run]
+                                openpi checkpoint on the arm + latency report
   ./robot webui                        browser control panel: home/infer/record/params
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
