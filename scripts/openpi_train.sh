@@ -44,6 +44,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# openpi's scripts/ sits next to the package, but where that is depends on how it was
+# installed: /opt/openpi in the images, thirdparty/openpi via setup-openpi-cloud.sh.
+# Derive it from the imported module instead of hardcoding either.
+openpi_root=$(python -c "import openpi, pathlib; print(pathlib.Path(openpi.__file__).parents[2])")
+[ -f "$openpi_root/scripts/train.py" ] || {
+  echo "openpi scripts not found under $openpi_root — is openpi installed?" >&2; exit 1; }
+
 # Ask openpi where the stats belong rather than reconstructing the path here.
 stats=$(python - "$cfg" <<'PY'
 import sys
@@ -53,12 +60,13 @@ print(cfg.assets_dirs / cfg.data.repo_id / "norm_stats.json")
 PY
 )
 echo "config:      $cfg"
+echo "openpi:      $openpi_root"
 echo "norm stats:  $stats"
 
 if [ "$force" = 1 ] || [ ! -f "$stats" ]; then
   if [ "$force" = 1 ]; then echo "==> recomputing norm stats (--force-norm-stats)"
   else echo "==> norm stats missing, computing them first (walks the whole dataset)"; fi
-  python /opt/openpi/scripts/compute_norm_stats.py --config-name "$cfg"
+  python "$openpi_root/scripts/compute_norm_stats.py" --config-name "$cfg"
   [ -f "$stats" ] || { echo "norm stats still missing at $stats" >&2; exit 1; }
 else
   echo "==> norm stats present, skipping (use --force-norm-stats to redo)"
@@ -66,4 +74,4 @@ fi
 
 echo "==> training"
 set -x
-python /opt/openpi/scripts/train.py "$cfg" "${args[@]}"
+python "$openpi_root/scripts/train.py" "$cfg" "${args[@]}"
