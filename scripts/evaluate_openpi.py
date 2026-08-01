@@ -25,6 +25,7 @@ import os
 # Must precede any JAX import: without it JAX grabs almost all VRAM up front.
 os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9")
 
+import pathlib
 import statistics
 import time
 
@@ -66,6 +67,29 @@ def cameras(fps: int) -> dict[str, OpenCVCameraConfig]:
     }
 
 
+def infer_config(policy_path: str) -> str:
+    """Find the TrainConfig whose data.repo_id matches the checkpoint's assets/ dir.
+
+    A checkpoint carries assets/<repo_id>/norm_stats.json, and create_trained_policy
+    looks that up using the *config's* repo_id — so a mismatched config fails with a
+    confusing FileNotFoundError naming a dataset you never touched. The checkpoint
+    already knows which dataset it trained on, so read it from there.
+    """
+    assets = pathlib.Path(policy_path) / "assets"
+    if not assets.is_dir():
+        raise SystemExit(f"no assets/ in {policy_path}; pass --config explicitly")
+    # assets/<owner>/<name>/norm_stats.json -> "<owner>/<name>"
+    found = {f"{p.parent.name}/{p.name}" for p in assets.glob("*/*") if p.is_dir()}
+    matches = [c.name for c in pi0_config._CONFIGS if getattr(c.data, "repo_id", None) in found]
+    if not matches:
+        raise SystemExit(
+            f"no config matches this checkpoint's dataset {sorted(found)}; pass --config explicitly"
+        )
+    if len(matches) > 1:
+        print(f"  note: {len(matches)} configs match {sorted(found)}, using {matches[0]}")
+    return matches[0]
+
+
 def build_observation(robot: SO101Follower, raw: dict, prompt: str) -> dict:
     """lerobot get_observation() -> openpi / Soarm101Inputs keys (slash-separated)."""
     state = np.asarray([float(raw[k]) for k in robot.action_features], dtype=np.float32)
@@ -87,7 +111,12 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--policy", required=True, help="checkpoint dir (orbax) or hf repo id")
     p.add_argument("--task", required=True, help="prompt; must match the training task string")
-    p.add_argument("--config", default="pi05_soarm101_lora", help="openpi TrainConfig name")
+    # Default None: inferred from the checkpoint's own assets/<repo_id>/ directory, by
+    # matching it against each config's data.repo_id. Guessing wrong is not subtle —
+    # create_trained_policy looks up norm stats under the config's repo_id and dies
+    # with FileNotFoundError — but the right answer is sitting inside the checkpoint,
+    # so there is no reason to make the caller remember which config trained it.
+    p.add_argument("--config", default=None, help="openpi TrainConfig name (default: infer from checkpoint)")
     p.add_argument("--actions", type=int, default=15, help="actions executed per chunk (default 15)")
     p.add_argument("--horizon", type=int, default=None, help="override model action_horizon")
     p.add_argument("--fps", type=int, default=None, help="control rate (default CAM_FPS from .env)")
@@ -105,12 +134,14 @@ def main() -> int:
 
     fps = args.fps or int(env("CAM_FPS", "30"))
 
-    cfg = pi0_config.get_config(args.config)
+    config_name = args.config or infer_config(args.policy)
+    cfg = pi0_config.get_config(config_name)
     if args.horizon is not None:
         import dataclasses
 
         cfg = dataclasses.replace(cfg, model=dataclasses.replace(cfg.model, action_horizon=args.horizon))
-    print(f"config={args.config}  action_horizon={cfg.model.action_horizon}  fps={fps}")
+    print(f"config={config_name}{'' if args.config else ' (inferred)'}  "
+          f"action_horizon={cfg.model.action_horizon}  fps={fps}")
     print(f"loading {args.policy} ...", flush=True)
     t0 = time.perf_counter()
     policy = policy_config.create_trained_policy(cfg, args.policy)

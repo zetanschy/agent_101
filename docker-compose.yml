@@ -18,6 +18,12 @@ services:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       # Version-controlled arm calibration (overrides the HF cache path above).
       - ./calibration:/root/.cache/huggingface/lerobot/calibration
+      # openpi checkpoints (orbax) so the web UI can load them alongside lerobot
+      # policies, plus openpi's cache for the paligemma tokenizer it downloads.
+      # Without the first mount the path does not exist in here, the UI's openpi
+      # detection fails, and Load falls through to the lerobot worker.
+      - ${HOME}/Downloads/hf_models:/checkpoints:ro
+      - ${HOME}/.cache/openpi:/root/.cache/openpi
       # X11 socket for rerun (--display_data=true).
       - /tmp/.X11-unix:/tmp/.X11-unix
     environment:

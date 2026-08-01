@@ -29,7 +29,10 @@ RENAME = ('{"observation.images.front": "observation.images.base_0_rgb", '
           '"observation.images.grip": "observation.images.left_wrist_0_rgb"}')
 
 _FPS = float(os.environ.get("CAM_FPS", "30") or 30)
-_LAT_RE = re.compile(r"running slower \(([0-9.]+) Hz\)|real_delay=([0-9]+)")
+# Three shapes, because the two workers report differently: lerobot-rollout logs
+# "running slower (N Hz)" / "real_delay=N" (ticks), the openpi worker logs its
+# measured inference time directly in ms.
+_LAT_RE = re.compile(r"running slower \(([0-9.]+) Hz\)|real_delay=([0-9]+)|inference ([0-9]+) ms")
 
 app = FastAPI()
 _lock = threading.Lock()
@@ -52,6 +55,8 @@ def latency_stats(log: str):
                 s.append(1000.0 / hz)
         elif m.group(2):
             s.append(int(m.group(2)) * (1000.0 / _FPS))
+        elif m.group(3):
+            s.append(float(m.group(3)))          # openpi: already milliseconds
     if not s:
         return None
     ss = sorted(s)
@@ -77,6 +82,47 @@ def cameras_json(n: int = 2) -> str:
     if n >= 3:
         parts.append(frag("side", os.environ.get("CAM_SIDE_INDEX", "1")))
     return "{ " + ",".join(parts) + "}"
+
+
+def openpi_available() -> bool:
+    """Whether this image can run openpi policies (the main image can; see Dockerfile)."""
+    try:
+        import openpi.training.config  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+OPENPI = openpi_available()
+
+
+def is_openpi_checkpoint(path: str) -> bool:
+    """An orbax checkpoint directory, i.e. an openpi model rather than a lerobot one.
+
+    Detected from the model itself, not from the image, so one UI can hold both kinds
+    in the same dropdown and dispatch per selection. openpi writes params/ (weights)
+    and assets/<repo_id>/norm_stats.json; lerobot writes config.json plus either
+    model.safetensors or adapter_model.safetensors.
+    """
+    p = Path(path)
+    return p.is_dir() and (p / "params").is_dir() and (p / "assets").is_dir()
+
+
+def openpi_args(p: dict):
+    """Args for webui/openpi_worker.py — a different stack, so a different arg set."""
+    policy = p.get("policy") or DEFAULT_POLICY
+    args = [f"--policy={policy}", f"--task={p['task']}", f"--units={p.get('units', 'degrees')}",
+            f"--mode={p.get('op_mode', 'async')}"]
+    if str(p.get("actions", "") or "").strip():
+        args.append(f"--actions={p['actions']}")
+    if str(p.get("config", "") or "").strip():
+        args.append(f"--config={p['config']}")
+    sig = {"stack": "openpi", "policy": policy, "task": p["task"],
+           "units": p.get("units", "degrees"), "op_mode": p.get("op_mode", "async"),
+           "actions": str(p.get("actions", "")),
+           "config": str(p.get("config", "")), "cams": int(p.get("cams", 2))}
+    return args, sig
 
 
 def rollout_args(p: dict):
@@ -186,18 +232,33 @@ def _err(msg, code=409):
 
 
 def list_models():
-    models = [DEFAULT_POLICY]
-    for p in glob.glob(str(ROOT / "outputs/train/*/")):
+    """All loadable policies, each tagged with the stack that can run it.
+
+    openpi checkpoints are scanned from both places they turn up: /checkpoints (the
+    hf_models mount, where downloaded ones land) and ./checkpoints/<config>/<exp>/<step>
+    (openpi's own training output layout).
+    """
+    out: list[dict] = [{"path": DEFAULT_POLICY, "kind": "lerobot"}]
+
+    for p in sorted(glob.glob(str(ROOT / "outputs/train/*/"))):
         pp = Path(p)
         if (pp / "adapter_model.safetensors").exists() or (pp / "config.json").exists():
-            models.append(str(pp))
+            out.append({"path": str(pp), "kind": "lerobot"})
     for p in sorted(glob.glob(str(ROOT / "outputs/train/*/checkpoints/*/"))):
-        models.append(str(Path(p)))
-    out = []
-    for m in models:
-        if m not in out:
-            out.append(m)
-    return out
+        out.append({"path": str(Path(p)), "kind": "lerobot"})
+
+    if OPENPI:
+        for pattern in ("/checkpoints/*", str(ROOT / "checkpoints/*/*/*")):
+            for p in sorted(glob.glob(pattern)):
+                if is_openpi_checkpoint(p):
+                    out.append({"path": str(Path(p)), "kind": "openpi"})
+
+    seen, uniq = set(), []
+    for m in out:
+        if m["path"] not in seen:
+            seen.add(m["path"])
+            uniq.append(m)
+    return uniq
 
 
 # ---------- endpoints ----------
@@ -208,7 +269,13 @@ def index():
 
 @app.get("/api/models")
 def models():
-    return {"models": list_models(), "default": DEFAULT_POLICY}
+    return {"models": list_models(), "default": DEFAULT_POLICY, "openpi": OPENPI}
+
+
+@app.get("/api/capabilities")
+def capabilities():
+    """Which stacks this image supports; the page dispatches per selected model."""
+    return {"openpi": OPENPI, "lerobot": True}
 
 
 @app.get("/api/status")
@@ -230,7 +297,20 @@ def load(body: dict = Body(...)):
         return _err("task is required", 400)
     if _alive(_home):
         return _err("busy: homing — wait for it to finish", 409)
-    args, sig = rollout_args(body)
+    policy_in = (body.get("policy") or "").strip()
+    # A local path that does not exist would otherwise be handed to the lerobot
+    # worker, which fails much later with an opaque draccus RolloutConfig error.
+    if policy_in.startswith("/") and not Path(policy_in).exists():
+        return _err(f"no such path in this container: {policy_in} "
+                    "(is it mounted? openpi checkpoints come from /checkpoints)", 400)
+    if is_openpi_checkpoint(policy_in):
+        if not OPENPI:
+            return _err("this image cannot run openpi policies (rebuild: ./robot build)", 400)
+        args, sig = openpi_args(body)
+        worker_script = "webui/openpi_worker.py"
+    else:
+        args, sig = rollout_args(body)
+        worker_script = "webui/infer_worker.py"
     global _worker, _loaded
     with _lock:
         if _alive(_worker) and _loaded == sig:
@@ -247,7 +327,7 @@ def load(body: dict = Body(...)):
         LOGFILE.write_text("")
         fh = open(LOGFILE, "ab", buffering=0)
         _worker = subprocess.Popen(
-            ["python", "webui/infer_worker.py", *args], cwd=str(ROOT),
+            ["python", worker_script, *args], cwd=str(ROOT),
             stdin=subprocess.PIPE, stdout=fh, stderr=subprocess.STDOUT,
             env=os.environ.copy(), start_new_session=True,
         )
@@ -314,7 +394,12 @@ def action_steps(body: dict = Body(...)):
     if not n:
         return _err("action_steps required", 400)
     since = len(_log_text())
-    _send(f"actionsteps {int(n)}")
+    # Same knob, different worker vocabulary: lerobot retunes n_action_steps on the
+    # policy, openpi retunes how much of the predicted chunk the loop executes.
+    # Same knob, different worker vocabulary. The loaded signature records which
+    # stack is running, so this follows the model that is actually loaded.
+    is_op = bool(_loaded and _loaded.get("stack") == "openpi")
+    _send(f"actions {int(n)}" if is_op else f"actionsteps {int(n)}")
     _wait_new_marker("ACTION_STEPS_SET", since, 5)
     if _loaded is not None:          # keep the signature honest so Load isn't skipped later
         _loaded["action_steps"] = str(int(n))

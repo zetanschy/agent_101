@@ -112,6 +112,21 @@
           <div class="hint">Actions run per chunk before recomputing, and the queue depth that triggers the next inference.</div>
         </div>
 
+        <div class="grp" id="grpOpenpi" hidden>
+          <div class="glabel">openpi <span class="only">· active</span></div>
+          <div class="row">
+            <div><label>Mode</label><select id="opMode"><option value="async">async</option><option value="sync">sync</option></select></div>
+            <div><label>Joint units</label><select id="units"><option value="degrees">degrees</option><option value="normalized">normalized</option></select></div>
+          </div>
+          <div class="hint mt"><b>async</b> predicts the next chunk while the current one is still
+            executing, so the arm never pauses — openpi's equivalent of rtc. <b>sync</b> holds still
+            while it thinks (what the April setup did). Both use <b>action steps</b> above as the window.</div>
+          <div class="num mt"><label>Config (blank = infer)</label><input id="opConfig" placeholder="from checkpoint" /></div>
+          <div class="hint"><b>units</b> must match how the training dataset was recorded: <code>degrees</code> for
+            anything after the lerobot 0.6.1 upgrade, <code>normalized</code> for older sets (their norm stats clamp at ±100).
+            It cannot be inferred from the checkpoint — only the dataset name can.</div>
+        </div>
+
         <div class="grp">
           <div class="glabel">Execution · any mode</div>
           <div class="row">
@@ -169,10 +184,42 @@ const api = (p, opt) => fetch(p, opt).then(r => r.json());
 let busy = false;
 async function act(fn, note) { busy = true; if (note) $('msg').textContent = note; try { return await fn(); } finally { busy = false; } }
 
+// path -> "lerobot" | "openpi", so the panel can follow the selection.
+const MODEL_KIND = {};
 async function loadModels() {
   const d = await api('/api/models');
-  $('model').innerHTML = d.models.map(m => `<option value="${m}">${m}</option>`).join('');
+  $('model').innerHTML = d.models.map(m => {
+    MODEL_KIND[m.path] = m.kind;
+    const tag = m.kind === 'openpi' ? 'openpi: ' : '';
+    return `<option value="${m.path}">${tag}${m.path}</option>`;
+  }).join('');
+  applyKind();
 }
+
+// An openpi checkpoint is an orbax dir (params/ + assets/); the backend decides
+// authoritatively on Load, this is just so the form shows the right knobs.
+function selectedKind() {
+  const custom = $('modelCustom').value.trim();
+  if (custom) return MODEL_KIND[custom] || (/checkpoints?\//.test(custom) ? 'openpi' : 'lerobot');
+  return MODEL_KIND[$('model').value] || 'lerobot';
+}
+
+function applyKind() {
+  const openpi = selectedKind() === 'openpi';
+  $('tuneMode').textContent = openpi ? 'openpi' : $('mode').value;
+  $('grpOpenpi').hidden = !openpi;
+  if (openpi) { $('grpRtc').hidden = true; $('grpSync').hidden = true; }
+  else syncModeUI();
+  // Grey out (and disable) the lerobot-rollout knobs openpi ignores.
+  for (const id of ['mode','steps','horizon','queueThreshold','interp','compile']) {
+    const el = $(id); if (!el) continue;
+    el.disabled = openpi;
+    const box = el.closest('.row, .stepwrap, .chk');
+    if (box) box.style.opacity = openpi ? 0.35 : 1;
+  }
+}
+$('model').addEventListener('change', applyKind);
+$('modelCustom').addEventListener('input', applyKind);
 function policy() { return ($('modelCustom').value.trim()) || $('model').value; }
 function params() {
   return { policy: policy(), task: $('task').value, mode: $('mode').value,
@@ -180,6 +227,10 @@ function params() {
     steps: $('steps').value, action_steps: $('actionSteps').value,
     horizon: $('horizon').value, queue_threshold: $('queueThreshold').value,
     interp: $('interp').value, compile: $('compile').checked,
+    // openpi-only; ignored by the lerobot backend
+    units: $('units').value, config: $('opConfig').value.trim(),
+    op_mode: $('opMode').value,
+    actions: $('actionSteps').value,
     record: $('rec').checked ? ($('recName').value.trim() || 'eval') : null };
 }
 
@@ -191,7 +242,7 @@ function syncModeUI() {
   $('grpRtc').hidden  = m !== 'rtc';
   $('grpSync').hidden = m !== 'sync';
 }
-$('mode').onchange = syncModeUI;
+$('mode').onchange = applyKind;   // mode only matters for lerobot; applyKind defers to it
 syncModeUI();
 const post = (p, body) => api(p, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body||{})});
 

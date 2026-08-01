@@ -35,7 +35,7 @@ for f in .env .env.local; do
   done < "$f"
 done
 
-force=0; cfg="pi05_soarm101_lora_cap_to_cup"; args=()
+force=0; stats_only=0; cfg="pi05_soarm101_lora_cap_to_cup"; args=()
 # The config name is only ever the FIRST argument, and only if it is not a flag.
 # Everything after it is forwarded verbatim, so flags that take a separate value
 # (`--num-workers 2`) keep their value instead of it being mistaken for the config.
@@ -43,6 +43,7 @@ if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then cfg="$1"; shift; fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --force-norm-stats) force=1; shift ;;
+    --norm-stats-only)  stats_only=1; force=1; shift ;;   # ./robot openpi-norm-stats
     *) args+=("$1"); shift ;;
   esac
 done
@@ -73,6 +74,11 @@ if [ "$force" = 1 ] || [ ! -f "$stats" ]; then
   [ -f "$stats" ] || { echo "norm stats still missing at $stats" >&2; exit 1; }
 else
   echo "==> norm stats present, skipping (use --force-norm-stats to redo)"
+fi
+
+if [ "$stats_only" = 1 ]; then
+  echo "norm stats only — not training"
+  exit 0
 fi
 
 echo "==> training"

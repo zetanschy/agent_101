@@ -58,6 +58,10 @@ RUN pip install --no-cache-dir "jax[cuda12]==0.5.3" \
         "optax" "chex" "pandas" "safetensors" "tqdm" "pytest" \
         "wandb>=0.19.1"    # scripts/train.py imports it; TrainConfig.wandb_enabled defaults True
 
+# Web UI backend, so this image can serve the same panel for openpi policies
+# (webui/openpi_worker.py). Small, and last-ish so it does not invalidate the jax layer.
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
+
 COPY thirdparty/openpi /opt/openpi
 # openpi_client is a separate workspace package, imported by transforms.py and
 # policies/policy.py — both on the inference path.

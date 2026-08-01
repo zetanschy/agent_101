@@ -61,8 +61,16 @@ echo "== lerobot fork (le101) =="
 git submodule update --init thirdparty/le101 2>/dev/null || true
 python -m pip install -q -e "thirdparty/le101[feetech,dataset]"
 
+# Not -q, and progress on: this step pulls 2-3GB of NVIDIA CUDA wheels (cudnn, cublas,
+# nccl, cufft, cusolver, cusparse) and takes minutes, so silence reads as a hang.
+#
+# huggingface-hub is pinned deliberately. lerobot 0.6.1 requires >=1.0 while
+# transformers 4.53.2 requires <1.0, and left to resolve that pip backtracks through
+# many candidate versions before giving up and warning — minutes of apparent silence.
+# 0.36.2 is what the verified Docker image ends up with, and what norm stats ran on.
 echo "== jax + the openpi inference/training imports =="
-python -m pip install -q "jax[cuda12]==0.5.3" \
+echo "   (2-3GB of CUDA wheels — several minutes)"
+python -m pip install --progress-bar on "jax[cuda12]==0.5.3" "huggingface-hub==0.36.2" \
     "flax==0.10.2" "orbax-checkpoint==0.11.13" "jaxtyping==0.2.36" \
     "ml_collections==1.0.0" "beartype==0.19.0" "transformers==4.53.2" \
     "augmax>=0.3.4" "equinox>=0.11.8" "etils[epath]" "treescope>=0.1.7" \
