@@ -35,7 +35,7 @@ for f in .env .env.local; do
   done < "$f"
 done
 
-force=0; stats_only=0; cfg="pi05_soarm101_lora_cap_to_cup"; args=()
+force=0; stats_only=0; push=1; exp=""; cfg="pi05_soarm101_lora_cap_to_cup"; args=()
 # The config name is only ever the FIRST argument, and only if it is not a flag.
 # Everything after it is forwarded verbatim, so flags that take a separate value
 # (`--num-workers 2`) keep their value instead of it being mistaken for the config.
@@ -44,6 +44,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --force-norm-stats) force=1; shift ;;
     --norm-stats-only)  stats_only=1; force=1; shift ;;   # ./robot openpi-norm-stats
+    --no-push)          push=0; shift ;;                  # keep the result local
+    --exp-name)         exp="$2"; args+=("$1" "$2"); shift 2 ;;
+    --exp-name=*)       exp="${1#*=}"; args+=("$1"); shift ;;
     *) args+=("$1"); shift ;;
   esac
 done
@@ -84,3 +87,35 @@ fi
 echo "==> training"
 set -x
 python "$openpi_root/scripts/train.py" "$cfg" "${args[@]}"
+set +x
+
+# openpi's train.py has no Hub upload of its own, so a finished run leaves its only
+# copy on a machine you are probably about to destroy. Push the final checkpoint
+# unless told not to.
+[ "$push" = 1 ] || { echo "done (--no-push: checkpoint left local)"; exit 0; }
+[ -n "$exp" ] || { echo "done (no --exp-name, so nothing to name a repo after)"; exit 0; }
+
+ckpt_dir="checkpoints/$cfg/$exp"
+# Sort by the numeric basename (the step), not by path text: "9000" must lose to
+# "17000", and a path-field sort would key on the experiment name instead.
+# Basename must be ALL digits: orbax leaves "<step>.orbax-checkpoint-tmp-NN" dirs
+# behind when a write is interrupted (a full disk, last time), and those sort as the
+# highest step while containing a partial checkpoint.
+latest=$(ls -d "$ckpt_dir"/[0-9]* 2>/dev/null \
+         | awk -F/ '$NF ~ /^[0-9]+$/ {print $NF, $0}' | sort -n | tail -1 | cut -d' ' -f2-)
+[ -n "$latest" ] || { echo "no checkpoint found under $ckpt_dir — nothing to push" >&2; exit 1; }
+
+who=$(python -c "from huggingface_hub import HfApi; print(HfApi().whoami()['name'])" 2>/dev/null) || {
+  echo "not logged in to Hugging Face; checkpoint kept at $latest" >&2; exit 1; }
+repo="$who/$exp"
+echo "==> pushing $latest -> hf.co/$repo  ($(du -sh "$latest" | cut -f1))"
+python - "$latest" "$repo" <<'PY'
+import sys
+from huggingface_hub import HfApi
+local, repo = sys.argv[1], sys.argv[2]
+api = HfApi()
+api.create_repo(repo_id=repo, repo_type="model", exist_ok=True)
+api.upload_folder(folder_path=local, repo_id=repo, repo_type="model",
+                  commit_message=f"openpi checkpoint {local}")
+print(f"pushed: https://huggingface.co/{repo}")
+PY
