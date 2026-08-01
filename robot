@@ -122,8 +122,12 @@ so rather than failing with "docker: command not found".
   ./robot record --name N --task "..." [--episodes 50] [--cams 3] [--push]
   ./robot preflight [--smoke]   check GPU/VRAM/RAM/disk before a long run
   ./robot train --dataset U/D --name RUN [--steps 20000] [--batch 16] [--push]
-                                LoRA fine-tune on the GPU (wandb on if logged in)
+                                LoRA fine-tune, LEROBOT stack (pytorch)
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
+  ./robot openpi-train --exp-name=RUN [--overwrite|--resume]
+                                LoRA fine-tune, OPENPI stack (jax). An ALTERNATIVE to
+                                `train`, not a follow-up: pick one. Dataset comes from
+                                the config, and norm stats are computed automatically.
   ./robot openpi-build                 build the openpi (JAX) reference image
   ./robot openpi-eval --policy P --task "..." [--actions 15] [--dry-run]
                                 openpi checkpoint on the arm + latency report
