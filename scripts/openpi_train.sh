@@ -84,6 +84,16 @@ if [ "$stats_only" = 1 ]; then
   exit 0
 fi
 
+# openpi's TrainConfig defaults project_name="openpi", so its runs landed in a
+# different wandb project than the lerobot ones. Both stacks should report into the
+# same workspace, so follow WANDB_PROJECT from .env — the same value train.sh uses —
+# unless the caller named a project explicitly.
+case " ${args[*]} " in
+  *" --project-name"*) ;;
+  *) [ -n "${WANDB_PROJECT:-}" ] && args+=("--project-name=$WANDB_PROJECT") ;;
+esac
+echo "wandb project: ${WANDB_PROJECT:-openpi (openpi default)}"
+
 echo "==> training"
 set -x
 python "$openpi_root/scripts/train.py" "$cfg" "${args[@]}"
