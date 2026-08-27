@@ -25,10 +25,14 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("--task", default="Agent101-So101-Push-T")
 parser.add_argument("--steps", type=int, default=180, help="control steps to run (default 180 = 3 s)")
-parser.add_argument("--gui", action="store_true", help="show the Isaac Sim window")
+parser.add_argument("--pose", action="store_true",
+                    help="open the window with physics OFF, to drag prims and read their transform")
+parser.add_argument("--gui", action="store_true",
+                    help="open the Isaac Sim window and hold it open after the checks")
 parser.add_argument("--out", default=None, help="where to write renders (default sim/outputs)")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
+args.gui = args.gui or args.pose   # posing needs a window to drag in
 args.headless = not args.gui
 args.enable_cameras = True
 app = AppLauncher(args).app
@@ -56,6 +60,32 @@ def save(name: str, tensor) -> str:
     path = OUT / f"{name}.png"
     iio.imwrite(path, img)
     return f"{path.relative_to(ROOT)}  {img.shape[1]}x{img.shape[0]}  mean {img.mean():.1f}"
+
+
+
+def _report_mount_transform() -> None:
+    """Print klip_support's transform in a form that can be pasted into objects.py.
+
+    The whole point of --pose: drag the mount against the wrist in the viewport, close
+    the window, and copy these two lines rather than reading numbers off a panel.
+    """
+    try:
+        import isaaclab.sim as sim_utils
+        from pxr import Gf, UsdGeom
+    except Exception:
+        return
+    prims = sim_utils.find_matching_prims("/World/envs/env_0/Robot/gripper/klip_support")
+    if not prims:
+        return
+    x = UsdGeom.Xformable(prims[0])
+    m = x.GetLocalTransformation()
+    t = m.ExtractTranslation()
+    q = m.ExtractRotationQuat()
+    i = q.GetImaginary()
+    print("\nklip_support local transform (relative to the gripper body):")
+    print(f"    KLIP_MOUNT_POS  = ({t[0]:.5f}, {t[1]:.5f}, {t[2]:.5f})")
+    print(f"    quaternion wxyz = ({q.GetReal():.5f}, {i[0]:.5f}, {i[1]:.5f}, {i[2]:.5f})")
+    print("  paste into sim/sim_agent101/assets/objects.py")
 
 
 def main() -> int:
@@ -111,6 +141,38 @@ def main() -> int:
             problems.append(f"{name} camera is black (mean {m:.2f}) -- lighting or the near plane")
 
     print("\n" + ("FAILED\n  " + "\n  ".join(problems) if problems else "OK: scene builds, T rests on the mat, both cameras render"))
+
+    if args.gui:
+        # Keep stepping so the window stays live and the episode keeps resetting --
+        # each reset re-randomises the T and the goal, which is the point of looking.
+        # Without this the checks finish and the window vanishes before you see it.
+        print("\nwindow open: close it (or Ctrl-C here) to quit."
+              "\n  mouse: left-drag orbit, middle-drag pan, scroll zoom")
+        stepping = not args.pose
+        if args.pose:
+            print("\nPOSE MODE: physics is not running, so you can move prims safely.")
+        try:
+            while app.is_running():
+                if stepping:
+                    try:
+                        env.step(actions)
+                    except RuntimeError as e:
+                        # Moving a prim that lives INSIDE the robot articulation (which
+                        # klip_support does) makes PhysX rebuild it and invalidates the
+                        # tensor view. Stepping again throws. Dropping to render-only
+                        # keeps the window alive so the drag can be finished, instead of
+                        # taking Isaac down mid-adjustment.
+                        if "invalidated" not in str(e):
+                            raise
+                        stepping = False
+                        print("\nphysics view invalidated (a prim moved) -- physics stopped, "
+                              "window still live. Keep posing; the transform is printed on exit.")
+                else:
+                    app.update()
+        except KeyboardInterrupt:
+            print("\ninterrupted")
+        _report_mount_transform()
+
     env.close()
     return 1 if problems else 0
 

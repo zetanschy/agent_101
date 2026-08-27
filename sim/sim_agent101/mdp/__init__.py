@@ -4,6 +4,7 @@ from .push_t import (  # noqa: F401
     goal_pose_obs,
     reset_goal_pose,
     reset_t_block_pose,
+    set_robot_color,
     t_block_at_goal,
     t_block_pose_obs,
     t_block_settled,

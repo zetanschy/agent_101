@@ -143,3 +143,20 @@ def t_block_at_goal(
     if require_settled:
         done = done & t_block_settled(env, asset_cfg=asset_cfg)
     return done
+
+
+def set_robot_color(env, env_ids, color: tuple[float, float, float] = (0.93, 0.93, 0.95)) -> None:
+    """Paint the arm's printed parts. The real SO-ARM101 here is white; the USD ships
+    yellow, and a policy trained on yellow links has to unlearn them on the real robot.
+
+    The arm's printed geometry all binds one material, Looks/material_a_3d_printed --
+    same hook the workshop's randomize_robot_color uses, but set rather than sampled.
+    """
+    import isaaclab.sim as sim_utils
+    from pxr import Sdf
+
+    with Sdf.ChangeBlock():
+        robot = env.scene["robot"]
+        shader = f"{robot.cfg.prim_path}/Looks/material_a_3d_printed/Shader"
+        for prim in sim_utils.find_matching_prims(shader):
+            prim.GetAttribute("inputs:diffuse_color_constant").Set(tuple(color))

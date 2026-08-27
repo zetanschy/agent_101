@@ -156,6 +156,8 @@ so rather than failing with "docker: command not found".
                                 lerobot's reference implementation (no arm needed)
   ./robot sim-assets            convert the printed T + camera mount CAD to USD
   ./robot sim-play [--gui]      build the push-T scene in Isaac Sim and check it
+  ./robot sim-play --gui --pose physics off, so prims can be dragged; prints the
+                                camera-mount transform on exit
   ./robot sim-camera-check      verify the sim camera model against the real cameras
   ./robot sim-calibrate --camera front|grip   measure real intrinsics (checkerboard)
   ./robot sim-compare-cameras   sim render vs live capture, to tune camera placement

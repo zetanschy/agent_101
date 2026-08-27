@@ -77,17 +77,115 @@ T_BLOCK_CFG = RigidObjectCfg(
     init_state=RigidObjectCfg.InitialStateCfg(pos=(0.24, 0.0, T_BLOCK_GEOMETRY.thickness / 2)),
 )
 
-# The printed camera mount. It bolts into the SO-ARM101 wrist holes and rides with
-# the wrist, so it is a visual child of the gripper body rather than a body of its
-# own -- it must occlude the same sliver of the wrist frame as the real one, and it
-# must never be something the solver can push against.
+# --- the printed camera mount, and the webcam that sits in it --------------------
+#
+# klip_support-1 measured off the STL (all mm, in the STL's own frame):
+#   bbox            55 x 35 x 50, origin at a corner (x 0..55, y -35..0, z 0..50)
+#   camera bore     dia 19.0 through the base plate, centred (17.0, -17.5), axis Z
+#   arm             rises diagonally from the plate to z=50, where it meets the wrist
+#
+# The bore is what matters: the KWC-500's lens barrel drops into it, so the bore axis
+# IS the camera's optical axis and the bore centre is where the lens sits.
+BORE_CENTRE = (0.017, -0.0175, 0.0)     # on the underside of the plate
+BORE_DIAMETER = 0.019
+PLATE_THICKNESS = 0.0035
+# Which face of the plate the webcam sits against. -1 = the underside (z = 0),
+# +1 = the top face (z = PLATE_THICKNESS).
+CAMERA_SIDE = -1
+# Face of the plate the camera stack grows out from. Everything below is measured
+# from here, so the BASE of each cylinder lands on the plate and the body extends
+# away from it -- not the far end touching while the barrel floats through.
+CAMERA_SEAT_Z = 0.0 if CAMERA_SIDE < 0 else PLATE_THICKNESS
+BARREL_LENGTH = 0.012
+BODY_LENGTH = 0.016
+
+# Where the mount meets the arm, relative to the `gripper` body.
+#
+# Three numbers to turn, deliberately kept as euler degrees rather than a quaternion
+# so they can be nudged by hand. Rotation order is X then Y then Z, applied to the
+# support's own frame (origin at a corner of the base plate, bore axis +Z).
+#
+#   ROLL  about X: swings the bore plate between pointing down and pointing forward
+#   PITCH about Y: tilts the camera's look direction
+#   YAW   about Z: which side of the wrist the mount sits on
+#
+# Not derived from the bolt holes -- the support's arm section has only C-shaped
+# notches ~8 mm apart, which do not match the 31 mm bolt spacing of the SO-ARM101's
+# own camera mount, so the mesh alone never said how the two mate. Posed by eye
+# instead. To adjust:  ./robot sim-play --gui --pose
+# Posed by hand in the viewport against the real print, then read off the property
+# panel: Translate (0.07456, 0.0919, -0.02029), Orient (90.003, 0.002, -179.983).
+# Rounded only where the panel's own noise made it obvious (90.003 -> 90).
+KLIP_MOUNT_POS = (0.07456, 0.09190, -0.02029)
+KLIP_MOUNT_ROLL_DEG = 90.0
+KLIP_MOUNT_PITCH_DEG = 0.0
+KLIP_MOUNT_YAW_DEG = -180.0
+
+
+def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
+    """(w, x, y, z) for an intrinsic X-Y-Z rotation, in degrees."""
+    cr, sr = math.cos(math.radians(roll_deg) / 2), math.sin(math.radians(roll_deg) / 2)
+    cp, sp = math.cos(math.radians(pitch_deg) / 2), math.sin(math.radians(pitch_deg) / 2)
+    cy, sy = math.cos(math.radians(yaw_deg) / 2), math.sin(math.radians(yaw_deg) / 2)
+    return (
+        cr * cp * cy + sr * sp * sy,
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+    )
+
+
+KLIP_MOUNT_ROT = _euler_quat(KLIP_MOUNT_ROLL_DEG, KLIP_MOUNT_PITCH_DEG, KLIP_MOUNT_YAW_DEG)
+
+
 KLIP_SUPPORT_CFG = AssetBaseCfg(
     prim_path="{ENV_REGEX_NS}/Robot/gripper/klip_support",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{USD}/klip_support.usd",
+        # No visual_material here on purpose. Isaac Lab binds it at the klip_support
+        # prim, and USD material bindings inherit down -- which repainted the black
+        # webcam below it white. The converted STL already renders as light printed
+        # plastic, which is what the real part is.
+    ),
+    init_state=AssetBaseCfg.InitialStateCfg(pos=KLIP_MOUNT_POS, rot=KLIP_MOUNT_ROT),
+)
+
+# The webcam itself. The KWC-500 has no published CAD, so it is two cylinders sized to
+# the bore it drops into. Both are seated BASE-first on the plate face and grow away
+# from it, rather than passing through it with only their far end touching. Nothing
+# reads their geometry -- they are here to occlude what the real camera occludes.
+KWC500_BARREL_CFG = AssetBaseCfg(
+    prim_path="{ENV_REGEX_NS}/Robot/gripper/klip_support/kwc500_barrel",
+    spawn=sim_utils.CylinderCfg(
+        radius=BORE_DIAMETER / 2 - 0.0004,   # a hair under the bore, so it seats
+        height=BARREL_LENGTH,
+        axis="Z",
+        # The KWC-500 is a black webcam.
         visual_material=sim_utils.PreviewSurfaceCfg(
-            diffuse_color=(0.9, 0.9, 0.9), roughness=0.8, metallic=0.0
+            diffuse_color=(0.02, 0.02, 0.02), roughness=0.35, metallic=0.05
         ),
+        collision_props=None,
+        rigid_props=None,
+    ),
+    init_state=AssetBaseCfg.InitialStateCfg(
+        pos=(BORE_CENTRE[0], BORE_CENTRE[1], CAMERA_SEAT_Z + CAMERA_SIDE * BARREL_LENGTH / 2)
+    ),
+)
+KWC500_BODY_CFG = AssetBaseCfg(
+    prim_path="{ENV_REGEX_NS}/Robot/gripper/klip_support/kwc500_body",
+    spawn=sim_utils.CylinderCfg(
+        radius=0.014,
+        height=BODY_LENGTH,
+        axis="Z",
+        visual_material=sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(0.03, 0.03, 0.03), roughness=0.6, metallic=0.0
+        ),
+        collision_props=None,
+        rigid_props=None,
+    ),
+    init_state=AssetBaseCfg.InitialStateCfg(
+        pos=(BORE_CENTRE[0], BORE_CENTRE[1],
+             CAMERA_SEAT_Z + CAMERA_SIDE * (BARREL_LENGTH + BODY_LENGTH / 2))
     ),
 )
 
@@ -135,18 +233,3 @@ def camera_cfg(
         spawn=spawn,
         offset=TiledCameraCfg.OffsetCfg(pos=pos, rot=rot_quat, convention="opengl"),
     )
-
-
-def _describe() -> str:
-    g = T_BLOCK_GEOMETRY
-    lines = [
-        f"T block: {g.bar_width*1000:.0f}x{(g.bar_depth+g.stem_length)*1000:.0f}x{g.thickness*1000:.0f} mm, "
-        f"{g.volume_m3*1e6:.1f} cm^3, centroid offset {tuple(round(v, 4) for v in g.centroid_offset)}",
-    ]
-    for n, c in CAMERAS.items():
-        lines.append(f"{n}: {c.model}, spec dFOV {c.diagonal_fov_deg} deg")
-    return "\n".join(lines)
-
-
-if __name__ == "__main__":
-    print(_describe())

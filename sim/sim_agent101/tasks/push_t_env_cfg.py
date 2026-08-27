@@ -31,6 +31,8 @@ from isaaclab.utils import configclass
 from .. import mdp
 from ..assets.objects import (
     KLIP_SUPPORT_CFG,
+    KWC500_BARREL_CFG,
+    KWC500_BODY_CFG,
     PLA_ON_MAT,
     T_BLOCK_CFG,
     T_BLOCK_GEOMETRY,
@@ -58,12 +60,18 @@ OVERHEAD_POS = (MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE + 0.59)
 # the image and reaches up, which identity renders as left-to-right.
 OVERHEAD_YAW_DEG = -90.0
 
-# Wrist KWC-500, centred in klip_support-1 where it bolts to the wrist holes. The
-# support is 55 x 35 x 50 mm with its origin at a corner, so the lens sits near its
-# mid-plane; this offset is relative to the `gripper` body and is the number most
-# likely to need correcting.
+# Wrist KWC-500. Explicit, and NOT derived from the mount -- which is unsatisfying and
+# worth fixing. Composing the camera out of the posed mount plus the bore offset was
+# tried and abandoned: every sign convention I tried put the lens either against the
+# side of the wrist or inside its own camera body (a pure black frame, which the
+# sim-play check catches). These values reproduce the real wrist view -- jaws low in
+# shot, workspace beyond -- and were arrived at by matching against a real capture.
+#
+# Consequence to know about: re-posing klip_support does NOT move the camera. Move
+# both, or resolve the bore-axis convention and derive one from the other.
 WRIST_POS = (-0.005, 0.055, -0.055)
-WRIST_PITCH_DEG = -40.0               # looking forward and down past the jaws
+WRIST_PITCH_DEG = -40.0
+WRIST_ROT = (0.939693, -0.34202, 0.0, 0.0)   # _quat_x(WRIST_PITCH_DEG), inlined: it is defined below this block
 # ------------------------------------------------------------------------------
 
 
@@ -114,6 +122,8 @@ class PushTSceneCfg(InteractiveSceneCfg):
     )
 
     klip_support = KLIP_SUPPORT_CFG
+    kwc500_barrel = KWC500_BARREL_CFG
+    kwc500_body = KWC500_BODY_CFG
 
     t_block: RigidObjectCfg = T_BLOCK_CFG.replace(
         init_state=RigidObjectCfg.InitialStateCfg(
@@ -137,7 +147,7 @@ class PushTSceneCfg(InteractiveSceneCfg):
 
     camera_front = camera_cfg("front", "{ENV_REGEX_NS}/OverheadCam", pos=OVERHEAD_POS, rot_quat=_quat_z(OVERHEAD_YAW_DEG))
     camera_grip = camera_cfg(
-        "grip", "{ENV_REGEX_NS}/Robot/gripper/wrist_cam", pos=WRIST_POS, rot_quat=_quat_x(WRIST_PITCH_DEG)
+        "grip", "{ENV_REGEX_NS}/Robot/gripper/wrist_cam", pos=WRIST_POS, rot_quat=WRIST_ROT
     )
 
 
@@ -181,6 +191,11 @@ class EventCfg:
     # Start region: a 16 x 16 cm patch in the middle of the mat, any yaw. Wide enough
     # that the policy cannot memorise one start, small enough that the T is always
     # inside the overhead frame.
+    # The real arm is white; the USD ships yellow. Startup, not reset: it never changes.
+    paint_robot_white = EventTerm(
+        func=mdp.set_robot_color, mode="startup", params={"color": (0.93, 0.93, 0.95)}
+    )
+
     reset_t_block = EventTerm(
         func=mdp.reset_t_block_pose,
         mode="reset",

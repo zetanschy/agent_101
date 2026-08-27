@@ -1,3 +1,12 @@
 """Scene assets specific to this workspace: the printed T and the printed camera mount."""
 
-from .objects import KLIP_SUPPORT_CFG, T_BLOCK_CFG, T_BLOCK_GEOMETRY, camera_cfg  # noqa: F401
+from .objects import (  # noqa: F401
+    BORE_CENTRE,
+    KLIP_SUPPORT_CFG,
+    KWC500_BARREL_CFG,
+    KWC500_BODY_CFG,
+    PLA_ON_MAT,
+    T_BLOCK_CFG,
+    T_BLOCK_GEOMETRY,
+    camera_cfg,
+)
