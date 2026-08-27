@@ -31,7 +31,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION:-0.75}
     devices:
       # Follower arm only — the eval loop drives the follower, no leader needed.
       - /dev/ttyACM1:/dev/ttyACM1
@@ -73,7 +73,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION:-0.75}
     deploy:
       resources:
         reservations:

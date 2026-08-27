@@ -22,8 +22,11 @@ which defaults to 50 (1.7s). Everything else here mirrors the original loop.
 import argparse
 import os
 
-# Must precede any JAX import: without it JAX grabs almost all VRAM up front.
-os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9")
+# Must precede any JAX import: without it JAX grabs almost all VRAM up front. The
+# fraction is of TOTAL VRAM, not free — 0.9 on a 12 GB card asks for more than a
+# desktop session leaves available and dies at kernel load. Compose sets this from
+# XLA_MEM_FRACTION in .env; this default only applies to a bare `python` run.
+os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
 
 import pathlib
 import statistics
@@ -130,6 +133,14 @@ def main() -> int:
     # to what the checkpoint expects rather than to lerobot's current default.
     p.add_argument("--units", choices=("normalized", "degrees"), default="normalized",
                    help="joint units the policy was trained in (default normalized)")
+    # Real-time chunking. This loop is synchronous — the arm holds still during
+    # inference — so the inference delay is 0 and RTC only smooths the seam between
+    # chunks. webui/openpi_worker.py --mode rtc is where the delay is nonzero and RTC
+    # does its real job; this flag is for checking the guidance on the bench.
+    p.add_argument("--rtc", action="store_true", help="pin each chunk to the tail of the previous one")
+    p.add_argument("--rtc-schedule", choices=("zeros", "ones", "linear", "exp"), default="exp")
+    p.add_argument("--rtc-max-guidance", type=float, default=5.0, help="beta_max")
+    p.add_argument("--rtc-jacobian", choices=("identity", "full"), default="identity")
     args = p.parse_args()
 
     fps = args.fps or int(env("CAM_FPS", "30"))
@@ -146,6 +157,20 @@ def main() -> int:
     t0 = time.perf_counter()
     policy = policy_config.create_trained_policy(cfg, args.policy)
     print(f"loaded in {time.perf_counter() - t0:.1f}s", flush=True)
+
+    chunker = None
+    if args.rtc:
+        from openpi.policies.rtc import RealTimeChunker
+
+        chunker = RealTimeChunker(
+            policy,
+            execution_horizon=args.actions,
+            prefix_attention_schedule=args.rtc_schedule,
+            max_guidance_weight=args.rtc_max_guidance,
+            jacobian=args.rtc_jacobian,
+        )
+        print(f"rtc: schedule={args.rtc_schedule} beta_max={args.rtc_max_guidance} "
+              f"jacobian={args.rtc_jacobian} (delay 0 — this loop is synchronous)")
 
     robot = SO101Follower(
         SO101FollowerConfig(
@@ -171,10 +196,16 @@ def main() -> int:
             tick = time.perf_counter()
             # Re-plan when the executed window is used up. Note this tick sends no
             # action — same as the original loop, so a chunk costs 1 + N ticks.
-            if chunk is None or action_index >= min(args.actions, len(chunk)):
+            window = min(args.actions, len(chunk)) if chunk is not None else 0
+            if chunk is None or action_index >= window:
                 obs = build_observation(robot, robot.get_observation(), args.task)
                 t_pred = time.perf_counter()
-                out = policy.infer(obs)
+                if chunker is None:
+                    out = policy.infer(obs)
+                else:
+                    # The new chunk's index 0 is the action after the window we just
+                    # executed, and nothing runs while we think, so d = 0.
+                    out = chunker.infer(obs, prefix_start=window, inference_delay=0)
                 dt = time.perf_counter() - t_pred
                 latencies.append(dt)
                 chunk, action_index = out["actions"], 0

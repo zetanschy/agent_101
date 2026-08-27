@@ -113,13 +113,13 @@ def openpi_args(p: dict):
     """Args for webui/openpi_worker.py — a different stack, so a different arg set."""
     policy = p.get("policy") or DEFAULT_POLICY
     args = [f"--policy={policy}", f"--task={p['task']}", f"--units={p.get('units', 'degrees')}",
-            f"--mode={p.get('op_mode', 'async')}"]
+            f"--mode={p.get('op_mode', 'rtc')}"]
     if str(p.get("actions", "") or "").strip():
         args.append(f"--actions={p['actions']}")
     if str(p.get("config", "") or "").strip():
         args.append(f"--config={p['config']}")
     sig = {"stack": "openpi", "policy": policy, "task": p["task"],
-           "units": p.get("units", "degrees"), "op_mode": p.get("op_mode", "async"),
+           "units": p.get("units", "degrees"), "op_mode": p.get("op_mode", "rtc"),
            "actions": str(p.get("actions", "")),
            "config": str(p.get("config", "")), "cams": int(p.get("cams", 2))}
     return args, sig

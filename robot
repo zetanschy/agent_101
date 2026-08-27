@@ -94,6 +94,12 @@ case "$cmd" in
                python webui/app.py ;;
   openpi-build) if [ "$MODE" = native ]; then bash ./scripts/setup-openpi-cloud.sh
                 else $DC -f docker-compose.openpi.yml build "$@"; fi ;;
+  rtc-parity)           # check openpi's RTC port against lerobot's, in both images
+             needs_docker rtc-parity
+             ref="${1:-/workspace/outputs/rtc_ref.json}"
+             $DC run --rm --entrypoint python lerobot scripts/rtc_parity.py --dump "$ref" \
+               && $DC -f docker-compose.openpi.yml run --rm openpi-train \
+                    python scripts/rtc_parity.py --check "$ref" ;;
   # openpi training (GPU only, no arm). Norm stats MUST run first: openpi does not
   # compute them during training, and without them the run trains on wrong statistics.
   # openpi's scripts live in the submodule (/opt/openpi), but we stay in /workspace so
@@ -129,8 +135,10 @@ so rather than failing with "docker: command not found".
                                 `train`, not a follow-up: pick one. Dataset comes from
                                 the config, and norm stats are computed automatically.
   ./robot openpi-build                 build the openpi (JAX) reference image
-  ./robot openpi-eval --policy P --task "..." [--actions 15] [--dry-run]
+  ./robot openpi-eval --policy P --task "..." [--actions 15] [--dry-run] [--rtc]
                                 openpi checkpoint on the arm + latency report
+  ./robot rtc-parity            check openpi's real-time-chunking port against
+                                lerobot's reference implementation (no arm needed)
   ./robot webui                        browser control panel: home/infer/record/params
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets

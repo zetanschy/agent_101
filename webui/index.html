@@ -115,12 +115,14 @@
         <div class="grp" id="grpOpenpi" hidden>
           <div class="glabel">openpi <span class="only">· active</span></div>
           <div class="row">
-            <div><label>Mode</label><select id="opMode"><option value="async">async</option><option value="sync">sync</option></select></div>
+            <div><label>Mode</label><select id="opMode"><option value="rtc">rtc</option><option value="async">async</option><option value="sync">sync</option></select></div>
             <div><label>Joint units</label><select id="units"><option value="degrees">degrees</option><option value="normalized">normalized</option></select></div>
           </div>
-          <div class="hint mt"><b>async</b> predicts the next chunk while the current one is still
-            executing, so the arm never pauses — openpi's equivalent of rtc. <b>sync</b> holds still
-            while it thinks (what the April setup did). Both use <b>action steps</b> above as the window.</div>
+          <div class="hint mt"><b>rtc</b> is async plus real-time chunking: the next chunk is
+            generated knowing which actions will already have run when it lands, so the seam is
+            continuous instead of a jump. <b>async</b> predicts ahead but splices in cold.
+            <b>sync</b> holds still while it thinks (what the April setup did). All three use
+            <b>action steps</b> above as the window.</div>
           <div class="num mt"><label>Config (blank = infer)</label><input id="opConfig" placeholder="from checkpoint" /></div>
           <div class="hint"><b>units</b> must match how the training dataset was recorded: <code>degrees</code> for
             anything after the lerobot 0.6.1 upgrade, <code>normalized</code> for older sets (their norm stats clamp at ±100).

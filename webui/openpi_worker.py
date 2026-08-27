@@ -25,7 +25,9 @@ import sys
 import threading
 import time
 
-os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9")
+# Fraction of TOTAL VRAM, not free — see .env (XLA_MEM_FRACTION), which compose
+# passes in. This default only applies to a bare `python webui/openpi_worker.py`.
+os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -91,9 +93,17 @@ def main() -> int:
     p.add_argument("--fps", type=int, default=None)
     # sync  : predict, then execute the window. The arm holds still while it thinks.
     # async : predict the NEXT chunk in a background thread while the current one is
-    #         still executing, so the arm never pauses — openpi's equivalent of
-    #         lerobot's rtc. Same trade as rtc: the observation is one window stale.
-    p.add_argument("--mode", choices=("sync", "async"), default="async")
+    #         still executing, so the arm never pauses. The observation is one window
+    #         stale, and the new chunk is spliced in cold — the arm jumps at the seam.
+    # rtc   : async, plus real-time chunking (arXiv:2506.07339). The new chunk is
+    #         generated knowing exactly which actions will have been executed by the
+    #         time it lands, so the seam is continuous by construction.
+    p.add_argument("--mode", choices=("sync", "async", "rtc"), default="async")
+    p.add_argument("--rtc-schedule", choices=("zeros", "ones", "linear", "exp"), default="exp",
+                   help="how the prefix constraint decays past the frozen actions")
+    p.add_argument("--rtc-max-guidance", type=float, default=5.0, help="beta_max")
+    p.add_argument("--rtc-jacobian", choices=("identity", "full"), default="identity",
+                   help="identity matches the lerobot reference and is free; full is the true VJP (~2x slower)")
     args = p.parse_args()
 
     ev = _load_eval_module()
@@ -123,12 +133,36 @@ def main() -> int:
     print(f"config={config_name} horizon={cfg.model.action_horizon} units={args.units} "
           f"mode={args.mode} fps={fps}", flush=True)
 
+    # In rtc mode every inference is guided by the tail of the chunk still executing.
+    # The chunker only does the bookkeeping; the guidance itself is in the sampler.
+    chunker = None
+    if args.mode == "rtc":
+        from openpi.policies.rtc import RealTimeChunker
+
+        chunker = RealTimeChunker(
+            policy,
+            execution_horizon=args.actions,
+            prefix_attention_schedule=args.rtc_schedule,
+            max_guidance_weight=args.rtc_max_guidance,
+            jacobian=args.rtc_jacobian,
+        )
+        print(f"rtc: schedule={args.rtc_schedule} beta_max={args.rtc_max_guidance} "
+              f"jacobian={args.rtc_jacobian}", flush=True)
+
     # Warm up here, not on the first Start. JAX traces and compiles the model on the
     # first infer() — tens of seconds — and doing that inside the control loop stalls
     # the arm at step 0. One throwaway inference on a real observation moves the whole
     # cost into Load. No action is sent, so the robot does not move.
     t = time.perf_counter()
-    policy.infer(ev.build_observation(robot, robot.get_observation(), args.task))
+    warm_obs = ev.build_observation(robot, robot.get_observation(), args.task)
+    policy.infer(warm_obs)
+    if chunker is not None:
+        # The guided sampler is a SECOND trace (the prefix changes the argument tree),
+        # so compile it here too or the first replan of the run eats the compile
+        # mid-motion. The first call only exists to give the chunker a prefix.
+        chunker.infer(warm_obs, prefix_start=0, inference_delay=1)
+        chunker.infer(warm_obs, prefix_start=1, inference_delay=1)
+        chunker.reset()
     print(f"WARMUP_DONE {(time.perf_counter() - t) * 1000:.0f} ms (jit compile)", flush=True)
 
     print("MODEL_LOADED", flush=True)
@@ -146,10 +180,18 @@ def main() -> int:
         from lerobot.utils.robot_utils import precise_sleep
 
         print("RUN_START", flush=True)
-        chunk, idx = None, 0
+        # `end` is the index at which this chunk is retired. With rtc the next chunk
+        # does not start at 0: the first `delay` of its actions were already executed
+        # off the previous chunk, and the sampler was told as much.
+        chunk, idx, start, end = None, 0, 0, 0
+        delay = 0
         latencies: list[float] = []
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         pending: concurrent.futures.Future | None = None
+        if chunker is not None:
+            # A chunk left over from the previous run would pin this one to actions
+            # nobody is executing.
+            chunker.reset()
 
         def grab_obs():
             """Read the robot. MAIN THREAD ONLY.
@@ -161,46 +203,72 @@ def main() -> int:
             """
             return ev.build_observation(robot, robot.get_observation(), args.task)
 
-        def infer_only(obs):
+        def infer_only(obs, prefix_start: int, inference_delay: int):
             """Pure compute — safe on a worker thread, touches no hardware."""
             t = time.perf_counter()
-            out = policy.infer(obs)
+            if chunker is None:
+                out = policy.infer(obs)
+            else:
+                out = chunker.infer(obs, prefix_start=prefix_start, inference_delay=inference_delay,
+                                    execution_horizon=state["actions"])
             return out["actions"], time.perf_counter() - t
 
-        def predict():
-            return infer_only(grab_obs())
+        def predict(prefix_start: int, inference_delay: int):
+            return infer_only(grab_obs(), prefix_start, inference_delay)
 
         def record(dt: float, n: int, window: int) -> None:
             latencies.append(dt)
+            rtc = f" d={chunker.last_delay} s={chunker.last_horizon}" if chunker is not None else ""
             print(f"inference {dt * 1000:.0f} ms (mean {statistics.mean(latencies) * 1000:.0f}) "
-                  f"chunk={n} using={window} mode={args.mode}", flush=True)
+                  f"chunk={n} using={window} mode={args.mode}{rtc}", flush=True)
 
         try:
             while not shutdown.is_set():
                 tick = time.perf_counter()
-                window = min(state["actions"], len(chunk)) if chunk is not None else 0
+                if chunk is not None and pending is None:
+                    # The window stays live-tunable from the UI, but only until an
+                    # inference is in flight: moving `end` after that would falsify
+                    # the delay the sampler was given.
+                    end = min(start + state["actions"], len(chunk))
 
                 if chunk is None:
                     # First chunk has to block; the jit cost was already paid at load.
-                    chunk, dt = predict()
-                    idx = 0
-                    record(dt, len(chunk), min(state["actions"], len(chunk)))
-                elif idx >= window:
+                    # Nothing has executed yet, so there is no prefix to honour.
+                    chunk, dt = predict(0, 0)
+                    idx = start = 0
+                    end = min(start + state["actions"], len(chunk))
+                    record(dt, len(chunk), end - idx)
+                elif idx >= end:
                     if pending is not None:
                         chunk, dt = pending.result()   # normally already finished
                         pending = None
+                        # `delay` actions of this chunk are already behind us — that
+                        # is precisely what the sampler was told to reproduce.
+                        idx = delay
                     else:
-                        chunk, dt = predict()
-                    idx = 0
-                    record(dt, len(chunk), min(state["actions"], len(chunk)))
+                        # sync: the arm holds still, so nothing gets executed while we
+                        # think and the new chunk starts at 0 with no frozen prefix.
+                        chunk, dt = predict(end, 0)
+                        idx = 0
+                    start = idx
+                    end = min(start + state["actions"], len(chunk))
+                    record(dt, len(chunk), end - idx)
                 else:
-                    # In async mode, kick the next inference one action into the window
-                    # so it has (window-1) ticks to finish — at 30fps and window 15
-                    # that is ~470ms of cover, more than an inference typically needs.
-                    if args.mode == "async" and pending is None and idx >= 1:
+                    # Kick the next inference early in the window so it has most of
+                    # the window to finish — at 30fps and window 15 that is ~470ms of
+                    # cover, more than an inference typically needs. In rtc mode a new
+                    # chunk starts at idx = delay, so this fires on its first tick and
+                    # the cover is the whole window.
+                    if args.mode in ("async", "rtc") and pending is None and idx >= 1:
+                        # The chunk is retired at a fixed index, not on arrival, so the
+                        # number of actions executed between this observation and the
+                        # swap is exactly end - idx — known now, and still exact if the
+                        # inference overruns (the loop just stalls at `end`). That is
+                        # the one number RTC cannot afford to guess.
+                        delay = min(end - idx, len(chunk) - 1) if chunker is not None else 0
                         # Observation read HERE on the main thread; only the model call
                         # is offloaded, so nothing else touches the serial bus.
-                        pending = pool.submit(infer_only, grab_obs())
+                        pending = pool.submit(infer_only, grab_obs(), idx, delay)
                     action = chunk[idx]
                     robot.send_action(
                         {n: float(action[i]) for i, n in enumerate(robot.action_features) if i < len(action)}
