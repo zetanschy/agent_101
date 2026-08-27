@@ -100,6 +100,21 @@ case "$cmd" in
              $DC run --rm --entrypoint python lerobot scripts/rtc_parity.py --dump "$ref" \
                && $DC -f docker-compose.openpi.yml run --rm openpi-train \
                     python scripts/rtc_parity.py --check "$ref" ;;
+  # --- sim2real (Isaac Sim) -------------------------------------------------
+  # These do NOT go through Docker: Isaac Sim is a native conda install that needs
+  # the GPU plus a large shader/asset cache in $HOME. scripts/sim.sh picks the env.
+  sim-assets)           # convert the printed CAD (STL) into simulatable USD
+             bash ./scripts/sim.sh scripts/sim_convert_assets.py "$@" ;;
+  sim-play)             # build the push-T scene, step it, render both cameras
+             bash ./scripts/sim.sh scripts/sim_play.py "$@" ;;
+  sim-shell)            # a python REPL inside the Isaac Sim environment
+             bash ./scripts/sim.sh "$@" ;;
+  sim-camera-check)     # check the sim's camera assumptions against the real ones
+             python3 ./scripts/sim_camera_check.py "$@" ;;
+  sim-calibrate)        # measure real intrinsics from a checkerboard
+             python3 ./scripts/sim_calibrate_cameras.py "$@" ;;
+  sim-compare-cameras)  # sim render next to a live capture, for tuning extrinsics
+             python3 ./scripts/sim_compare_cameras.py "$@" ;;
   # openpi training (GPU only, no arm). Norm stats MUST run first: openpi does not
   # compute them during training, and without them the run trains on wrong statistics.
   # openpi's scripts live in the submodule (/opt/openpi), but we stay in /workspace so
@@ -139,6 +154,11 @@ so rather than failing with "docker: command not found".
                                 openpi checkpoint on the arm + latency report
   ./robot rtc-parity            check openpi's real-time-chunking port against
                                 lerobot's reference implementation (no arm needed)
+  ./robot sim-assets            convert the printed T + camera mount CAD to USD
+  ./robot sim-play [--gui]      build the push-T scene in Isaac Sim and check it
+  ./robot sim-camera-check      verify the sim camera model against the real cameras
+  ./robot sim-calibrate --camera front|grip   measure real intrinsics (checkerboard)
+  ./robot sim-compare-cameras   sim render vs live capture, to tune camera placement
   ./robot webui                        browser control panel: home/infer/record/params
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets

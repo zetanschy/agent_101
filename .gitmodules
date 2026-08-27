@@ -4,3 +4,6 @@
 [submodule "thirdparty/openpi"]
 	path = thirdparty/openpi
 	url = https://github.com/zetanschy/openpi.git
+[submodule "thirdparty/sim2real_so101"]
+	path = thirdparty/sim2real_so101
+	url = https://github.com/isaac-sim/Sim-to-Real-SO-101-Workshop.git
