@@ -46,6 +46,7 @@ MM = 1 / 25.4  # matplotlib works in inches
 
 
 A4 = (210.0, 297.0)
+SCALEBAR_BAND = 30.0   # mm reserved at the foot of every sheet for the 100 mm bar
 
 
 def _sheet(landscape: bool = False, need=None):
@@ -58,7 +59,7 @@ def _sheet(landscape: bool = False, need=None):
     w_mm, h_mm = (A4[1], A4[0]) if landscape else A4
     if need is not None:
         nw, nh = need
-        if nw > w_mm - 14 or nh > h_mm - 32:
+        if nw > w_mm - 14 or nh > h_mm - SCALEBAR_BAND - 5:
             raise SystemExit(
                 f"content {nw:.0f}x{nh:.0f} mm does not fit A4"
                 f"{' landscape' if landscape else ''} ({w_mm:.0f}x{h_mm:.0f}) with margins "
@@ -85,7 +86,9 @@ def checkerboard(cols_inner=9, rows_inner=6, square=25.0):
     # 10x7 squares at 25 mm is 250x175 -- lands on A4 only in landscape
     fig, ax = _sheet(landscape=True, need=(w, h))
     x0 = (ax.get_xlim()[1] - w) / 2
-    y0 = ax.get_ylim()[1] - h - 30
+    # Measured up from the BOTTOM: the scale bar lives down there, and anchoring the
+    # board to the top pushed it off the page entirely on A4 landscape.
+    y0 = SCALEBAR_BAND
     for i in range(nx):
         for j in range(ny):
             if (i + j) % 2 == 0:
@@ -138,7 +141,7 @@ def charuco(cols=7, rows=10, square=25.0, marker=18.0):
     w, h = cols * square, rows * square
     fig, ax = _sheet(need=(w, h))
     x0 = (ax.get_xlim()[1] - w) / 2
-    y0 = ax.get_ylim()[1] - h - 30
+    y0 = SCALEBAR_BAND
     ax.imshow(np.flipud(img), cmap="gray", vmin=0, vmax=255,
               extent=(x0, x0 + w, y0, y0 + h), origin="lower", interpolation="nearest")
     _scalebar(ax, x0, y0 - 18,
