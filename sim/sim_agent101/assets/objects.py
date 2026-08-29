@@ -113,29 +113,22 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 #   PITCH about Y: tilts the camera's look direction
 #   YAW   about Z: which side of the wrist the mount sits on
 #
-# EXACT, and measured. The mount's holes and the bracket's are concentric to 0.05 mm:
-#   mount   (262.55, 43.40, 258.00)   (264.17, 35.57, 258.05)
-#   bracket (262.55, 43.44, 258.00)   (264.19, 35.53, 258.05)
+# Placed by hand in the viewport (./robot sim-play --gui --pose), and left alone.
 #
-# Found by matching on hole SPACING, which is the only usable signal here. The
-# mount's holes are 8.00 mm apart and this bracket pair is 8.08; every other
-# candidate within 60 mm is 6.93-6.95, a 1 mm mismatch no rigid transform absorbs.
-# Diameter is useless for matching -- the mount's dia-4.0 holes are clearance for
-# dia-2.0 screws, so the two sides never agree -- and matching on proximity is
-# circular when the starting pose is itself wrong, which is how earlier attempts
-# kept picking confidently wrong pairs and then verifying them against their own
-# bad assumption. A hand placement supplies the region; spacing picks the pair.
+# Not solved, and that is deliberate. I tried repeatedly to snap this onto a detected
+# hole pair and every attempt was worse than the hand placement: matching by diameter
+# found nothing (the mount's dia-4.0 holes are clearance for dia-2.0 screws), matching
+# by proximity was circular whenever the starting pose was off, and matching by
+# spacing found a pair whose four orientations penetrate the wrist by 1.4 to 12 mm.
+# The hand placement beats all of them, so it stands.
 #
-# Four flips keep the holes concentric (identity, 180 about the hole line, 180 about
-# the screw axis, both). They are NOT equivalent -- max penetration into the arm is
-# 11.96 / 3.34 / 1.38 / 7.75 mm respectively. This is the 1.38 mm one; the others
-# drive the support visibly through the wrist.
-#
-# Re-run ./robot sim-assets after touching these: the pose is baked into the USD.
-KLIP_MOUNT_POS = (0.05298, 0.00893, -0.05253)
-KLIP_MOUNT_ROLL_DEG = -14.039
-KLIP_MOUNT_PITCH_DEG = 33.153
-KLIP_MOUNT_YAW_DEG = 172.573
+# If you want to adjust it: ./robot sim-play --gui --pose writes the total pose to
+# sim/outputs/mount_pose.txt on exit -- paste it here and re-run ./robot sim-assets,
+# since the pose is baked into the USD.
+KLIP_MOUNT_POS = (-0.01395, 0.08750, -0.00866)
+KLIP_MOUNT_ROLL_DEG = -179.758
+KLIP_MOUNT_PITCH_DEG = -32.920
+KLIP_MOUNT_YAW_DEG = -90.060
 
 
 def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
