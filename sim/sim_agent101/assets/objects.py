@@ -92,8 +92,12 @@ BORE_DIAMETER = 0.019
 # z = 0 (area 994 mm2), top face at z = 3.5 mm (907 mm2), with the bore through both.
 PLATE_SEAT_Z = 0.0
 PLATE_TOP_Z = 0.0035
-# Which face the webcam is glued to. -1 = the underside.
-CAMERA_SIDE = -1
+# Which face of the plate the webcam is glued to. +1 = the face the bore looks out
+# of, which is the one you see; -1 = the hidden face. Both seat the body flush by
+# construction, so a gap in the viewport means this is on the wrong side, not that
+# the seating maths is off -- the base-face-to-plate distance measures 0.00 mm over
+# 60 samples either way.
+CAMERA_SIDE = 1
 
 # The KWC-500's body is a rectangular block, not a cylinder -- only its lens barrel is
 # round, and that is the part that drops into the bore. The block's base is GLUED to
@@ -125,10 +129,10 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 # If you want to adjust it: ./robot sim-play --gui --pose writes the total pose to
 # sim/outputs/mount_pose.txt on exit -- paste it here and re-run ./robot sim-assets,
 # since the pose is baked into the USD.
-KLIP_MOUNT_POS = (-0.01395, 0.08750, -0.00866)
-KLIP_MOUNT_ROLL_DEG = -179.758
-KLIP_MOUNT_PITCH_DEG = -32.920
-KLIP_MOUNT_YAW_DEG = -90.060
+KLIP_MOUNT_POS = (-0.01462, 0.08714, -0.01018)
+KLIP_MOUNT_ROLL_DEG = -179.755
+KLIP_MOUNT_PITCH_DEG = -34.920
+KLIP_MOUNT_YAW_DEG = -90.061
 
 
 def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
