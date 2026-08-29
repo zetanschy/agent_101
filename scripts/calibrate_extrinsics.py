@@ -65,7 +65,13 @@ CHAIN, fk_gripper = _kin.CHAIN, _kin.fk_gripper
 SESSION = ROOT / "sim" / "outputs" / "calib"
 OUT = ROOT / "sim" / "sim_agent101" / "config" / "extrinsics.json"
 DICT = cv2.aruco.DICT_4X4_100
-DEV = {"front": 0, "grip": 2}
+# /dev/videoN differs between host and container: compose pins the cameras to fixed
+# nodes (CAM_*_INDEX in .env, 4 and 6), while on the host they enumerate as 0 and 2.
+# capture runs in the container, so the env vars win there and the host values are
+# only the fallback.
+import os  # noqa: E402
+DEV = {"front": int(os.environ.get("CAM_FRONT_INDEX", 0)),
+       "grip": int(os.environ.get("CAM_GRIP_INDEX", 2))}
 
 
 def make_board(cols: int, rows: int, square_mm: float, marker_mm: float):
@@ -111,7 +117,6 @@ def read_joints():
     """Measured joint angles, in radians, in CHAIN order."""
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
-    import os
     cfg = SO101FollowerConfig(
         port=os.environ.get("ROBOT_PORT", "/dev/ttyACM1"),
         id=os.environ.get("ROBOT_ID", "zetans_follower"),
@@ -160,10 +165,19 @@ def cmd_capture(a) -> int:
 
 
 def _pose_from_board(gray, det, board, K, D):
+    """Board pose in the camera frame, or None.
+
+    cv2.aruco.estimatePoseCharucoBoard is gone in OpenCV 4.11; the current route is
+    matchImagePoints to lift the detected corners into board coordinates, then a
+    plain solvePnP.
+    """
     cc, ci, _, _ = det.detectBoard(gray)
     if ci is None or len(ci) < 6:
         return None
-    ok, rvec, tvec = cv2.aruco.estimatePoseCharucoBoard(cc, ci, board, K, D, None, None)
+    obj, img = board.matchImagePoints(cc, ci)
+    if obj is None or len(obj) < 6:
+        return None
+    ok, rvec, tvec = cv2.solvePnP(obj, img, K, D, flags=cv2.SOLVEPNP_ITERATIVE)
     if not ok:
         return None
     T = np.eye(4)

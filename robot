@@ -120,7 +120,11 @@ case "$cmd" in
   calib-board)          # just the ChArUco board (print-targets makes all three)
              python3 ./scripts/calibrate_extrinsics.py board "$@" ;;
   calib-capture)        # record arm poses looking at the board
-             python3 ./scripts/calibrate_extrinsics.py capture "$@" ;;
+             # In the container, not on the host: it reads joint angles through
+             # lerobot, which is only installed in the image, and needs the serial
+             # and camera passthrough compose already wires up.
+             needs_docker calib-capture
+             $RUN python scripts/calibrate_extrinsics.py capture "$@" ;;
   calib-solve)          # solve both cameras' pose in the robot base frame
              python3 ./scripts/calibrate_extrinsics.py solve "$@" ;;
   # openpi training (GPU only, no arm). Norm stats MUST run first: openpi does not
