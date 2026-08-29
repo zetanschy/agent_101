@@ -113,17 +113,21 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 #   PITCH about Y: tilts the camera's look direction
 #   YAW   about Z: which side of the wrist the mount sits on
 #
-# Not derived from the bolt holes -- the support's arm section has only C-shaped
-# notches ~8 mm apart, which do not match the 31 mm bolt spacing of the SO-ARM101's
-# own camera mount, so the mesh alone never said how the two mate. Posed by eye
-# instead. To adjust:  ./robot sim-play --gui --pose
+# Solved, not eyeballed. The support's two dia-4.0 holes are 8.00 mm apart in a face
+# whose normal is (0.811, 0, 0.585); the wrist bracket carries a matching pair of
+# dia-2.0/2.5 SCREW holes 8.15 mm apart (the mount's are clearance for them, which is
+# why a same-diameter search kept finding nothing). This transform puts one on the
+# other with the mating face flush -- a 1.07 mm residual gap was measured by ray cast
+# and closed along the face normal.
+#
+# Re-run ./robot sim-assets after touching these: the pose is baked into the USD.
 # Posed by hand in the viewport against the real print, then read off the property
 # panel: Translate (0.07456, 0.0919, -0.02029), Orient (90.003, 0.002, -179.983).
 # Rounded only where the panel's own noise made it obvious (90.003 -> 90).
-KLIP_MOUNT_POS = (-0.00362, 0.09079, -0.02278)
-KLIP_MOUNT_ROLL_DEG = 134.225
-KLIP_MOUNT_PITCH_DEG = -6.988
-KLIP_MOUNT_YAW_DEG = 96.922
+KLIP_MOUNT_POS = (0.01760, 0.03823, -0.02155)
+KLIP_MOUNT_ROLL_DEG = -90.112
+KLIP_MOUNT_PITCH_DEG = -0.179
+KLIP_MOUNT_YAW_DEG = -148.704
 
 
 def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
