@@ -64,28 +64,52 @@ def save(name: str, tensor) -> str:
 
 
 def _report_mount_transform() -> None:
-    """Print klip_support's transform in a form that can be pasted into objects.py.
+    """Print the mount's TOTAL pose, ready to paste into assets/objects.py.
 
-    The whole point of --pose: drag the mount against the wrist in the viewport, close
-    the window, and copy these two lines rather than reading numbers off a panel.
+    The subtlety: KLIP_MOUNT_* is baked into klip_support.usd, so the geometry
+    already carries it and the prim itself sits at identity. Dragging in the viewport
+    changes the prim, so Isaac's property panel shows only the delta you added -- not
+    the pose. Pasting the panel value straight in loses the bake.
+
+    This composes the two, so what it prints is the whole thing.
     """
     try:
+        import numpy as np
         import isaaclab.sim as sim_utils
-        from pxr import Gf, UsdGeom
+        from pxr import UsdGeom
+
+        from sim_agent101.assets.objects import KLIP_MOUNT_POS, KLIP_MOUNT_ROT
     except Exception:
         return
     prims = sim_utils.find_matching_prims("/World/envs/env_0/Robot/gripper/klip_support")
     if not prims:
         return
-    x = UsdGeom.Xformable(prims[0])
-    m = x.GetLocalTransformation()
-    t = m.ExtractTranslation()
+
+    def qmat(q):
+        w, x, y, z = q
+        return np.array([[1-2*(y*y+z*z), 2*(x*y-w*z), 2*(x*z+w*y)],
+                         [2*(x*y+w*z), 1-2*(x*x+z*z), 2*(y*z-w*x)],
+                         [2*(x*z-w*y), 2*(y*z+w*x), 1-2*(x*x+y*y)]])
+
+    m = UsdGeom.Xformable(prims[0]).GetLocalTransformation()
+    t_p = np.array(m.ExtractTranslation())
     q = m.ExtractRotationQuat()
     i = q.GetImaginary()
-    print("\nklip_support local transform (relative to the gripper body):")
-    print(f"    KLIP_MOUNT_POS  = ({t[0]:.5f}, {t[1]:.5f}, {t[2]:.5f})")
-    print(f"    quaternion wxyz = ({q.GetReal():.5f}, {i[0]:.5f}, {i[1]:.5f}, {i[2]:.5f})")
-    print("  paste into sim/sim_agent101/assets/objects.py")
+    R_p = qmat([q.GetReal(), i[0], i[1], i[2]])
+    R_b = qmat(np.array(KLIP_MOUNT_ROT))
+    R = R_p @ R_b
+    t = t_p + R_p @ np.array(KLIP_MOUNT_POS)
+    roll = np.degrees(np.arctan2(R[2, 1], R[2, 2]))
+    pitch = np.degrees(np.arcsin(np.clip(-R[2, 0], -1, 1)))
+    yaw = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
+    print("\nTOTAL mount pose (prim drag composed with the baked pose):")
+    print(f"    KLIP_MOUNT_POS = ({t[0]:.5f}, {t[1]:.5f}, {t[2]:.5f})")
+    print(f"    KLIP_MOUNT_ROLL_DEG = {roll:.3f}")
+    print(f"    KLIP_MOUNT_PITCH_DEG = {pitch:.3f}")
+    print(f"    KLIP_MOUNT_YAW_DEG = {yaw:.3f}")
+    print("  paste into sim/sim_agent101/assets/objects.py, then ./robot sim-assets")
+    if np.allclose(t_p, 0, atol=1e-9):
+        print("  (prim not moved -- this is just the baked pose)")
 
 
 def main() -> int:
