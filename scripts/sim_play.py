@@ -122,6 +122,18 @@ def main() -> int:
     obs, _ = env.reset()
     actions = env.unwrapped.action_manager.action.clone()
 
+    if args.pose:
+        # Straight to the window. The checks below step physics 180 times, which in
+        # pose mode is both pointless and a silent wait with nothing on screen.
+        print("\nPOSE MODE: physics is off. Drag klip_support, then close the window"
+              "\n  (or Ctrl-C here) -- the total pose is printed on the way out.")
+        try:
+            while app.is_running():
+                app.update()
+        except KeyboardInterrupt:
+            print("\ninterrupted")
+        return 0
+
     t0 = mdp.t_pose_world(env.unwrapped)[0].tolist()
     for _ in range(args.steps):
         obs, _, _, _, _ = env.step(actions)
@@ -172,9 +184,7 @@ def main() -> int:
         # Without this the checks finish and the window vanishes before you see it.
         print("\nwindow open: close it (or Ctrl-C here) to quit."
               "\n  mouse: left-drag orbit, middle-drag pan, scroll zoom")
-        stepping = not args.pose
-        if args.pose:
-            print("\nPOSE MODE: physics is not running, so you can move prims safely.")
+        stepping = True   # --pose returns before this; plain --gui runs physics
         try:
             while app.is_running():
                 if stepping:
@@ -195,8 +205,6 @@ def main() -> int:
                     app.update()
         except KeyboardInterrupt:
             print("\ninterrupted")
-        _report_mount_transform()
-
     env.close()
     return 1 if problems else 0
 
@@ -204,9 +212,17 @@ def main() -> int:
 code = 1
 try:
     code = main()
+except KeyboardInterrupt:
+    print("\ninterrupted")
 except BaseException:  # noqa: BLE001 - os._exit below would swallow the traceback
     traceback.print_exc()
 finally:
+    # In the finally, not at the end of main(): Ctrl-C is the normal way to leave pose
+    # mode, and reporting only on a clean return meant it printed nothing at all.
+    try:
+        _report_mount_transform()
+    except BaseException:  # noqa: BLE001
+        traceback.print_exc()
     # Deliberately NOT app.close(): Kit 4.5 hangs inside it on this box. A headless
     # run prints its result and never returns from close(), so calling it first does
     # not help. Everything we care about is on disk by here; let the OS reclaim.
