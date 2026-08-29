@@ -19,6 +19,7 @@ import os
 import sys
 import traceback
 import pathlib
+import time
 
 from isaaclab.app import AppLauncher
 
@@ -63,7 +64,7 @@ def save(name: str, tensor) -> str:
 
 
 
-def _report_mount_transform() -> None:
+def _report_mount_transform(path=None, quiet: bool = False) -> None:
     """Print the mount's TOTAL pose, ready to paste into assets/objects.py.
 
     The subtlety: KLIP_MOUNT_* is baked into klip_support.usd, so the geometry
@@ -102,14 +103,23 @@ def _report_mount_transform() -> None:
     roll = np.degrees(np.arctan2(R[2, 1], R[2, 2]))
     pitch = np.degrees(np.arcsin(np.clip(-R[2, 0], -1, 1)))
     yaw = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
-    print("\nTOTAL mount pose (prim drag composed with the baked pose):")
-    print(f"    KLIP_MOUNT_POS = ({t[0]:.5f}, {t[1]:.5f}, {t[2]:.5f})")
-    print(f"    KLIP_MOUNT_ROLL_DEG = {roll:.3f}")
-    print(f"    KLIP_MOUNT_PITCH_DEG = {pitch:.3f}")
-    print(f"    KLIP_MOUNT_YAW_DEG = {yaw:.3f}")
-    print("  paste into sim/sim_agent101/assets/objects.py, then ./robot sim-assets")
+    lines = [
+        "TOTAL mount pose (prim drag composed with the baked pose):",
+        f"    KLIP_MOUNT_POS = ({t[0]:.5f}, {t[1]:.5f}, {t[2]:.5f})",
+        f"    KLIP_MOUNT_ROLL_DEG = {roll:.3f}",
+        f"    KLIP_MOUNT_PITCH_DEG = {pitch:.3f}",
+        f"    KLIP_MOUNT_YAW_DEG = {yaw:.3f}",
+    ]
     if np.allclose(t_p, 0, atol=1e-9):
-        print("  (prim not moved -- this is just the baked pose)")
+        lines.append("  (prim not moved -- this is just the baked pose)")
+    if path is not None:
+        pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+        pathlib.Path(path).write_text("\n".join(lines) + "\n")
+    if not quiet:
+        print("\n" + "\n".join(lines))
+        print("  paste into sim/sim_agent101/assets/objects.py, then ./robot sim-assets")
+        if path is not None:
+            print(f"  also written to {path}")
 
 
 def main() -> int:
@@ -125,13 +135,22 @@ def main() -> int:
     if args.pose:
         # Straight to the window. The checks below step physics 180 times, which in
         # pose mode is both pointless and a silent wait with nothing on screen.
-        print("\nPOSE MODE: physics is off. Drag klip_support, then close the window"
-              "\n  (or Ctrl-C here) -- the total pose is printed on the way out.")
+        pose_file = OUT / "mount_pose.txt"
+        print(f"\nPOSE MODE: physics is off. Drag klip_support, then close the window."
+              f"\n  The pose is rewritten to {pose_file.relative_to(ROOT)} about once a"
+              f"\n  second, so Ctrl-C is fine too -- Kit swallows SIGINT and hard-exits,"
+              f"\n  which is why nothing used to print on the way out.")
+        last = 0.0
         try:
             while app.is_running():
                 app.update()
+                now = time.time()
+                if now - last > 1.0:
+                    _report_mount_transform(path=pose_file, quiet=True)
+                    last = now
         except KeyboardInterrupt:
             print("\ninterrupted")
+        _report_mount_transform(path=pose_file)
         return 0
 
     t0 = mdp.t_pose_world(env.unwrapped)[0].tolist()
