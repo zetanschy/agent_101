@@ -2,6 +2,8 @@
 
 from .objects import (  # noqa: F401
     BORE_CENTRE,
+    KLIP_MOUNT_POS,
+    KLIP_MOUNT_ROT,
     KLIP_SUPPORT_CFG,
     KWC500_BARREL_CFG,
     KWC500_BODY_CFG,
@@ -9,4 +11,5 @@ from .objects import (  # noqa: F401
     T_BLOCK_CFG,
     T_BLOCK_GEOMETRY,
     camera_cfg,
+    mount_local_to_gripper,
 )

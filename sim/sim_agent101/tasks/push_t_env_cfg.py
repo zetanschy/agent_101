@@ -30,6 +30,8 @@ from isaaclab.utils import configclass
 
 from .. import mdp
 from ..assets.objects import (
+    KLIP_MOUNT_POS,
+    KLIP_MOUNT_ROT,
     KLIP_SUPPORT_CFG,
     KWC500_BARREL_CFG,
     KWC500_BODY_CFG,

@@ -48,7 +48,8 @@ HERE = pathlib.Path(__file__).resolve().parent.parent / "sim" / "sim_agent101" /
 CAD, USD = HERE / "cad", HERE / "usd"
 
 
-def convert(stl: str, name: str, *, dynamic: bool, mass: float | None) -> pathlib.Path:
+def convert(stl: str, name: str, *, dynamic: bool, mass: float | None,
+            translation=(0.0, 0.0, 0.0), rotation=(1.0, 0.0, 0.0, 0.0)) -> pathlib.Path:
     out = USD / f"{name}.usd"
     if out.exists() and not args.force:
         print(f"  {name}: already converted ({out.relative_to(HERE.parent.parent.parent)})")
@@ -64,6 +65,8 @@ def convert(stl: str, name: str, *, dynamic: bool, mass: float | None) -> pathli
         usd_file_name=f"{name}.usd",
         force_usd_conversion=True,
         make_instanceable=False,
+        translation=translation,
+        rotation=rotation,
         collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
         # convexDecomposition, not convexHull: see the module docstring. This is
         # Isaac Lab 2.1's spelling; 2.3 moved it to mesh_collision_props.
@@ -94,7 +97,21 @@ def main() -> int:
         raise SystemExit(f"missing CAD in {CAD}: {missing}")
     print("converting CAD -> USD")
     convert("t_20_factor_0.5_scaled.stl", "t_block", dynamic=True, mass=args.t_mass)
-    convert("klip_support-1.stl", "klip_support", dynamic=False, mass=None)
+    # The mount's pose is BAKED IN here rather than set through AssetBaseCfg.init_state.
+    # Isaac Lab does not apply a child AssetBaseCfg's init_state as the prim's local
+    # transform, so the value in the config and the one Isaac's property panel shows
+    # were different quantities -- 142 mm apart, which is what made the mount look
+    # placed in the viewport while every measurement said it was floating. Baking makes
+    # the geometry itself carry the pose, so there is exactly one number to trust.
+    #
+    # Consequence: re-run this after changing KLIP_MOUNT_* in assets/objects.py. The
+    # cameras follow from code (mount_local_to_gripper) and do not need reconversion.
+    from sim_agent101.assets.objects import KLIP_MOUNT_POS, KLIP_MOUNT_ROT
+
+    print(f"  klip_support: baking pose {tuple(round(v, 5) for v in KLIP_MOUNT_POS)} "
+          f"rot {tuple(round(v, 5) for v in KLIP_MOUNT_ROT)}")
+    convert("klip_support-1.stl", "klip_support", dynamic=False, mass=None,
+            translation=tuple(KLIP_MOUNT_POS), rotation=tuple(KLIP_MOUNT_ROT))
     print(f"\nUSD in {USD}")
     for f in sorted(USD.glob("*.usd")):
         print(f"  {f.name}  {f.stat().st_size / 1024:.0f} KB")

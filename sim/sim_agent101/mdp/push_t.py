@@ -160,3 +160,15 @@ def set_robot_color(env, env_ids, color: tuple[float, float, float] = (0.93, 0.9
         shader = f"{robot.cfg.prim_path}/Looks/material_a_3d_printed/Shader"
         for prim in sim_utils.find_matching_prims(shader):
             prim.GetAttribute("inputs:diffuse_color_constant").Set(tuple(color))
+
+
+def set_mount_transform(env, env_ids, pos, quat) -> None:
+    """DO NOT USE as a startup event -- kept only as a record of a dead end.
+
+    Writing klip_support's local transform after the articulation exists invalidates
+    the PhysX tensor view ("Simulation view object is invalidated"), which is the same
+    thing that closes Isaac when you drag the prim in the viewport. Any fix for the
+    config-vs-property-panel mismatch has to happen at SPAWN time, not startup --
+    most likely by baking the offset via MeshConverterCfg.translation/rotation.
+    """
+    raise NotImplementedError("see docstring: invalidates the articulation")

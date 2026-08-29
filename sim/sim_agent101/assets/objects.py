@@ -86,18 +86,22 @@ T_BLOCK_CFG = RigidObjectCfg(
 #
 # The bore is what matters: the KWC-500's lens barrel drops into it, so the bore axis
 # IS the camera's optical axis and the bore centre is where the lens sits.
-BORE_CENTRE = (0.017, -0.0175, 0.0)     # on the underside of the plate
+BORE_CENTRE = (0.017, -0.0175, 0.0)     # bore axis through the plate, from the STL
 BORE_DIAMETER = 0.019
-PLATE_THICKNESS = 0.0035
-# Which face of the plate the webcam sits against. -1 = the underside (z = 0),
-# +1 = the top face (z = PLATE_THICKNESS).
+# Base plate of the support, measured off the STL's two large facets: underside at
+# z = 0 (area 994 mm2), top face at z = 3.5 mm (907 mm2), with the bore through both.
+PLATE_SEAT_Z = 0.0
+PLATE_TOP_Z = 0.0035
+# Which face the webcam is glued to. -1 = the underside.
 CAMERA_SIDE = -1
-# Face of the plate the camera stack grows out from. Everything below is measured
-# from here, so the BASE of each cylinder lands on the plate and the body extends
-# away from it -- not the far end touching while the barrel floats through.
-CAMERA_SEAT_Z = 0.0 if CAMERA_SIDE < 0 else PLATE_THICKNESS
-BARREL_LENGTH = 0.012
-BODY_LENGTH = 0.016
+
+# The KWC-500's body is a rectangular block, not a cylinder -- only its lens barrel is
+# round, and that is the part that drops into the bore. The block's base is GLUED to
+# the plate, so it starts exactly at PLATE_SEAT_Z with no gap.
+BODY_W, BODY_D, BODY_L = 0.030, 0.026, 0.016
+# The lens fills the bore and sits nearly flush with the far face -- it is a
+# webcam lens in a 3.5 mm plate, not a lens sticking 8 mm into the workspace.
+BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 
 # Where the mount meets the arm, relative to the `gripper` body.
 #
@@ -116,10 +120,10 @@ BODY_LENGTH = 0.016
 # Posed by hand in the viewport against the real print, then read off the property
 # panel: Translate (0.07456, 0.0919, -0.02029), Orient (90.003, 0.002, -179.983).
 # Rounded only where the panel's own noise made it obvious (90.003 -> 90).
-KLIP_MOUNT_POS = (0.07456, 0.09190, -0.02029)
-KLIP_MOUNT_ROLL_DEG = 90.0
-KLIP_MOUNT_PITCH_DEG = 0.0
-KLIP_MOUNT_YAW_DEG = -180.0
+KLIP_MOUNT_POS = (-0.00362, 0.09079, -0.02278)
+KLIP_MOUNT_ROLL_DEG = 134.225
+KLIP_MOUNT_PITCH_DEG = -6.988
+KLIP_MOUNT_YAW_DEG = 96.922
 
 
 def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
@@ -138,54 +142,83 @@ def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
 KLIP_MOUNT_ROT = _euler_quat(KLIP_MOUNT_ROLL_DEG, KLIP_MOUNT_PITCH_DEG, KLIP_MOUNT_YAW_DEG)
 
 
+def _quat_rotate(q, v):
+    w, x, y, z = q
+    t = (2*(y*v[2] - z*v[1]), 2*(z*v[0] - x*v[2]), 2*(x*v[1] - y*v[0]))
+    return (v[0] + w*t[0] + (y*t[2] - z*t[1]),
+            v[1] + w*t[1] + (z*t[0] - x*t[2]),
+            v[2] + w*t[2] + (x*t[1] - y*t[0]))
+
+
+def mount_local_to_gripper(p):
+    """A point in the support's own frame, expressed relative to the gripper body.
+
+    The support's placement is BAKED into its USD (see scripts/sim_convert_assets.py),
+    so its prim sits at identity and anything that must ride with it -- the webcam, the
+    wrist camera -- cannot simply be parented under it and inherit the pose. They are
+    siblings, positioned through here instead, off the same KLIP_MOUNT_* constants.
+    """
+    off = _quat_rotate(KLIP_MOUNT_ROT, p)
+    return tuple(KLIP_MOUNT_POS[i] + off[i] for i in range(3))
+
+
 KLIP_SUPPORT_CFG = AssetBaseCfg(
     prim_path="{ENV_REGEX_NS}/Robot/gripper/klip_support",
     spawn=sim_utils.UsdFileCfg(
         usd_path=f"{USD}/klip_support.usd",
-        # No visual_material here on purpose. Isaac Lab binds it at the klip_support
-        # prim, and USD material bindings inherit down -- which repainted the black
-        # webcam below it white. The converted STL already renders as light printed
-        # plastic, which is what the real part is.
+        # Printed in grey. Safe to bind here now that the webcam is a SIBLING rather
+        # than a child: a material bound at this prim inherits down the hierarchy, and
+        # when the camera lived underneath it this repainted it grey too.
+        visual_material=sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(0.45, 0.45, 0.47), roughness=0.85, metallic=0.0
+        ),
     ),
-    init_state=AssetBaseCfg.InitialStateCfg(pos=KLIP_MOUNT_POS, rot=KLIP_MOUNT_ROT),
+    # No init_state: the mount pose is baked into the USD at conversion time, because
+    # Isaac Lab does not apply a child AssetBaseCfg's init_state as the prim's local
+    # transform -- config and property panel disagreed by 142 mm.
 )
 
-# The webcam itself. The KWC-500 has no published CAD, so it is two cylinders sized to
-# the bore it drops into. Both are seated BASE-first on the plate face and grow away
-# from it, rather than passing through it with only their far end touching. Nothing
-# reads their geometry -- they are here to occlude what the real camera occludes.
+# The webcam. Rectangular body glued base-first to the plate, round lens barrel in the
+# bore. Siblings of the support, not children, so the support's grey does not inherit
+# onto them and so they survive the baked-USD placement.
+KWC500_BODY_CFG = AssetBaseCfg(
+    prim_path="{ENV_REGEX_NS}/Robot/gripper/kwc500_body",
+    spawn=sim_utils.CuboidCfg(
+        size=(BODY_W, BODY_D, BODY_L),
+        visual_material=sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(0.02, 0.02, 0.02), roughness=0.5, metallic=0.0
+        ),
+        collision_props=None,
+        rigid_props=None,
+    ),
+    init_state=AssetBaseCfg.InitialStateCfg(
+        # base ON the plate: the block is centred on its origin, so it sits half its
+        # length out from the seat face -- no gap.
+        pos=mount_local_to_gripper(
+            (BORE_CENTRE[0], BORE_CENTRE[1], PLATE_SEAT_Z + CAMERA_SIDE * BODY_L / 2)
+        ),
+        rot=KLIP_MOUNT_ROT,
+    ),
+)
 KWC500_BARREL_CFG = AssetBaseCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/gripper/klip_support/kwc500_barrel",
+    prim_path="{ENV_REGEX_NS}/Robot/gripper/kwc500_barrel",
     spawn=sim_utils.CylinderCfg(
         radius=BORE_DIAMETER / 2 - 0.0004,   # a hair under the bore, so it seats
         height=BARREL_LENGTH,
         axis="Z",
-        # The KWC-500 is a black webcam.
         visual_material=sim_utils.PreviewSurfaceCfg(
-            diffuse_color=(0.02, 0.02, 0.02), roughness=0.35, metallic=0.05
+            diffuse_color=(0.02, 0.02, 0.02), roughness=0.3, metallic=0.05
         ),
         collision_props=None,
         rigid_props=None,
     ),
     init_state=AssetBaseCfg.InitialStateCfg(
-        pos=(BORE_CENTRE[0], BORE_CENTRE[1], CAMERA_SEAT_Z + CAMERA_SIDE * BARREL_LENGTH / 2)
-    ),
-)
-KWC500_BODY_CFG = AssetBaseCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/gripper/klip_support/kwc500_body",
-    spawn=sim_utils.CylinderCfg(
-        radius=0.014,
-        height=BODY_LENGTH,
-        axis="Z",
-        visual_material=sim_utils.PreviewSurfaceCfg(
-            diffuse_color=(0.03, 0.03, 0.03), roughness=0.6, metallic=0.0
+        # from the seat face back through the plate, so the lens fills the bore
+        # centred in the plate's thickness, so it fills the bore and no more
+        pos=mount_local_to_gripper(
+            (BORE_CENTRE[0], BORE_CENTRE[1], PLATE_SEAT_Z + (PLATE_TOP_Z - PLATE_SEAT_Z) / 2)
         ),
-        collision_props=None,
-        rigid_props=None,
-    ),
-    init_state=AssetBaseCfg.InitialStateCfg(
-        pos=(BORE_CENTRE[0], BORE_CENTRE[1],
-             CAMERA_SEAT_Z + CAMERA_SIDE * (BARREL_LENGTH + BODY_LENGTH / 2))
+        rot=KLIP_MOUNT_ROT,
     ),
 )
 
