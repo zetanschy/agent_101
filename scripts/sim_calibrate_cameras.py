@@ -33,8 +33,27 @@ import cv2
 import numpy as np
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "sim"))
-from sim_agent101.cameras import CAMERAS, CONFIG, default_config  # noqa: E402
+
+def _load(name):
+    """Import a sim_agent101 submodule without executing the package __init__.
+
+    sim_agent101/__init__.py pulls in isaaclab to register the Gym envs, and these
+    calibration tools run on the host where isaaclab does not exist. cameras.py and
+    kinematics.py are deliberately dependency-free, so load them by path.
+    """
+    import importlib.util
+    path = pathlib.Path(__file__).resolve().parent.parent / "sim" / "sim_agent101" / f"{name}.py"
+    import sys as _sys
+    spec = importlib.util.spec_from_file_location(f"_sim_agent101_{name}", path)
+    mod = importlib.util.module_from_spec(spec)
+    # Register before exec: @dataclass looks the module up in sys.modules while the
+    # class body is being processed, and blows up if it is not there yet.
+    _sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+_cameras = _load("cameras")
+CAMERAS, CONFIG, default_config = _cameras.CAMERAS, _cameras.CONFIG, _cameras.default_config
 
 MIN_VIEWS = 8
 CRITERIA = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
