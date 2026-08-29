@@ -4,42 +4,42 @@
     "front": {
       "width": 640,
       "height": 480,
-      "fx": 940.388,
-      "fy": 940.388,
-      "cx": 320.0,
-      "cy": 240.0,
+      "fx": 990.396,
+      "fy": 996.956,
+      "cx": 323.496,
+      "cy": 300.367,
       "distortion": [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
+        0.24718,
+        -1.625751,
+        0.023494,
+        0.003223,
+        6.617417
       ],
-      "hfov_deg": 37.585,
-      "vfov_deg": 28.634,
-      "source": "spec",
+      "hfov_deg": 35.812,
+      "vfov_deg": 27.071,
+      "source": "calibrated",
       "model": "Logitech C270 HD",
-      "note": "overhead, looking down at the mat"
+      "note": "cv2.calibrateCamera, 15 views, RMS reprojection 0.2651 px"
     },
     "grip": {
       "width": 640,
       "height": 480,
-      "fx": 583.405,
-      "fy": 583.405,
-      "cx": 320.0,
-      "cy": 240.0,
+      "fx": 735.485,
+      "fy": 695.496,
+      "cx": 212.042,
+      "cy": 205.469,
       "distortion": [
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0
+        -0.334987,
+        0.03574,
+        0.002793,
+        0.004876,
+        0.075527
       ],
-      "hfov_deg": 57.49,
-      "vfov_deg": 44.722,
-      "source": "spec",
+      "hfov_deg": 47.026,
+      "vfov_deg": 38.077,
+      "source": "calibrated",
       "model": "Klip Xtreme KWC-500 FHD (Laguham)",
-      "note": "in klip_support-1, bolted to the SO-ARM101 wrist holes"
+      "note": "cv2.calibrateCamera, 15 views, RMS reprojection 0.7608 px"
     }
   }
 }

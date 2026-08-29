@@ -30,6 +30,7 @@ below its target, which in sim is up to 9 mm at full extension.
 
 import argparse
 import json
+import os
 import pathlib
 import sys
 import time
@@ -61,6 +62,8 @@ _cameras = _load("cameras")
 _kin = _load("kinematics")
 CAMERAS, load_intrinsics = _cameras.CAMERAS, _cameras.load
 CHAIN, fk_gripper = _kin.CHAIN, _kin.fk_gripper
+URDF_TO_LEROBOT = _kin.URDF_TO_LEROBOT
+JOINTS_FILE = ROOT / "sim" / "outputs" / "calib" / "joints.json"
 
 SESSION = ROOT / "sim" / "outputs" / "calib"
 OUT = ROOT / "sim" / "sim_agent101" / "config" / "extrinsics.json"
@@ -69,7 +72,6 @@ DICT = cv2.aruco.DICT_4X4_100
 # nodes (CAM_*_INDEX in .env, 4 and 6), while on the host they enumerate as 0 and 2.
 # capture runs in the container, so the env vars win there and the host values are
 # only the fallback.
-import os  # noqa: E402
 DEV = {"front": int(os.environ.get("CAM_FRONT_INDEX", 0)),
        "grip": int(os.environ.get("CAM_GRIP_INDEX", 2))}
 
@@ -130,36 +132,128 @@ def read_joints():
     return np.array([np.deg2rad(float(obs[f"{n}.pos"])) for n in CHAIN])
 
 
+def cmd_teleop(a) -> int:
+    """Drive the follower from the leader and publish its measured joints.
+
+    Runs INSIDE the container: it needs lerobot and both serial buses. The follower
+    bus can only be opened once, so capture cannot read joints itself while this is
+    running -- instead this writes them to a file about 30 times a second and capture
+    reads that. The repo root is mounted into the container, so both see it.
+
+    Splitting it this way also dodges the container's HEADLESS OpenCV, which cannot
+    open the preview window capture needs.
+    """
+    from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+    from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+
+    follower = SO101Follower(SO101FollowerConfig(
+        port=os.environ.get("ROBOT_PORT", "/dev/ttyACM1"),
+        id=os.environ.get("ROBOT_ID", "zetans_follower"), cameras={}, use_degrees=True))
+    leader = SO101Leader(SO101LeaderConfig(
+        port=os.environ.get("TELEOP_PORT", "/dev/ttyACM0"),
+        id=os.environ.get("TELEOP_ID", "zetans_leader")))
+    follower.connect()
+    leader.connect()
+    JOINTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    print(f"teleop running. Move the LEADER; joints published to "
+          f"{JOINTS_FILE.relative_to(ROOT)}. Ctrl-C to stop.", flush=True)
+    try:
+        while True:
+            follower.send_action(leader.get_action())
+            obs = follower.get_observation()
+            JOINTS_FILE.write_text(json.dumps({
+                "t": time.time(),
+                "joints_deg": {u: float(obs[f"{lr}.pos"]) for u, lr in
+                               ((u, URDF_TO_LEROBOT[u]) for u in CHAIN)}}))
+            time.sleep(1 / 30)
+    except KeyboardInterrupt:
+        print("\nstopped")
+    finally:
+        try:
+            leader.disconnect(); follower.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+    return 0
+
+
+def _joints_published(max_age_s: float = 2.0) -> np.ndarray:
+    """Latest joints from the teleop publisher, in radians, in CHAIN order."""
+    if not JOINTS_FILE.exists():
+        raise RuntimeError("no joints.json -- start './robot calib-teleop' in another terminal")
+    d = json.loads(JOINTS_FILE.read_text())
+    age = time.time() - d["t"]
+    if age > max_age_s:
+        raise RuntimeError(f"joints.json is {age:.0f}s stale -- is calib-teleop still running?")
+    return np.array([np.deg2rad(d["joints_deg"][n]) for n in CHAIN])
+
+
+def _open(index: int, size=(640, 480)):
+    cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
+    if not cap.isOpened():
+        raise SystemExit(f"cannot open /dev/video{index}")
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
+    return cap
+
+
 def cmd_capture(a) -> int:
+    """Live view of the wrist camera; SPACE captures, q quits.
+
+    Runs on the HOST: the container's OpenCV is headless, so cv2.imshow raises there.
+    Joint angles come from the container instead, one shell-out per capture.
+    """
     SESSION.mkdir(parents=True, exist_ok=True)
-    board, adict = make_board(a.cols, a.rows, a.square, a.marker)
+    board, _ = make_board(a.cols, a.rows, a.square, a.marker)
     det = cv2.aruco.CharucoDetector(board)
     n = len(list(SESSION.glob("pose_*.json")))
+
+    wrist = _open(DEV["grip"])
+    top = _open(DEV["front"])
     print(f"capturing into {SESSION.relative_to(ROOT)} (already have {n})")
-    print("Move the arm so the WRIST camera sees the board from a new angle, then ENTER.")
-    print("Vary rotation, not just position -- pure translation makes the solve degenerate.")
-    print("Type q then ENTER to stop.\n")
-    while True:
-        if input(f"[{n} captured] ENTER to grab, q to stop: ").strip().lower() == "q":
-            break
-        try:
-            q = read_joints()
-        except Exception as e:  # noqa: BLE001
-            print(f"  cannot read joints: {e}")
-            continue
-        wrist = grab(DEV["grip"])
-        top = grab(DEV["front"])
-        cc, ci, _, _ = det.detectBoard(cv2.cvtColor(wrist, cv2.COLOR_BGR2GRAY))
-        k = 0 if ci is None else len(ci)
-        if k < a.min_corners:
-            print(f"  only {k} charuco corners in the wrist view (need {a.min_corners}) -- skipped")
-            continue
-        cv2.imwrite(str(SESSION / f"wrist_{n:03d}.png"), wrist)
-        cv2.imwrite(str(SESSION / f"top_{n:03d}.png"), top)
-        (SESSION / f"pose_{n:03d}.json").write_text(json.dumps({
-            "joints_rad": q.tolist(), "joint_names": CHAIN, "charuco_corners": k}))
-        print(f"  captured #{n}: {k} corners, joints(deg) {np.round(np.rad2deg(q),1).tolist()}")
-        n += 1
+    print("SPACE capture   q quit.  Move the arm so the WRIST camera sees the board")
+    print("from a NEW ANGLE each time -- vary rotation, not just position.\n")
+    try:
+        while True:
+            ok, frame = wrist.read()
+            if not ok:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            cc, ci, _, _ = det.detectBoard(gray)
+            k = 0 if ci is None else len(ci)
+            vis = frame.copy()
+            if k:
+                cv2.aruco.drawDetectedCornersCharuco(vis, cc, ci, (0, 255, 0))
+            good = k >= a.min_corners
+            colour = (0, 220, 0) if good else (0, 0, 255)
+            cv2.rectangle(vis, (0, 0), (vis.shape[1], 30), (0, 0, 0), -1)
+            cv2.putText(vis, f"{k} corners (need {a.min_corners})   captured {n}   "
+                             f"{'SPACE to grab' if good else 'board not visible enough'}",
+                        (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.52, colour, 1, cv2.LINE_AA)
+            cv2.imshow("calib-capture  |  wrist camera", vis)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                break
+            if key == 32:
+                if not good:
+                    print(f"  only {k} corners -- not captured")
+                    continue
+                try:
+                    q = _joints_published()
+                except Exception as e:  # noqa: BLE001
+                    print(f"  {e}")
+                    continue
+                ok_t, tframe = top.read()
+                cv2.imwrite(str(SESSION / f"wrist_{n:03d}.png"), frame)
+                if ok_t:
+                    cv2.imwrite(str(SESSION / f"top_{n:03d}.png"), tframe)
+                (SESSION / f"pose_{n:03d}.json").write_text(json.dumps({
+                    "joints_rad": q.tolist(), "joint_names": CHAIN, "charuco_corners": k}))
+                print(f"  #{n}: {k} corners, joints(deg) {np.round(np.rad2deg(q),1).tolist()}")
+                n += 1
+    finally:
+        wrist.release(); top.release()
+        cv2.destroyAllWindows()
     print(f"\n{n} poses. {'Run ./robot calib-solve' if n >= 8 else 'Need at least 8.'}")
     return 0
 
@@ -269,7 +363,8 @@ def cmd_solve(a) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name, fn in (("board", cmd_board), ("capture", cmd_capture), ("solve", cmd_solve)):
+    for name, fn in (("board", cmd_board), ("capture", cmd_capture),
+                     ("solve", cmd_solve), ("teleop", cmd_teleop)):
         s = sub.add_parser(name)
         s.add_argument("--cols", type=int, default=7)
         s.add_argument("--rows", type=int, default=10)

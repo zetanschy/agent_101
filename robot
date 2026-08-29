@@ -120,11 +120,17 @@ case "$cmd" in
   calib-board)          # just the ChArUco board (print-targets makes all three)
              python3 ./scripts/calibrate_extrinsics.py board "$@" ;;
   calib-capture)        # record arm poses looking at the board
-             # In the container, not on the host: it reads joint angles through
-             # lerobot, which is only installed in the image, and needs the serial
-             # and camera passthrough compose already wires up.
+             # On the HOST: the live preview needs a GUI OpenCV and the container
+             # ships the headless build. It shells into the container for each joint
+             # read, which is the only part that needs lerobot and the serial bus.
              needs_docker calib-capture
-             $RUN python scripts/calibrate_extrinsics.py capture "$@" ;;
+             python3 ./scripts/calibrate_extrinsics.py capture "$@" ;;
+  calib-teleop)         # drive the follower from the leader, publishing its joints
+             # In the container (needs lerobot + both serial buses). Leave it running
+             # in one terminal while calib-capture runs in another: the follower bus
+             # can only be opened once, so capture reads the joints this publishes.
+             needs_docker calib-teleop
+             $RUN python scripts/calibrate_extrinsics.py teleop "$@" ;;
   calib-solve)          # solve both cameras' pose in the robot base frame
              python3 ./scripts/calibrate_extrinsics.py solve "$@" ;;
   # openpi training (GPU only, no arm). Norm stats MUST run first: openpi does not
@@ -174,7 +180,10 @@ so rather than failing with "docker: command not found".
   ./robot sim-calibrate --camera front|grip   measure real intrinsics (checkerboard)
   ./robot sim-compare-cameras   sim render vs live capture, to tune camera placement
   ./robot print-targets         PDFs to print: checkerboard, charuco, push-T goal
-  ./robot calib-board           just the charuco; then calib-capture / calib-solve
+  ./robot calib-board           just the charuco
+  ./robot calib-teleop          drive the arm from the leader while calibrating
+  ./robot calib-capture         record poses (run calib-teleop in another terminal)
+  ./robot calib-solve           solve where both cameras are, in the base frame
                                 to measure where both cameras really are (extrinsics)
   ./robot webui                        browser control panel: home/infer/record/params
   ./robot home                         move follower to calibrated-zero pose

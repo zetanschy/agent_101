@@ -22,6 +22,17 @@ URDF = pathlib.Path(__file__).parent / "urdf" / "so101_new_calib.urdf"
 # Base to gripper. `Jaw` drives the finger and is not part of this chain.
 CHAIN = ["Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll"]
 
+# lerobot names the joints differently from the URDF. Same order, different words.
+LEROBOT_TO_URDF = {
+    "shoulder_pan": "Rotation",
+    "shoulder_lift": "Pitch",
+    "elbow_flex": "Elbow",
+    "wrist_flex": "Wrist_Pitch",
+    "wrist_roll": "Wrist_Roll",
+    "gripper": "Jaw",
+}
+URDF_TO_LEROBOT = {v: k for k, v in LEROBOT_TO_URDF.items()}
+
 
 def _rpy(r: float, p: float, y: float) -> np.ndarray:
     cr, sr, cp, sp, cy, sy = np.cos(r), np.sin(r), np.cos(p), np.sin(p), np.cos(y), np.sin(y)
