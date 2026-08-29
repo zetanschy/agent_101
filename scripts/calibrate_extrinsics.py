@@ -257,8 +257,8 @@ def main() -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
     for name, fn in (("board", cmd_board), ("capture", cmd_capture), ("solve", cmd_solve)):
         s = sub.add_parser(name)
-        s.add_argument("--cols", type=int, default=8)
-        s.add_argument("--rows", type=int, default=11)
+        s.add_argument("--cols", type=int, default=7)
+        s.add_argument("--rows", type=int, default=10)
         s.add_argument("--square", type=float, default=25.0, help="square size in mm, MEASURED after printing")
         s.add_argument("--marker", type=float, default=18.0, help="aruco marker size in mm")
         if name == "capture":

@@ -45,7 +45,24 @@ def _tblock():
 MM = 1 / 25.4  # matplotlib works in inches
 
 
-def _sheet(w_mm=210, h_mm=297):
+A4 = (210.0, 297.0)
+
+
+def _sheet(landscape: bool = False, need=None):
+    """Always a real A4 page.
+
+    Sizing the page to the content was the bug: it produced 230x325 and 280x297 mm
+    sheets, which no printer can output at 100% on A4, so every print silently
+    scaled and every calibrated distance would have come out wrong.
+    """
+    w_mm, h_mm = (A4[1], A4[0]) if landscape else A4
+    if need is not None:
+        nw, nh = need
+        if nw > w_mm - 14 or nh > h_mm - 32:
+            raise SystemExit(
+                f"content {nw:.0f}x{nh:.0f} mm does not fit A4"
+                f"{' landscape' if landscape else ''} ({w_mm:.0f}x{h_mm:.0f}) with margins "
+                f"and a scale bar -- reduce --square or the square count")
     fig = plt.figure(figsize=(w_mm * MM, h_mm * MM))
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, w_mm); ax.set_ylim(0, h_mm)
@@ -65,7 +82,8 @@ def _scalebar(ax, x, y, label):
 def checkerboard(cols_inner=9, rows_inner=6, square=25.0):
     nx, ny = cols_inner + 1, rows_inner + 1
     w, h = nx * square, ny * square
-    fig, ax = _sheet(max(210, w + 30), max(297, h + 50))
+    # 10x7 squares at 25 mm is 250x175 -- lands on A4 only in landscape
+    fig, ax = _sheet(landscape=True, need=(w, h))
     x0 = (ax.get_xlim()[1] - w) / 2
     y0 = ax.get_ylim()[1] - h - 30
     for i in range(nx):
@@ -111,14 +129,14 @@ def push_t():
     return fig
 
 
-def charuco(cols=8, rows=11, square=25.0, marker=18.0):
+def charuco(cols=7, rows=10, square=25.0, marker=18.0):
     import cv2
     import numpy as np
     d = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_100)
     board = cv2.aruco.CharucoBoard((cols, rows), square / 1000.0, marker / 1000.0, d)
     img = board.generateImage((int(cols * square * 10), int(rows * square * 10)), marginSize=0)
     w, h = cols * square, rows * square
-    fig, ax = _sheet(max(210, w + 30), max(297, h + 50))
+    fig, ax = _sheet(need=(w, h))
     x0 = (ax.get_xlim()[1] - w) / 2
     y0 = ax.get_ylim()[1] - h - 30
     ax.imshow(np.flipud(img), cmap="gray", vmin=0, vmax=255,
@@ -133,11 +151,13 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--square", type=float, default=25.0)
     p.add_argument("--marker", type=float, default=18.0)
+    p.add_argument("--cols", type=int, default=7, help="charuco columns (7x10 at 25 mm fits A4)")
+    p.add_argument("--rows", type=int, default=10)
     a = p.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     made = []
     for name, fig in (("checkerboard_intrinsics", checkerboard(square=a.square)),
-                      ("charuco_extrinsics", charuco(square=a.square, marker=a.marker)),
+                      ("charuco_extrinsics", charuco(cols=a.cols, rows=a.rows, square=a.square, marker=a.marker)),
                       ("push_t_goal", push_t())):
         pdf = OUT / f"{name}.pdf"
         with PdfPages(pdf) as pp:
