@@ -88,8 +88,11 @@ T_BLOCK_CFG = RigidObjectCfg(
 # IS the camera's optical axis and the bore centre is where the lens sits.
 BORE_CENTRE = (0.017, -0.0175, 0.0)     # bore axis through the plate, from the STL
 BORE_DIAMETER = 0.019
-# Base plate of the support, measured off the STL's two large facets: underside at
-# z = 0 (area 994 mm2), top face at z = 3.5 mm (907 mm2), with the bore through both.
+# Base plate of the support. Confirmed against the built scene, not just the STL:
+# sampling the support mesh within 16 mm of the bore axis gives exactly two face
+# planes, z = 0.000 and z = 3.500 mm, 294 vertices each. So a 3.5 mm sliver between
+# the webcam and the plate in the viewport is the plate's own thickness -- the body
+# is attached to the far face, not floating. That is a side to choose, not a gap.
 PLATE_SEAT_Z = 0.0
 PLATE_TOP_Z = 0.0035
 # Which face of the plate the webcam is glued to. +1 = the face the bore looks out
@@ -97,7 +100,7 @@ PLATE_TOP_Z = 0.0035
 # construction, so a gap in the viewport means this is on the wrong side, not that
 # the seating maths is off -- the base-face-to-plate distance measures 0.00 mm over
 # 60 samples either way.
-CAMERA_SIDE = 1
+CAMERA_SIDE = -1
 
 # The KWC-500's body is a rectangular block, not a cylinder -- only its lens barrel is
 # round, and that is the part that drops into the bore. The block's base is GLUED to
