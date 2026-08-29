@@ -115,6 +115,14 @@ case "$cmd" in
              python3 ./scripts/sim_calibrate_cameras.py "$@" ;;
   sim-compare-cameras)  # sim render next to a live capture, for tuning extrinsics
              python3 ./scripts/sim_compare_cameras.py "$@" ;;
+  print-targets)        # every printable: checkerboard, charuco, push-T goal
+             python3 ./scripts/make_print_targets.py "$@" ;;
+  calib-board)          # just the ChArUco board (print-targets makes all three)
+             python3 ./scripts/calibrate_extrinsics.py board "$@" ;;
+  calib-capture)        # record arm poses looking at the board
+             python3 ./scripts/calibrate_extrinsics.py capture "$@" ;;
+  calib-solve)          # solve both cameras' pose in the robot base frame
+             python3 ./scripts/calibrate_extrinsics.py solve "$@" ;;
   # openpi training (GPU only, no arm). Norm stats MUST run first: openpi does not
   # compute them during training, and without them the run trains on wrong statistics.
   # openpi's scripts live in the submodule (/opt/openpi), but we stay in /workspace so
@@ -161,6 +169,9 @@ so rather than failing with "docker: command not found".
   ./robot sim-camera-check      verify the sim camera model against the real cameras
   ./robot sim-calibrate --camera front|grip   measure real intrinsics (checkerboard)
   ./robot sim-compare-cameras   sim render vs live capture, to tune camera placement
+  ./robot print-targets         PDFs to print: checkerboard, charuco, push-T goal
+  ./robot calib-board           just the charuco; then calib-capture / calib-solve
+                                to measure where both cameras really are (extrinsics)
   ./robot webui                        browser control panel: home/infer/record/params
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
