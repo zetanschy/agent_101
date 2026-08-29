@@ -124,10 +124,10 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 # Posed by hand in the viewport against the real print, then read off the property
 # panel: Translate (0.07456, 0.0919, -0.02029), Orient (90.003, 0.002, -179.983).
 # Rounded only where the panel's own noise made it obvious (90.003 -> 90).
-KLIP_MOUNT_POS = (-0.00874, -0.08678, -0.02146)
-KLIP_MOUNT_ROLL_DEG = -89.890
-KLIP_MOUNT_PITCH_DEG = 0.180
-KLIP_MOUNT_YAW_DEG = 31.280
+KLIP_MOUNT_POS = (-0.03109, -0.07730, 0.00563)
+KLIP_MOUNT_ROLL_DEG = 90.210
+KLIP_MOUNT_PITCH_DEG = -0.050
+KLIP_MOUNT_YAW_DEG = 102.920
 
 
 def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
