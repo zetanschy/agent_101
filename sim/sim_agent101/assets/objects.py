@@ -126,11 +126,16 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 # kept picking confidently wrong pairs and then verifying them against their own
 # bad assumption. A hand placement supplies the region; spacing picks the pair.
 #
+# Four flips keep the holes concentric (identity, 180 about the hole line, 180 about
+# the screw axis, both). They are NOT equivalent -- max penetration into the arm is
+# 11.96 / 3.34 / 1.38 / 7.75 mm respectively. This is the 1.38 mm one; the others
+# drive the support visibly through the wrist.
+#
 # Re-run ./robot sim-assets after touching these: the pose is baked into the USD.
-KLIP_MOUNT_POS = (0.05364, 0.03042, -0.02320)
-KLIP_MOUNT_ROLL_DEG = 165.315
-KLIP_MOUNT_PITCH_DEG = -36.762
-KLIP_MOUNT_YAW_DEG = -170.726
+KLIP_MOUNT_POS = (0.05298, 0.00893, -0.05253)
+KLIP_MOUNT_ROLL_DEG = -14.039
+KLIP_MOUNT_PITCH_DEG = 33.153
+KLIP_MOUNT_YAW_DEG = 172.573
 
 
 def _euler_quat(roll_deg: float, pitch_deg: float, yaw_deg: float):
