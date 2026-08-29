@@ -113,17 +113,20 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 #   PITCH about Y: tilts the camera's look direction
 #   YAW   about Z: which side of the wrist the mount sits on
 #
-# Solved, not eyeballed. The support's two dia-4.0 holes are 8.00 mm apart in a face
-# whose normal is (0.811, 0, 0.585); the wrist bracket carries a matching pair of
-# dia-2.0/2.5 SCREW holes 8.15 mm apart (the mount's are clearance for them, which is
-# why a same-diameter search kept finding nothing). This transform puts one on the
-# other with the mating face flush -- a 1.07 mm residual gap was measured by ray cast
-# and closed along the face normal.
+# EXACT, and measured. The mount's holes and the bracket's are concentric to 0.05 mm:
+#   mount   (262.55, 43.40, 258.00)   (264.17, 35.57, 258.05)
+#   bracket (262.55, 43.44, 258.00)   (264.19, 35.53, 258.05)
+#
+# Found by matching on hole SPACING, which is the only usable signal here. The
+# mount's holes are 8.00 mm apart and this bracket pair is 8.08; every other
+# candidate within 60 mm is 6.93-6.95, a 1 mm mismatch no rigid transform absorbs.
+# Diameter is useless for matching -- the mount's dia-4.0 holes are clearance for
+# dia-2.0 screws, so the two sides never agree -- and matching on proximity is
+# circular when the starting pose is itself wrong, which is how earlier attempts
+# kept picking confidently wrong pairs and then verifying them against their own
+# bad assumption. A hand placement supplies the region; spacing picks the pair.
 #
 # Re-run ./robot sim-assets after touching these: the pose is baked into the USD.
-# Posed by hand in the viewport against the real print, then read off the property
-# panel: Translate (0.07456, 0.0919, -0.02029), Orient (90.003, 0.002, -179.983).
-# Rounded only where the panel's own noise made it obvious (90.003 -> 90).
 KLIP_MOUNT_POS = (0.05364, 0.03042, -0.02320)
 KLIP_MOUNT_ROLL_DEG = 165.315
 KLIP_MOUNT_PITCH_DEG = -36.762
