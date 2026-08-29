@@ -29,6 +29,19 @@ from matplotlib.patches import Polygon, Rectangle  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "sim" / "outputs" / "print"
+
+
+def _tblock():
+    """The same geometry the sim uses. Loaded by path because the package __init__
+    pulls in isaaclab, which is not present on the host."""
+    import importlib.util
+    import sys as _sys
+    path = ROOT / "sim" / "sim_agent101" / "tblock.py"
+    spec = importlib.util.spec_from_file_location("_sim_agent101_tblock", path)
+    mod = importlib.util.module_from_spec(spec)
+    _sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod.T_BLOCK_GEOMETRY
 MM = 1 / 25.4  # matplotlib works in inches
 
 
@@ -67,22 +80,31 @@ def checkerboard(cols_inner=9, rows_inner=6, square=25.0):
     return fig
 
 
-def push_t(bar_w=80.0, bar_d=20.0, stem_w=20.0, stem_l=60.0):
-    """The T's footprint, from sim_agent101.assets.objects.TBlockGeometry."""
+def push_t():
+    """The T's footprint, straight from the geometry the simulation uses."""
+    g = _tblock()
+    bar_w = g.bar_width * 1000
+    bar_d = g.bar_depth * 1000
+    stem_w = g.stem_width * 1000
+    stem_l = g.stem_length * 1000
     fig, ax = _sheet()
-    cx, cy = 105, 170
-    # mesh frame: bar spans y -10..10, stem hangs to -70; centre it on the sheet
+    cx, cy = 105, 155
     pts = [(-bar_w/2, bar_d/2), (bar_w/2, bar_d/2), (bar_w/2, -bar_d/2),
            (stem_w/2, -bar_d/2), (stem_w/2, -bar_d/2 - stem_l),
            (-stem_w/2, -bar_d/2 - stem_l), (-stem_w/2, -bar_d/2), (-bar_w/2, -bar_d/2)]
-    off_y = (bar_d/2 + (bar_d/2 + stem_l)) / 2 - bar_d/2
+    off_y = (bar_d + stem_l) / 2 - bar_d / 2
     poly = [(cx + x, cy + y + off_y) for x, y in pts]
-    ax.add_patch(Polygon(poly, closed=True, facecolor=(1, 0.85, 0.85),
-                         edgecolor=(0.85, 0.05, 0.05), lw=3.0, joinstyle="miter"))
-    ax.plot([cx], [cy + off_y - (bar_d/2 + stem_l)/2 + stem_l/2], marker="+", ms=8,
-            color=(0.85, 0.05, 0.05), lw=1)
-    ax.text(cx, cy + 70, "PUSH-T GOAL", ha="center", fontsize=11, weight="bold")
-    ax.text(cx, cy + 62,
+    # Solid red: the overhead camera has to segment this against a black mat and a
+    # grey printed T, and an outline with a pale fill gives it almost nothing to
+    # threshold on.
+    RED = (0.83, 0.05, 0.05)
+    ax.add_patch(Polygon(poly, closed=True, facecolor=RED, edgecolor=RED, lw=1.0,
+                         joinstyle="miter"))
+    # Captions clear of the shape: at 100 mm tall the T reaches further up the sheet
+    # than the 80 mm one did, and the subtitle used to land on top of the crossbar.
+    top = cy + off_y + bar_d / 2
+    ax.text(cx, top + 22, "PUSH-T GOAL", ha="center", fontsize=11, weight="bold")
+    ax.text(cx, top + 13,
             f"{bar_w:g} x {bar_d + stem_l:g} mm footprint, {bar_d:g} mm bar, {stem_w:g} mm stem",
             ha="center", fontsize=8, color="0.35")
     _scalebar(ax, cx - 50, 60, "tape flat on the mat where the T should end up")

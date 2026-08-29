@@ -6,7 +6,6 @@ the source of truth and the conversion is deterministic.
 
 from __future__ import annotations
 
-import dataclasses
 import math
 import pathlib
 
@@ -21,32 +20,7 @@ HERE = pathlib.Path(__file__).parent
 USD = HERE / "usd"
 
 
-@dataclasses.dataclass(frozen=True)
-class TBlockGeometry:
-    """Measured off t_20_factor_0.5_scaled.stl, in metres.
-
-    The mesh origin sits at the middle of the crossbar, NOT at the centroid -- the
-    stem hangs off toward -y. Anything that reasons about "where the T is" wants
-    the centroid, so it is derived here once rather than re-guessed per call site.
-    """
-
-    bar_width: float = 0.080      # x extent of the crossbar
-    bar_depth: float = 0.020      # y extent of the crossbar
-    stem_width: float = 0.020     # x extent of the stem
-    stem_length: float = 0.060    # y extent of the stem, hanging toward -y
-    thickness: float = 0.016      # z extent
-    volume_m3: float = 44.80e-6   # by mesh integration
-
-    @property
-    def centroid_offset(self) -> tuple[float, float, float]:
-        """Centroid in mesh coordinates: the point a push should be measured against."""
-        bar_a = self.bar_width * self.bar_depth
-        stem_a = self.stem_width * self.stem_length
-        cy = (bar_a * 0.0 + stem_a * -(self.bar_depth / 2 + self.stem_length / 2)) / (bar_a + stem_a)
-        return (0.0, cy, self.thickness / 2)
-
-
-T_BLOCK_GEOMETRY = TBlockGeometry()
+from ..tblock import T_BLOCK_GEOMETRY, TBlockGeometry  # noqa: F401
 
 # Printed PLA sliding on a rubber mat: grippy. Set too low, a nudge turns into a
 # hockey shot no policy can undo. Isaac Lab 2.1 has no physics_material on

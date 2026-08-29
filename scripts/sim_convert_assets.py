@@ -6,7 +6,7 @@
 
 Two parts, and they want opposite treatment:
 
-  t_20_factor_0.5_scaled  the pushed T. 80x80 mm footprint, 20 mm bar and stem,
+  t_20_factor_0.5  the pushed T. 100 x 100 mm footprint, 25 mm bar and stem,
       16 mm thick, 44.8 cm^3 by mesh volume. It is a DYNAMIC rigid body, and its
       collision must be a convex DECOMPOSITION: a T is non-convex, and the convex
       hull fills in both notches, turning a shape that catches the gripper into a
@@ -19,7 +19,7 @@ Two parts, and they want opposite treatment:
       to sit where it sits in real life, so the wrist camera looks out from the
       right place and the mount occludes the same sliver of the frame.
 
-Mass defaults to a 20%%-infill PLA estimate (~24 g for the T). Weigh the real part
+Mass defaults to a 20%%-infill PLA estimate (~48 g for the 87.5 cm3 T). Weigh the real part
 and pass --t-mass if you want it exact -- pushing dynamics are sensitive to it.
 """
 
@@ -35,7 +35,8 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("--force", action="store_true", help="reconvert even if the USD exists")
-parser.add_argument("--t-mass", type=float, default=0.024, help="mass of the printed T in kg (default 0.024)")
+parser.add_argument("--t-mass", type=float, default=0.048,
+                    help="mass of the printed T in kg; 87.5 cm3 PLA at ~20%% infill (default 0.048)")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.headless = True
@@ -55,7 +56,7 @@ def convert(stl: str, name: str, *, dynamic: bool, mass: float | None,
         print(f"  {name}: already converted ({out.relative_to(HERE.parent.parent.parent)})")
         return out
     # Isaac Lab 2.1's MeshConverter does basename.split(".") and unpacks two values,
-    # so any dot in the stem -- "t_20_factor_0.5_scaled.stl" -- crashes it. Stage a
+    # so any dot in the stem -- "t_20_factor_0.5.stl" -- crashes it. Stage a
     # copy under a dot-free name rather than renaming the user's CAD.
     staged = pathlib.Path(tempfile.mkdtemp(prefix="sim_assets_")) / f"{name}.stl"
     shutil.copyfile(CAD / stl, staged)
@@ -92,11 +93,11 @@ def convert(stl: str, name: str, *, dynamic: bool, mass: float | None,
 
 def main() -> int:
     USD.mkdir(parents=True, exist_ok=True)
-    missing = [f for f in ("t_20_factor_0.5_scaled.stl", "klip_support-1.stl") if not (CAD / f).exists()]
+    missing = [f for f in ("t_20_factor_0.5.stl", "klip_support-1.stl") if not (CAD / f).exists()]
     if missing:
         raise SystemExit(f"missing CAD in {CAD}: {missing}")
     print("converting CAD -> USD")
-    convert("t_20_factor_0.5_scaled.stl", "t_block", dynamic=True, mass=args.t_mass)
+    convert("t_20_factor_0.5.stl", "t_block", dynamic=True, mass=args.t_mass)
     # The mount's pose is BAKED IN here rather than set through AssetBaseCfg.init_state.
     # Isaac Lab does not apply a child AssetBaseCfg's init_state as the prim's local
     # transform, so the value in the config and the one Isaac's property panel shows
