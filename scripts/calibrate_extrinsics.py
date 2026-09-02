@@ -66,6 +66,11 @@ URDF_TO_LEROBOT = _kin.URDF_TO_LEROBOT
 JOINTS_FILE = ROOT / "sim" / "outputs" / "calib" / "joints.json"
 
 SESSION = ROOT / "sim" / "outputs" / "calib"
+# Bootstrapping a real 18-pose session: the calibration's own spread went 33 mm at 6
+# poses -> 20.7 at 9 -> 11.3 at 12 -> 10.5 at 15, and had not flattened. Most of the
+# per-pose error is random, so it averages down with count. 40 is where the returns
+# start to look thin; below ~25 the answer is still visibly moving.
+TARGET_POSES = 40
 OUT = ROOT / "sim" / "sim_agent101" / "config" / "extrinsics.json"
 DICT = cv2.aruco.DICT_4X4_100
 # /dev/videoN differs between host and container: compose pins the cameras to fixed
@@ -211,8 +216,10 @@ def cmd_capture(a) -> int:
     wrist = _open(DEV["grip"])
     top = _open(DEV["front"])
     print(f"capturing into {SESSION.relative_to(ROOT)} (already have {n})")
-    print("SPACE capture   q quit.  Move the arm so the WRIST camera sees the board")
-    print("from a NEW ANGLE each time -- vary rotation, not just position.\n")
+    print(f"SPACE capture   q quit.   Aim for {TARGET_POSES} poses.")
+    print("Move the arm so the WRIST camera sees the board from a NEW ANGLE each time.")
+    print("Vary ROTATION, not just position -- that is what makes a pose add information")
+    print("rather than repeat the last one. Distance and corner count matter much less.\n")
     try:
         while True:
             ok, frame = wrist.read()
@@ -227,7 +234,7 @@ def cmd_capture(a) -> int:
             good = k >= a.min_corners
             colour = (0, 220, 0) if good else (0, 0, 255)
             cv2.rectangle(vis, (0, 0), (vis.shape[1], 30), (0, 0, 0), -1)
-            cv2.putText(vis, f"{k} corners (need {a.min_corners})   captured {n}   "
+            cv2.putText(vis, f"{k} corners   captured {n}/{TARGET_POSES}   "
                              f"{'SPACE to grab' if good else 'board not visible enough'}",
                         (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.52, colour, 1, cv2.LINE_AA)
             cv2.imshow("calib-capture  |  wrist camera", vis)
@@ -254,7 +261,15 @@ def cmd_capture(a) -> int:
     finally:
         wrist.release(); top.release()
         cv2.destroyAllWindows()
-    print(f"\n{n} poses. {'Run ./robot calib-solve' if n >= 8 else 'Need at least 8.'}")
+    if n >= TARGET_POSES:
+        print(f"\n{n} poses. Run ./robot calib-solve")
+    elif n >= 25:
+        print(f"\n{n} poses -- usable, but the estimate was still moving at 18 in testing. "
+              f"{TARGET_POSES} is better.")
+    elif n >= 8:
+        print(f"\n{n} poses -- solvable but expect >10 mm. Add more; aim for {TARGET_POSES}.")
+    else:
+        print(f"\n{n} poses. Need at least 8, want {TARGET_POSES}.")
     return 0
 
 
@@ -353,6 +368,9 @@ def cmd_solve(a) -> int:
     poses = sorted(SESSION.glob("pose_*.json"))
     if len(poses) < 8:
         raise SystemExit(f"need >= 8 poses, found {len(poses)} in {SESSION}")
+    if len(poses) < 25:
+        print(f"note: {len(poses)} poses. Bootstrapping a real session showed the answer "
+              f"still moving at 18 -- {TARGET_POSES} is where returns thin out.\n")
     Kw, Dw = KD("grip")
     R_g2b, t_g2b, R_b2c, t_b2c = [], [], [], []
     obs = []          # (joints, object points, image points) for the bundle adjuster
@@ -461,9 +479,12 @@ def main() -> int:
         s.add_argument("--square", type=float, default=25.0, help="square size in mm, MEASURED after printing")
         s.add_argument("--marker", type=float, default=18.0, help="aruco marker size in mm")
         if name == "capture":
-            s.add_argument("--min-corners", type=int, default=30,
-                           help="reject a pose with fewer charuco corners; 30 of 54 keeps "
-                                "the far, sparse views out that dominated the error at 12")
+            # Back to 12, not the 30 I briefly set. Measured on a real session: the
+            # 12-corner poses scored BETTER than the 48-corner ones (12-15 px against
+            # 19-48), so corner count does not predict pose quality here. Rejecting
+            # sparse views would have thrown away good data and cost poses, which
+            # ARE what matters -- see TARGET_POSES.
+            s.add_argument("--min-corners", type=int, default=12)
         if name == "solve":
             s.add_argument("--min-corners-solve", type=int, default=12,
                            help="minimum corners for a pose to enter the refinement")
