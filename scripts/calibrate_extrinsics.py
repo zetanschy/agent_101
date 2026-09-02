@@ -280,6 +280,63 @@ def _pose_from_board(gray, det, board, K, D):
     return T
 
 
+def _rodrigues_chain(p):
+    """(rvec, tvec) -> 4x4."""
+    T = np.eye(4)
+    T[:3, :3] = cv2.Rodrigues(np.asarray(p[:3], float))[0]
+    T[:3, 3] = p[3:6]
+    return T
+
+
+def _bundle_adjust(obs, T_grip_cam0, T_base_board0, K, D, fit_offsets=True):
+    """Refine the calibration against every corner, in pixels.
+
+    calibrateHandEye consumes per-pose solvePnP results, and at 475 mm each of those
+    is a noisy depth estimate; the closed form cannot tell a 48-corner pose from a
+    12-corner one and weights them alike. This never forms those intermediates -- it
+    optimises gripper->cam and base->board directly against the corner observations,
+    where the measurement noise actually lives.
+
+    With fit_offsets it also solves five joint-angle offsets. Error between lerobot's
+    calibrated zero and the URDF's zero is otherwise unmodelled and gets absorbed into
+    the camera pose, which is exactly the kind of systematic bias that makes a
+    calibration look precise and be wrong.
+
+    obs: list of (joints_rad, object_points Nx3, image_points Nx2)
+    """
+    from scipy.optimize import least_squares
+
+    def pack(Tg, Tb, off):
+        return np.concatenate([cv2.Rodrigues(Tg[:3, :3])[0].ravel(), Tg[:3, 3],
+                               cv2.Rodrigues(Tb[:3, :3])[0].ravel(), Tb[:3, 3],
+                               off])
+
+    n_off = len(CHAIN) if fit_offsets else 0
+    x0 = pack(T_grip_cam0, T_base_board0, np.zeros(n_off))
+
+    def residuals(x):
+        Tg = _rodrigues_chain(x[0:6])
+        Tb = _rodrigues_chain(x[6:12])
+        off = x[12:12 + n_off] if n_off else np.zeros(len(CHAIN))
+        Tg_inv = np.linalg.inv(Tg)
+        out = []
+        for q, objp, imgp in obs:
+            T_base_grip = fk_gripper(q + off)
+            # board point -> base -> gripper -> camera
+            M = Tg_inv @ np.linalg.inv(T_base_grip) @ Tb
+            rvec = cv2.Rodrigues(M[:3, :3])[0]
+            proj, _ = cv2.projectPoints(objp, rvec, M[:3, 3], K, D)
+            out.append((proj.reshape(-1, 2) - imgp.reshape(-1, 2)).ravel())
+        return np.concatenate(out)
+
+    r0 = residuals(x0)
+    res = least_squares(residuals, x0, method="lm", max_nfev=400)
+    rms0 = np.sqrt((r0 ** 2).mean())
+    rms1 = np.sqrt((res.fun ** 2).mean())
+    off = res.x[12:12 + n_off] if n_off else np.zeros(len(CHAIN))
+    return _rodrigues_chain(res.x[0:6]), _rodrigues_chain(res.x[6:12]), off, rms0, rms1
+
+
 def cmd_solve(a) -> int:
     board, _ = make_board(a.cols, a.rows, a.square, a.marker)
     det = cv2.aruco.CharucoDetector(board)
@@ -298,16 +355,22 @@ def cmd_solve(a) -> int:
         raise SystemExit(f"need >= 8 poses, found {len(poses)} in {SESSION}")
     Kw, Dw = KD("grip")
     R_g2b, t_g2b, R_b2c, t_b2c = [], [], [], []
+    obs = []          # (joints, object points, image points) for the bundle adjuster
     used = 0
     for p in poses:
         meta = json.loads(p.read_text())
         img = cv2.imread(str(p.with_name(p.name.replace("pose_", "wrist_")).with_suffix(".png")))
         if img is None:
             continue
-        T_cam_board = _pose_from_board(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), det, board, Kw, Dw)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        T_cam_board = _pose_from_board(gray, det, board, Kw, Dw)
         if T_cam_board is None:
             print(f"  {p.name}: board not resolvable, skipped")
             continue
+        cc, ci, _, _ = det.detectBoard(gray)
+        objp, imgp = board.matchImagePoints(cc, ci)
+        if objp is not None and len(objp) >= a.min_corners_solve:
+            obs.append((np.array(meta["joints_rad"]), objp.reshape(-1, 3), imgp.reshape(-1, 2)))
         T_base_grip = fk_gripper(np.array(meta["joints_rad"]))
         R_g2b.append(T_base_grip[:3, :3]); t_g2b.append(T_base_grip[:3, 3])
         R_b2c.append(T_cam_board[:3, :3]); t_b2c.append(T_cam_board[:3, 3])
@@ -336,7 +399,34 @@ def cmd_solve(a) -> int:
     result = {"wrist_cam_in_gripper": T_grip_cam.tolist(),
               "board_in_base": T_base_board.tolist(),
               "poses_used": used,
-              "board_spread_mm": (P.std(0) * 1000).tolist()}
+              "board_spread_mm": (P.std(0) * 1000).tolist(),
+              "method": "calibrateHandEye (closed form)"}
+
+    if not a.no_refine and len(obs) >= 6:
+        print(f"\nrefining against {sum(len(o[1]) for o in obs)} corner observations "
+              f"from {len(obs)} poses{'' if a.no_joint_offsets else ', plus 5 joint offsets'}")
+        Tg, Tb, off, rms0, rms1 = _bundle_adjust(
+            obs, T_grip_cam, T_base_board, Kw, Dw, fit_offsets=not a.no_joint_offsets)
+        print(f"  reprojection rms {rms0:.3f} -> {rms1:.3f} px")
+        moved = np.linalg.norm(Tg[:3, 3] - T_grip_cam[:3, 3]) * 1000
+        print(f"  wrist camera moved {moved:.1f} mm from the closed-form estimate")
+        print(f"  wrist cam in gripper: xyz mm {np.round(Tg[:3,3]*1000,2)}")
+        print(f"  board in base:        xyz mm {np.round(Tb[:3,3]*1000,2)}")
+        if not a.no_joint_offsets:
+            print(f"  joint offsets (deg):  {np.round(np.rad2deg(off),2).tolist()}")
+            print("    large values here are real: lerobot's calibrated zero is not the")
+            print("    URDF's zero, and that bias was previously absorbed into the camera pose.")
+        T_grip_cam, T_base_board = Tg, Tb
+        result.update({"wrist_cam_in_gripper": Tg.tolist(),
+                       "board_in_base": Tb.tolist(),
+                       "joint_offsets_rad": off.tolist(),
+                       "joint_names": CHAIN,
+                       "reproj_rms_px": float(rms1),
+                       "reproj_rms_px_before_refine": float(rms0),
+                       "method": "bundle adjustment on corner reprojection"})
+    else:
+        print("\nskipping refinement" if a.no_refine else
+              f"\ntoo few usable poses to refine ({len(obs)})")
 
     tops = sorted(SESSION.glob("top_*.png"))
     Kt, Dt = KD("front")
@@ -371,7 +461,16 @@ def main() -> int:
         s.add_argument("--square", type=float, default=25.0, help="square size in mm, MEASURED after printing")
         s.add_argument("--marker", type=float, default=18.0, help="aruco marker size in mm")
         if name == "capture":
-            s.add_argument("--min-corners", type=int, default=12)
+            s.add_argument("--min-corners", type=int, default=30,
+                           help="reject a pose with fewer charuco corners; 30 of 54 keeps "
+                                "the far, sparse views out that dominated the error at 12")
+        if name == "solve":
+            s.add_argument("--min-corners-solve", type=int, default=12,
+                           help="minimum corners for a pose to enter the refinement")
+            s.add_argument("--no-refine", action="store_true",
+                           help="closed-form hand-eye only, no bundle adjustment")
+            s.add_argument("--no-joint-offsets", action="store_true",
+                           help="do not solve joint-angle offsets during refinement")
         s.set_defaults(fn=fn)
     a = p.parse_args()
     return a.fn(a)
