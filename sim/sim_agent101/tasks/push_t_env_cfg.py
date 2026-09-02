@@ -52,28 +52,23 @@ MAT_Z = 0.032
 MAT_SURFACE = 0.035
 MAT_CENTRE = (0.22, 0.0)
 
-# --- camera extrinsics: TUNE THESE AGAINST REAL FRAMES ------------------------
-# Overhead C270. The height is not a guess: the real overhead frame spans roughly
-# 0.40 m of mat across its 37.6-degree horizontal FOV, which puts the lens
-# 0.20 / tan(18.8 deg) = 0.59 m above the surface, looking straight down.
-OVERHEAD_POS = (MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE + 0.59)
-# Identity looks straight down (opengl convention). The extra yaw matches the real
-# frame's orientation: on the real overhead camera the arm enters from the bottom of
-# the image and reaches up, which identity renders as left-to-right.
-OVERHEAD_YAW_DEG = -90.0
+# --- camera extrinsics ------------------------------------------------------
+# Measured, when config/extrinsics.json exists (./robot calib-solve). Both cameras
+# then sit where calibration says, in the robot's own frame, rather than where I
+# guessed. The fallbacks below are those guesses and are wrong in known ways: the
+# overhead estimate came from back-solving one frame's field of view and put the
+# camera at 0.59 m when it is 1.11 m, and the wrist angle was set by eye.
+from .. import extrinsics as _ex  # noqa: E402
 
-# Wrist KWC-500. Explicit, and NOT derived from the mount -- which is unsatisfying and
-# worth fixing. Composing the camera out of the posed mount plus the bore offset was
-# tried and abandoned: every sign convention I tried put the lens either against the
-# side of the wrist or inside its own camera body (a pure black frame, which the
-# sim-play check catches). These values reproduce the real wrist view -- jaws low in
-# shot, workspace beyond -- and were arrived at by matching against a real capture.
-#
-# Consequence to know about: re-posing klip_support does NOT move the camera. Move
-# both, or resolve the bore-axis convention and derive one from the other.
-WRIST_POS = (-0.005, 0.055, -0.055)
-WRIST_PITCH_DEG = -40.0
-WRIST_ROT = (0.939693, -0.34202, 0.0, 0.0)   # _quat_x(WRIST_PITCH_DEG), inlined: it is defined below this block
+_MEASURED = _ex.available()
+if _MEASURED:
+    OVERHEAD_POS, OVERHEAD_ROT = _ex.overhead_in_env()
+    WRIST_POS, WRIST_ROT = _ex.wrist_in_gripper()
+else:
+    OVERHEAD_POS = (MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE + 0.59)
+    OVERHEAD_ROT = (math.cos(math.radians(-45.0)), 0.0, 0.0, math.sin(math.radians(-45.0)))
+    WRIST_POS = (-0.005, 0.055, -0.055)
+    WRIST_ROT = (0.939693, -0.34202, 0.0, 0.0)
 # ------------------------------------------------------------------------------
 
 
@@ -147,7 +142,7 @@ class PushTSceneCfg(InteractiveSceneCfg):
         init_state=RigidObjectCfg.InitialStateCfg(pos=(MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE + 0.001)),
     )
 
-    camera_front = camera_cfg("front", "{ENV_REGEX_NS}/OverheadCam", pos=OVERHEAD_POS, rot_quat=_quat_z(OVERHEAD_YAW_DEG))
+    camera_front = camera_cfg("front", "{ENV_REGEX_NS}/OverheadCam", pos=OVERHEAD_POS, rot_quat=OVERHEAD_ROT)
     camera_grip = camera_cfg(
         "grip", "{ENV_REGEX_NS}/Robot/gripper/wrist_cam", pos=WRIST_POS, rot_quat=WRIST_ROT
     )

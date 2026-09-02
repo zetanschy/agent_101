@@ -94,7 +94,13 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 #   PITCH about Y: tilts the camera's look direction
 #   YAW   about Z: which side of the wrist the mount sits on
 #
-# Placed by hand in the viewport (./robot sim-play --gui --pose), and left alone.
+# Placed by hand in the viewport, then TRANSLATED onto the measured lens.
+#
+# Calibration puts the real lens 32 mm from where the hand-posed bore sat, and with
+# the mount at the hand pose its own plate occluded the measured camera. The
+# measurement is ground truth, so the mount moves to it: position corrected by
+# (-2.8, 25.4, 18.4) mm. Orientation is still the hand pose -- the camera pose alone
+# does not pin rotation about the optical axis.
 #
 # Not solved, and that is deliberate. I tried repeatedly to snap this onto a detected
 # hole pair and every attempt was worse than the hand placement: matching by diameter
@@ -106,7 +112,7 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 # If you want to adjust it: ./robot sim-play --gui --pose writes the total pose to
 # sim/outputs/mount_pose.txt on exit -- paste it here and re-run ./robot sim-assets,
 # since the pose is baked into the USD.
-KLIP_MOUNT_POS = (-0.01462, 0.08714, -0.01018)
+KLIP_MOUNT_POS = (-0.01743, 0.11258, 0.00818)
 KLIP_MOUNT_ROLL_DEG = -179.755
 KLIP_MOUNT_PITCH_DEG = -34.920
 KLIP_MOUNT_YAW_DEG = -90.061
@@ -164,9 +170,33 @@ KLIP_SUPPORT_CFG = AssetBaseCfg(
     # transform -- config and property panel disagreed by 142 mm.
 )
 
-# The webcam. Rectangular body glued base-first to the plate, round lens barrel in the
-# bore. Siblings of the support, not children, so the support's grey does not inherit
-# onto them and so they survive the baked-USD placement.
+# The webcam. Where the lens actually is comes from calibration when available --
+# the hand-posed mount put the bore 22 mm from the measured lens, and with the model
+# built around the guess the camera rendered the inside of its own body. Building it
+# around the measured pose instead means the lens is at the camera and the body sits
+# BEHIND it, which is both physically right and impossible to look into.
+def _webcam_placement():
+    """(lens pos, body pos, orientation) in the gripper frame."""
+    from .. import extrinsics as _ex
+
+    if _ex.available():
+        pos, quat = _ex.wrist_in_gripper()
+        w, x, y, z = quat
+        # camera looks along its own -Z, so the body goes to +Z: behind the lens
+        back = (2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y))
+        lens = tuple(pos[i] + back[i] * (BARREL_LENGTH / 2) for i in range(3))
+        body = tuple(pos[i] + back[i] * (BARREL_LENGTH + BODY_L / 2) for i in range(3))
+        return lens, body, quat
+    # fallback: the guessed bore, seated on the plate
+    lens = mount_local_to_gripper((BORE_CENTRE[0], BORE_CENTRE[1],
+                                   PLATE_SEAT_Z + (PLATE_TOP_Z - PLATE_SEAT_Z) / 2))
+    body = mount_local_to_gripper((BORE_CENTRE[0], BORE_CENTRE[1],
+                                   PLATE_SEAT_Z + CAMERA_SIDE * BODY_L / 2))
+    return lens, body, KLIP_MOUNT_ROT
+
+
+_LENS_POS, _BODY_POS, _CAM_ROT = _webcam_placement()
+
 KWC500_BODY_CFG = AssetBaseCfg(
     prim_path="{ENV_REGEX_NS}/Robot/gripper/kwc500_body",
     spawn=sim_utils.CuboidCfg(
@@ -177,19 +207,12 @@ KWC500_BODY_CFG = AssetBaseCfg(
         collision_props=None,
         rigid_props=None,
     ),
-    init_state=AssetBaseCfg.InitialStateCfg(
-        # base ON the plate: the block is centred on its origin, so it sits half its
-        # length out from the seat face -- no gap.
-        pos=mount_local_to_gripper(
-            (BORE_CENTRE[0], BORE_CENTRE[1], PLATE_SEAT_Z + CAMERA_SIDE * BODY_L / 2)
-        ),
-        rot=KLIP_MOUNT_ROT,
-    ),
+    init_state=AssetBaseCfg.InitialStateCfg(pos=_BODY_POS, rot=_CAM_ROT),
 )
 KWC500_BARREL_CFG = AssetBaseCfg(
     prim_path="{ENV_REGEX_NS}/Robot/gripper/kwc500_barrel",
     spawn=sim_utils.CylinderCfg(
-        radius=BORE_DIAMETER / 2 - 0.0004,   # a hair under the bore, so it seats
+        radius=BORE_DIAMETER / 2 - 0.0004,
         height=BARREL_LENGTH,
         axis="Z",
         visual_material=sim_utils.PreviewSurfaceCfg(
@@ -198,14 +221,7 @@ KWC500_BARREL_CFG = AssetBaseCfg(
         collision_props=None,
         rigid_props=None,
     ),
-    init_state=AssetBaseCfg.InitialStateCfg(
-        # from the seat face back through the plate, so the lens fills the bore
-        # centred in the plate's thickness, so it fills the bore and no more
-        pos=mount_local_to_gripper(
-            (BORE_CENTRE[0], BORE_CENTRE[1], PLATE_SEAT_Z + (PLATE_TOP_Z - PLATE_SEAT_Z) / 2)
-        ),
-        rot=KLIP_MOUNT_ROT,
-    ),
+    init_state=AssetBaseCfg.InitialStateCfg(pos=_LENS_POS, rot=_CAM_ROT),
 )
 
 
