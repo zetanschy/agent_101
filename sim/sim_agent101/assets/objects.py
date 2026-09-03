@@ -184,6 +184,42 @@ KLIP_SUPPORT_CFG = AssetBaseCfg(
 # jaws where the real camera puts them.
 CAMERA_BORE_ROLL_DEG = 90.0
 
+# Where the camera actually is, and this WINS over the bore derivation below.
+#
+# Hand-tuned in the viewport to (0.00295, 0.08000, -0.00470) / (-45.864, -1.498,
+# -5.688), then dollied 24 mm further along the optical axis, toward the gripper,
+# with the focal widened to match, then a final Nelder-Mead over all nine camera
+# parameters (pose, focal, principal point) against the real frame, each evaluation
+# an ACTUAL Isaac render: 700 of them in one Kit session. That last pass moved the
+# camera 2.9 mm and 2.2 deg and took the silhouette's mean boundary error from 17 px
+# to 3.1 px (IoU 0.932). cx/cy shifted by 2 px, which is the confirmation that the
+# earlier grid had them right.
+#
+# That pairing is a DOLLY ZOOM and the two halves cannot be separated: closer plus
+# wider leaves the subject the same size and only changes how much the near end
+# diverges from the far end. Silhouette IoU is nearly blind to it -- once the
+# gripper overflows the frame the overflow stops contributing -- so it was fitted
+# on the width PROFILE instead: a pure zoom scales every row by one constant,
+# while a camera at the wrong distance tilts that ratio top-to-bottom. That tilt
+# went from 1.45 to 1.04, mean silhouette edge error to 17 px, IoU to 0.905.
+#
+# It is worth being clear that this is now an EMPIRICAL pose, not a derived one:
+# 20 deg of total rotation away from the bore is more than a barrel can rock in a
+# 19 mm hole, so something upstream -- the mount pose, or the gripper link frame
+# the workshop USD defines -- carries error this is absorbing. It matches the real
+# camera, which is what sim2real needs, but do not read it as a measurement of
+# where the lens sits relative to the mount.
+#
+# Fitted jointly with the focal, with cx/cy pinned to the image centre. That
+# pinning is what makes the pose meaningful at all: a lens shift and a camera tilt
+# are indistinguishable from one view, so letting both float just trades one for
+# the other -- see the note in config/cameras.json.
+#
+# Euler in DEGREES, in the order Isaac's property panel shows them. Set either to
+# None to fall back to the pure bore derivation.
+CAMERA_POS_OVERRIDE = (0.00313, 0.06116, -0.01911)
+CAMERA_EULER_OVERRIDE_DEG = (-44.989, -1.976, -3.675)
+
 
 def _quat_mul(a, b):
     """Hamilton product, (w, x, y, z)."""
@@ -193,6 +229,21 @@ def _quat_mul(a, b):
             aw * bx + ax * bw + ay * bz - az * by,
             aw * by - ax * bz + ay * bw + az * bx,
             aw * bz + ax * by - ay * bx + az * bw)
+
+
+def _quat_from_euler_deg(ex, ey, ez):
+    """(w, x, y, z) from an Isaac property-panel Orient triple, in degrees.
+
+    Composed Rx @ Ry @ Rz. With this camera's angles the candidate conventions
+    span only 0.4 degrees, so the choice is not load-bearing here -- but it would
+    be for a pose with two or three large angles, so it is written down rather
+    than left implicit.
+    """
+    hx, hy, hz = (math.radians(a) / 2 for a in (ex, ey, ez))
+    qx = (math.cos(hx), math.sin(hx), 0.0, 0.0)
+    qy = (math.cos(hy), 0.0, math.sin(hy), 0.0)
+    qz = (math.cos(hz), 0.0, 0.0, math.sin(hz))
+    return _quat_mul(_quat_mul(qx, qy), qz)
 
 
 def _webcam_placement():
@@ -216,6 +267,10 @@ def _webcam_placement():
     half = math.radians(CAMERA_BORE_ROLL_DEG) / 2
     quat = _quat_mul(KLIP_MOUNT_ROT, (0.0, 1.0, 0.0, 0.0))
     quat = _quat_mul(quat, (math.cos(half), 0.0, 0.0, math.sin(half)))
+    if CAMERA_POS_OVERRIDE is not None:
+        cam = tuple(CAMERA_POS_OVERRIDE)
+    if CAMERA_EULER_OVERRIDE_DEG is not None:
+        quat = _quat_from_euler_deg(*CAMERA_EULER_OVERRIDE_DEG)
     return cam, barrel, body, quat
 
 
@@ -264,6 +319,7 @@ def camera_cfg(
     height: int = 480,
     data_types: tuple[str, ...] = ("rgb",),
     intrinsics: dict | None = None,
+    near_m: float = 0.01,
 ) -> TiledCameraCfg:
     """A TiledCamera whose optics match the real camera called `name`.
 
@@ -282,12 +338,45 @@ def camera_cfg(
         intrinsic_matrix=[k["fx"], 0.0, k["cx"], 0.0, k["fy"], k["cy"], 0.0, 0.0, 1.0],
         width=width,
         height=height,
-        # 1 cm near plane: the wrist camera sits centimetres from the jaws and a
-        # default near plane clips them out of the frame entirely.
-        clipping_range=(0.01, 20.0),
+        # Near plane. The wrist camera sits centimetres from the jaws, so the
+        # default would clip them out of the frame entirely -- but it also has to
+        # be FAR enough to clip the camera's own modelled housing.
+        #
+        # The fitted optical centre lands about 12 mm behind the bore mouth, i.e.
+        # inside the KWC-500's body, which is where a webcam's optical centre
+        # actually is: behind the front element, in a 16 mm-deep case. A real
+        # camera cannot see its own shell; a simulated one at the same point looks
+        # straight at the inside of the cuboid standing in for it and renders
+        # 10-13 mm of black. Clipping past the housing is the fix -- moving the
+        # camera out in front of it instead is what put the focal length 14% long
+        # and made the datasheet look wrong.
+        clipping_range=(near_m, 20.0),
         focus_distance=0.4,
         f_stop=0.0,  # 0 disables depth of field; these are fixed-focus webcams
     )
+
+    # Put the principal point back. from_intrinsic_matrix() discards it --
+    # isaaclab/utils/sensors.py returns horizontal/vertical_aperture_offset = 0.0
+    # unconditionally, warning that Omniverse cannot do aperture offsets. That
+    # warning is stale: the RTX renderer honours both attributes exactly. Measured
+    # -- a 0.25 offset on a 1.0 aperture moves the image by 0.25*width, to the
+    # pixel, and the vertical does the same. Left at zero, every camera renders as
+    # though its optical axis were dead centre, which throws the wrist camera's
+    # cy out by 30 px and the overhead's by 60.
+    #
+    # The signs are measured, not derived: a POSITIVE horizontal offset slides the
+    # image content left, so cx falls; a positive vertical offset slides it down,
+    # so cy rises.
+    #   cx = W/2 - (off_h / aperture_h) * W
+    #   cy = H/2 + (off_v / aperture_v) * H
+    ah = spawn.horizontal_aperture
+    # Omniverse derives the vertical aperture from the horizontal one and the render
+    # aspect ratio, ignoring the vertical_aperture attribute (also measured: scaling
+    # it by 1.2 changes nothing). Use the derived value, which is what it acts on.
+    av = ah * height / width
+    spawn.horizontal_aperture_offset = ah * (width / 2 - k["cx"]) / width
+    spawn.vertical_aperture_offset = av * (k["cy"] - height / 2) / height
+
     return TiledCameraCfg(
         prim_path=prim_path,
         update_period=0.0,

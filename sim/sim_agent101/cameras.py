@@ -121,12 +121,6 @@ def load(width: int = 640, height: int = 480) -> dict:
                 "re-run the calibration at the resolution you intend to use, or delete the file "
                 "to fall back to spec values"
             )
-        # The grip runs on DATASHEET optics. Its calibration is the one number in
-        # here that is not trustworthy: two solves of the same lens put cx 70 px
-        # apart, because every board view sat at roughly one distance and cx then
-        # trades off freely against the board's position. The overhead's is fine
-        # (RMS 0.27 px, principal point 3 px off centre) and is left alone.
-        cfg["grip"] = CAMERAS["grip"].intrinsics(width, height)
         return cfg
     return default_config(width, height)["cameras"]
 

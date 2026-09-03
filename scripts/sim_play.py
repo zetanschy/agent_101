@@ -31,9 +31,21 @@ parser.add_argument("--pose", action="store_true",
 parser.add_argument("--gui", action="store_true",
                     help="open the Isaac Sim window and hold it open after the checks")
 parser.add_argument("--out", default=None, help="where to write renders (default sim/outputs)")
+# Six lerobot joint angles in DEGREES, lerobot's own order, exactly as
+# robot.get_observation() reports them. Comparing a sim render against a real
+# frame is meaningless unless the arm is in the same pose in both -- otherwise
+# the jaws are open in one and shut in the other and the camera gets the blame.
+parser.add_argument("--joints", default=None,
+                    help="shoulder_pan,shoulder_lift,elbow_flex,wrist_flex,wrist_roll,gripper "
+                         "exactly as lerobot reports them (arm in degrees, gripper 0-100)")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.gui = args.gui or args.pose   # posing needs a window to drag in
+if args.joints:
+    # The step loop drives the arm from the action manager, which would undo the
+    # pose immediately. Rendering a given pose and running the settle test are
+    # mutually exclusive.
+    args.steps = 0
 args.headless = not args.gui
 args.enable_cameras = True
 app = AppLauncher(args).app
@@ -131,6 +143,39 @@ def main() -> int:
 
     obs, _ = env.reset()
     actions = env.unwrapped.action_manager.action.clone()
+
+    if args.joints:
+        import math
+
+        import torch
+
+        from sim_agent101.assets.so101 import JOINT_NAMES
+        from sim_agent101.kinematics import lerobot_to_urdf_deg
+
+        order = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
+        deg = [float(v) for v in args.joints.split(",")]
+        if len(deg) != len(order):
+            raise SystemExit(f"--joints needs {len(order)} values, got {len(deg)}")
+        # via lerobot_to_urdf_deg: the sixth value is the gripper, which lerobot
+        # reports as 0-100 percent, not degrees, whatever use_degrees says.
+        want = {k: math.radians(v)
+                for k, v in lerobot_to_urdf_deg(dict(zip(order, deg, strict=True))).items()}
+        robot = env.unwrapped.scene["robot"]
+        idx, names = robot.find_joints(JOINT_NAMES, preserve_order=True)
+        q = robot.data.joint_pos.clone()
+        for i, nm in zip(idx, names, strict=True):
+            q[:, i] = want[nm]
+        robot.write_joint_state_to_sim(q, torch.zeros_like(q))
+        dt = env.unwrapped.physics_dt
+        for _ in range(60):
+            robot.set_joint_position_target(q)
+            env.unwrapped.scene.write_data_to_sim()
+            env.unwrapped.sim.step(render=True)
+            env.unwrapped.scene.update(dt)
+        got = robot.data.joint_pos[0]
+        print("\nposed to the real arm's joints (deg):")
+        for i, nm in zip(idx, names, strict=True):
+            print(f"  {nm:12} want {math.degrees(want[nm]):+8.3f}   got {math.degrees(float(got[i])):+8.3f}")
 
     if args.pose:
         # Straight to the window. The checks below step physics 180 times, which in
