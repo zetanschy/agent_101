@@ -33,6 +33,47 @@ LEROBOT_TO_URDF = {
 }
 URDF_TO_LEROBOT = {v: k for k, v in LEROBOT_TO_URDF.items()}
 
+# THE GRIPPER IS NOT IN DEGREES, even when everything else is.
+#
+# lerobot builds the SO-101 bus with the five arm joints on a norm mode that
+# use_degrees switches to DEGREES, and then hardcodes
+#     "gripper": Motor(6, "sts3215", MotorNormMode.RANGE_0_100)
+# so `gripper.pos` is a PERCENT, 0 shut to 100 wide, whatever use_degrees says.
+# Running math.radians() over it is silent and plausible: 1.31 "degrees" instead
+# of 1.31 percent leaves the sim jaw about 10 degrees further open than the real
+# one, which reads as a slightly-too-big gap rather than as a units bug.
+#
+# 0..100 percent maps onto the Jaw's full travel, and the URDF's Jaw limits are
+# -10..100 degrees -- the same pair the NVIDIA workshop uses in its
+# SO101_USD_MAPPING, arrived at independently.
+JAW_RANGE_DEG = (-10.0, 100.0)
+
+
+def gripper_pct_to_deg(pct: float) -> float:
+    """lerobot's 0-100 gripper reading -> Jaw angle in degrees."""
+    lo, hi = JAW_RANGE_DEG
+    return lo + (float(pct) / 100.0) * (hi - lo)
+
+
+def gripper_deg_to_pct(deg: float) -> float:
+    """Jaw angle in degrees -> lerobot's 0-100 gripper reading."""
+    lo, hi = JAW_RANGE_DEG
+    return (float(deg) - lo) / (hi - lo) * 100.0
+
+
+def lerobot_to_urdf_deg(values: dict) -> dict:
+    """{lerobot joint: lerobot unit} -> {URDF joint: DEGREES}, gripper included.
+
+    Pass what get_action()/get_observation() reports with use_degrees=True. The
+    arm joints go through unchanged; only the gripper is rescaled.
+    """
+    out = {}
+    for lr, urdf in LEROBOT_TO_URDF.items():
+        if lr not in values:
+            continue
+        out[urdf] = gripper_pct_to_deg(values[lr]) if lr == "gripper" else float(values[lr])
+    return out
+
 
 def _rpy(r: float, p: float, y: float) -> np.ndarray:
     cr, sr, cp, sp, cy, sy = np.cos(r), np.sin(r), np.cos(p), np.sin(p), np.cos(y), np.sin(y)

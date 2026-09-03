@@ -62,6 +62,7 @@ _cameras = _load("cameras")
 _kin = _load("kinematics")
 CAMERAS, load_intrinsics = _cameras.CAMERAS, _cameras.load
 CHAIN, fk_gripper = _kin.CHAIN, _kin.fk_gripper
+lerobot_to_urdf_deg = _kin.lerobot_to_urdf_deg
 URDF_TO_LEROBOT = _kin.URDF_TO_LEROBOT
 JOINTS_FILE = ROOT / "sim" / "outputs" / "calib" / "joints.json"
 
@@ -154,22 +155,54 @@ def cmd_teleop(a) -> int:
     follower = SO101Follower(SO101FollowerConfig(
         port=os.environ.get("ROBOT_PORT", "/dev/ttyACM1"),
         id=os.environ.get("ROBOT_ID", "zetans_follower"), cameras={}, use_degrees=True))
-    leader = SO101Leader(SO101LeaderConfig(
-        port=os.environ.get("TELEOP_PORT", "/dev/ttyACM0"),
-        id=os.environ.get("TELEOP_ID", "zetans_leader")))
-    follower.connect()
+    # use_degrees on the LEADER too. Without it get_action() hands back lerobot's
+    # normalised -100..100, and --no-follower would publish those under a key that
+    # says degrees -- a unit error that looks like a plausible pose and silently
+    # scales every joint. The follower path is unaffected (it reads its own
+    # observation), so this only ever mattered once --no-follower existed.
+    _lead = dict(port=os.environ.get("TELEOP_PORT", "/dev/ttyACM0"),
+                 id=os.environ.get("TELEOP_ID", "zetans_leader"))
+    try:
+        leader = SO101Leader(SO101LeaderConfig(**_lead, use_degrees=True))
+    except TypeError:
+        if a.no_follower:
+            raise SystemExit("this lerobot's SO101LeaderConfig has no use_degrees; "
+                             "--no-follower cannot guarantee units, refusing")
+        leader = SO101Leader(SO101LeaderConfig(**_lead))
+    if not a.no_follower:
+        follower.connect()
     leader.connect()
     JOINTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    print(f"teleop running. Move the LEADER; joints published to "
-          f"{JOINTS_FILE.relative_to(ROOT)}. Ctrl-C to stop.", flush=True)
+    print(f"teleop running{' (LEADER ONLY -- the follower is not driven)' if a.no_follower else ''}. "
+          f"Move the LEADER; joints published to {JOINTS_FILE.relative_to(ROOT)}. Ctrl-C to stop.",
+          flush=True)
     try:
         while True:
-            follower.send_action(leader.get_action())
-            obs = follower.get_observation()
-            JOINTS_FILE.write_text(json.dumps({
-                "t": time.time(),
-                "joints_deg": {u: float(obs[f"{lr}.pos"]) for u, lr in
-                               ((u, URDF_TO_LEROBOT[u]) for u in CHAIN)}}))
+            action = leader.get_action()
+            if a.no_follower:
+                # Publish the leader's own angles. Nothing is commanded, so nothing
+                # can lurch -- which is what you want when the consumer is the
+                # simulator and the real follower is meant to stay put.
+                src = {n: float(action[f"{n}.pos"]) for n in URDF_TO_LEROBOT.values()}
+            else:
+                follower.send_action(action)
+                obs = follower.get_observation()
+                src = {n: float(obs[f"{n}.pos"]) for n in URDF_TO_LEROBOT.values()}
+            # All SIX joints, not just CHAIN. CHAIN is the 5-link kinematic chain
+            # used for FK, so it carries no Jaw -- but a teleop consumer needs the
+            # gripper too, and readers pick out whichever keys they want.
+            # ATOMIC. write_text() truncates and then writes, so a reader polling
+            # this 30 times a second will now and then open it in the empty gap and
+            # get a JSONDecodeError. Rename is atomic within a filesystem, so a
+            # reader sees either the old file or the new one, never half of one.
+            # lerobot_to_urdf_deg, not a plain rename: the gripper comes off the
+            # bus as a 0-100 PERCENT even with use_degrees set, so copying it into
+            # a field called joints_deg unconverted is a units bug waiting to be
+            # believed. See kinematics.JAW_RANGE_DEG.
+            payload = json.dumps({"t": time.time(), "joints_deg": lerobot_to_urdf_deg(src)})
+            tmp = JOINTS_FILE.with_suffix(".json.tmp")
+            tmp.write_text(payload)
+            os.replace(tmp, JOINTS_FILE)
             time.sleep(1 / 30)
     except KeyboardInterrupt:
         print("\nstopped")
@@ -478,6 +511,10 @@ def main() -> int:
         s.add_argument("--rows", type=int, default=10)
         s.add_argument("--square", type=float, default=25.0, help="square size in mm, MEASURED after printing")
         s.add_argument("--marker", type=float, default=18.0, help="aruco marker size in mm")
+        if name == "teleop":
+            s.add_argument("--no-follower", action="store_true",
+                           help="publish the LEADER's angles and do not drive the follower "
+                                "(for ./robot sim-teleop, where the sim is the follower)")
         if name == "capture":
             # Back to 12, not the 30 I briefly set. Measured on a real session: the
             # 12-corner poses scored BETTER than the 48-corner ones (12-15 px against
