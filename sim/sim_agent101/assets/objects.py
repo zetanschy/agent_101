@@ -94,13 +94,16 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 #   PITCH about Y: tilts the camera's look direction
 #   YAW   about Z: which side of the wrist the mount sits on
 #
-# Placed by hand in the viewport, then TRANSLATED onto the measured lens.
+# Placed by hand in the viewport, against the two wrist holes, and LEFT THERE.
 #
-# Calibration puts the real lens 32 mm from where the hand-posed bore sat, and with
-# the mount at the hand pose its own plate occluded the measured camera. The
-# measurement is ground truth, so the mount moves to it: position corrected by
-# (-2.8, 25.4, 18.4) mm. Orientation is still the hand pose -- the camera pose alone
-# does not pin rotation about the optical axis.
+# It was briefly translated 30 mm off those holes so that the bore would land on the
+# lens position the hand-eye solve reported. That was the wrong way round. The
+# support bolts to two holes -- a hard mechanical constraint anyone can check by
+# eye -- while the wrist calibration is the least trustworthy number in this repo:
+# two solves of the same lens disagree by 70 px on cx, because every board view sat
+# at roughly one distance and cx then trades off freely against board position.
+# Moving a bolted part to satisfy that is fitting the geometry to the weaker
+# measurement. The holes win; the camera follows the bore.
 #
 # Not solved, and that is deliberate. I tried repeatedly to snap this onto a detected
 # hole pair and every attempt was worse than the hand placement: matching by diameter
@@ -112,7 +115,7 @@ BARREL_LENGTH = PLATE_TOP_Z + 0.0005
 # If you want to adjust it: ./robot sim-play --gui --pose writes the total pose to
 # sim/outputs/mount_pose.txt on exit -- paste it here and re-run ./robot sim-assets,
 # since the pose is baked into the USD.
-KLIP_MOUNT_POS = (-0.01743, 0.11258, 0.00818)
+KLIP_MOUNT_POS = (-0.01455, 0.08710, -0.01039)
 KLIP_MOUNT_ROLL_DEG = -179.755
 KLIP_MOUNT_PITCH_DEG = -34.920
 KLIP_MOUNT_YAW_DEG = -90.061
@@ -175,27 +178,53 @@ KLIP_SUPPORT_CFG = AssetBaseCfg(
 # built around the guess the camera rendered the inside of its own body. Building it
 # around the measured pose instead means the lens is at the camera and the body sits
 # BEHIND it, which is both physically right and impossible to look into.
-def _webcam_placement():
-    """(lens pos, body pos, orientation) in the gripper frame."""
-    from .. import extrinsics as _ex
+# Which way up the webcam sits IN the bore. The mount pose cannot carry this --
+# the bore is a circle, so the body goes in at any roll and the STL says nothing
+# about it. A quarter turn, not a tuning knob: of 0/90/180/270 only +90 puts the
+# jaws where the real camera puts them.
+CAMERA_BORE_ROLL_DEG = 90.0
 
-    if _ex.available():
-        pos, quat = _ex.wrist_in_gripper()
-        w, x, y, z = quat
-        # camera looks along its own -Z, so the body goes to +Z: behind the lens
-        back = (2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y))
-        lens = tuple(pos[i] + back[i] * (BARREL_LENGTH / 2) for i in range(3))
-        body = tuple(pos[i] + back[i] * (BARREL_LENGTH + BODY_L / 2) for i in range(3))
-        return lens, body, quat
-    # fallback: the guessed bore, seated on the plate
-    lens = mount_local_to_gripper((BORE_CENTRE[0], BORE_CENTRE[1],
-                                   PLATE_SEAT_Z + (PLATE_TOP_Z - PLATE_SEAT_Z) / 2))
+
+def _quat_mul(a, b):
+    """Hamilton product, (w, x, y, z)."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw)
+
+
+def _webcam_placement():
+    """(camera pos, barrel pos, body pos, camera rot) in the gripper frame.
+
+    Everything here comes from the HAND-PLACED mount. The barrel and body lines
+    are untouched and keep KLIP_MOUNT_ROT, so the support assembly stays exactly
+    where it was put; only the camera is derived.
+
+    The camera is NOT at the barrel's midpoint. Put it there and it sits inside
+    its own black housing and renders a solid black frame -- it goes at the bore
+    MOUTH. CAMERA_SIDE = -1 glues the body to the hidden face, so the bore looks
+    out along the mount's local +Z, and a USD camera looks along its own -Z:
+    hence the half turn about X, then the quarter turn for the bore roll.
+    """
+    barrel = mount_local_to_gripper((BORE_CENTRE[0], BORE_CENTRE[1],
+                                     PLATE_SEAT_Z + (PLATE_TOP_Z - PLATE_SEAT_Z) / 2))
     body = mount_local_to_gripper((BORE_CENTRE[0], BORE_CENTRE[1],
                                    PLATE_SEAT_Z + CAMERA_SIDE * BODY_L / 2))
-    return lens, body, KLIP_MOUNT_ROT
+    cam = mount_local_to_gripper((BORE_CENTRE[0], BORE_CENTRE[1], PLATE_TOP_Z))
+    half = math.radians(CAMERA_BORE_ROLL_DEG) / 2
+    quat = _quat_mul(KLIP_MOUNT_ROT, (0.0, 1.0, 0.0, 0.0))
+    quat = _quat_mul(quat, (math.cos(half), 0.0, 0.0, math.sin(half)))
+    return cam, barrel, body, quat
 
 
-_LENS_POS, _BODY_POS, _CAM_ROT = _webcam_placement()
+_CAM_POS, _LENS_POS, _BODY_POS, _CAM_ROT = _webcam_placement()
+
+
+def wrist_camera_in_gripper():
+    """Where the wrist camera goes: the bore of the hand-placed mount."""
+    return _CAM_POS, _CAM_ROT
 
 KWC500_BODY_CFG = AssetBaseCfg(
     prim_path="{ENV_REGEX_NS}/Robot/gripper/kwc500_body",
@@ -207,7 +236,7 @@ KWC500_BODY_CFG = AssetBaseCfg(
         collision_props=None,
         rigid_props=None,
     ),
-    init_state=AssetBaseCfg.InitialStateCfg(pos=_BODY_POS, rot=_CAM_ROT),
+    init_state=AssetBaseCfg.InitialStateCfg(pos=_BODY_POS, rot=KLIP_MOUNT_ROT),
 )
 KWC500_BARREL_CFG = AssetBaseCfg(
     prim_path="{ENV_REGEX_NS}/Robot/gripper/kwc500_barrel",
@@ -221,7 +250,7 @@ KWC500_BARREL_CFG = AssetBaseCfg(
         collision_props=None,
         rigid_props=None,
     ),
-    init_state=AssetBaseCfg.InitialStateCfg(pos=_LENS_POS, rot=_CAM_ROT),
+    init_state=AssetBaseCfg.InitialStateCfg(pos=_LENS_POS, rot=KLIP_MOUNT_ROT),
 )
 
 

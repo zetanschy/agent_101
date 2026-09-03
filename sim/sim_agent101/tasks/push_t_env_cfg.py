@@ -39,6 +39,7 @@ from ..assets.objects import (
     T_BLOCK_CFG,
     T_BLOCK_GEOMETRY,
     camera_cfg,
+    wrist_camera_in_gripper,
 )
 from ..assets.so101 import JOINT_NAMES, SO101_CFG, WORKSHOP_USD
 
@@ -63,12 +64,14 @@ from .. import extrinsics as _ex  # noqa: E402
 _MEASURED = _ex.available()
 if _MEASURED:
     OVERHEAD_POS, OVERHEAD_ROT = _ex.overhead_in_env()
-    WRIST_POS, WRIST_ROT = _ex.wrist_in_gripper()
 else:
     OVERHEAD_POS = (MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE + 0.59)
     OVERHEAD_ROT = (math.cos(math.radians(-45.0)), 0.0, 0.0, math.sin(math.radians(-45.0)))
-    WRIST_POS = (-0.005, 0.055, -0.055)
-    WRIST_ROT = (0.939693, -0.34202, 0.0, 0.0)
+
+# The wrist camera comes from the hand-placed mount's bore, NOT from the hand-eye
+# calibration -- and from objects.py rather than being worked out again here, so
+# the camera and the modelled webcam around it can never disagree.
+WRIST_POS, WRIST_ROT = wrist_camera_in_gripper()
 # ------------------------------------------------------------------------------
 
 
