@@ -1,5 +1,11 @@
 """MDP terms for push-T, on top of the workshop's and Isaac Lab's own."""
 
+from .randomize import (  # noqa: F401
+    randomize_camera_pose,
+    randomize_lighting,
+    randomize_robot_color,
+)
+
 from .push_t import (  # noqa: F401
     goal_pose_obs,
     reset_goal_pose,

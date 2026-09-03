@@ -110,6 +110,12 @@ def reset_goal_pose(env, env_ids: torch.Tensor, pose_range: dict[str, tuple[floa
         marker = env.scene["goal_marker"]
         pos = torch.zeros((n, 3), device=env.device)
         pos[:, 0:2] = goal[env_ids, 0:2]
+        # z, which used to be left at zero: the marker sank to the env origin on the
+        # first reset and the height it was spawned at was silently discarded. Take
+        # it from the spawn state rather than hardcoding the mat surface, so the
+        # marker follows the mat if the mat moves. (default_root_state is already in
+        # WORLD coords, so subtract the origin that gets added back below.)
+        pos[:, 2] = marker.data.default_root_state[env_ids, 2] - env.scene.env_origins[env_ids, 2]
         pos += env.scene.env_origins[env_ids]
         zeros = torch.zeros(n, device=env.device)
         quat = math_utils.quat_from_euler_xyz(zeros, zeros, goal[env_ids, 2])

@@ -107,6 +107,76 @@ case "$cmd" in
              bash ./scripts/sim.sh scripts/sim_convert_assets.py "$@" ;;
   sim-play)             # build the push-T scene, step it, render both cameras
              bash ./scripts/sim.sh scripts/sim_play.py "$@" ;;
+  leader-publish)       # stream the leader's joint angles to sim/outputs/calib/joints.json
+             # The serial buses live in Docker, so anything reading an arm runs here.
+             # Two consumers: calib-capture (which cannot open the follower bus
+             # itself while this holds it) and sim-teleop.
+             #   --no-follower  publish the LEADER only, driving nothing. Use this
+             #                  for sim-teleop, where the simulator IS the follower
+             #                  and a real arm lurching to meet the leader is just
+             #                  a hazard.
+             needs_docker leader-publish
+             $RUN python scripts/calibrate_extrinsics.py teleop "$@" ;;
+  sim-record)           # teleoperate the sim and record a LeRobot dataset
+             # Same one-command shape as sim-teleop: the joint publisher is started
+             # in the container, the sim runs natively, and both are cleaned up.
+             # Randomizes the T, the goal and the whole scene between episodes.
+             _fresh() { python3 -c "
+import json,pathlib,sys,time
+f=pathlib.Path('sim/outputs/calib/joints.json')
+sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else 1)
+" 2>/dev/null; }
+             _pub=""
+             if _fresh; then
+               echo "using the joint stream that is already running"
+             else
+               needs_docker sim-record
+               echo "starting the leader publisher in the background ..."
+               _pub=$($DC run -d lerobot \
+                        python scripts/calibrate_extrinsics.py teleop --no-follower) || exit 1
+               trap '[ -n "$_pub" ] && { docker stop -t 2 "$_pub" >/dev/null 2>&1; docker rm -f "$_pub" >/dev/null 2>&1; }' EXIT INT TERM
+               for _ in $(seq 1 60); do _fresh && break; sleep 1; done
+               if ! _fresh; then
+                 echo "the publisher never produced fresh angles. Its output:" >&2
+                 docker logs "$_pub" 2>&1 | tail -20 >&2
+                 exit 1
+               fi
+             fi
+             bash ./scripts/sim.sh scripts/sim_record.py "$@" ;;
+  sim-teleop)           # drive the Isaac scene from the real leader arm
+             # ONE command. Isaac must run natively (GPU, shader cache) and the
+             # serial bus must run in Docker, so this starts the publisher in the
+             # background, runs the sim against it, and stops it again. Nothing to
+             # coordinate across two terminals.
+             #
+             # If something is already publishing fresh angles -- you started
+             # leader-publish yourself, or calib-teleop is up for a calibration --
+             # that is left alone and simply consumed.
+             _fresh() { python3 -c "
+import json,pathlib,sys,time
+f=pathlib.Path('sim/outputs/calib/joints.json')
+sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else 1)
+" 2>/dev/null; }
+             _pub=""
+             if _fresh; then
+               echo "using the joint stream that is already running"
+             else
+               needs_docker sim-teleop
+               echo "starting the leader publisher in the background ..."
+               # -d without --rm on purpose: --rm deletes the container the moment
+               # it exits, so when the publisher dies at startup `docker logs` finds
+               # nothing and the failure is unreportable. Remove it in the trap.
+               _pub=$($DC run -d lerobot \
+                        python scripts/calibrate_extrinsics.py teleop --no-follower) || exit 1
+               trap '[ -n "$_pub" ] && { docker stop -t 2 "$_pub" >/dev/null 2>&1; docker rm -f "$_pub" >/dev/null 2>&1; }' EXIT INT TERM
+               for _ in $(seq 1 60); do _fresh && break; sleep 1; done
+               if ! _fresh; then
+                 echo "the publisher never produced fresh angles. Its output:" >&2
+                 docker logs "$_pub" 2>&1 | tail -20 >&2
+                 exit 1
+               fi
+             fi
+             bash ./scripts/sim.sh scripts/sim_teleop.py "$@" ;;
   sim-shell)            # a python REPL inside the Isaac Sim environment
              bash ./scripts/sim.sh "$@" ;;
   sim-camera-check)     # check the sim's camera assumptions against the real ones
@@ -126,9 +196,11 @@ case "$cmd" in
              needs_docker calib-capture
              python3 ./scripts/calibrate_extrinsics.py capture "$@" ;;
   calib-teleop)         # drive the follower from the leader, publishing its joints
-             # In the container (needs lerobot + both serial buses). Leave it running
-             # in one terminal while calib-capture runs in another: the follower bus
-             # can only be opened once, so capture reads the joints this publishes.
+             # The calibration flow's name for leader-publish: same publisher, but
+             # this one DOES drive the follower, because calibration needs the real
+             # arm to move to each pose. Leave it running in one terminal while
+             # calib-capture runs in another -- the follower bus can only be opened
+             # once, so capture reads the joints this publishes rather than the arm.
              needs_docker calib-teleop
              $RUN python scripts/calibrate_extrinsics.py teleop "$@" ;;
   calib-solve)          # solve both cameras' pose in the robot base frame
@@ -174,6 +246,11 @@ so rather than failing with "docker: command not found".
                                 lerobot's reference implementation (no arm needed)
   ./robot sim-assets            convert the printed T + camera mount CAD to USD
   ./robot sim-play [--gui]      build the push-T scene in Isaac Sim and check it
+  ./robot sim-teleop            drive the Isaac scene from the real leader arm
+                                (starts and stops the joint publisher for you)
+  ./robot leader-publish --no-follower
+                                just the publisher, if you want it in its own
+                                terminal
   ./robot sim-play --gui --pose physics off, so prims can be dragged; prints the
                                 camera-mount transform on exit
   ./robot sim-camera-check      verify the sim camera model against the real cameras

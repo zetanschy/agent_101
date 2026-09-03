@@ -51,7 +51,64 @@ MAT_Z = 0.032
 # + half-thickness instead makes the T fall 5 mm at every reset and burn the first
 # frames of the episode on a settling transient.
 MAT_SURFACE = 0.035
-MAT_CENTRE = (0.22, 0.0)
+# The real mat is 93 x 55.5 cm, laid with its long side across the bench: in WORLD
+# axes 0.555 along x (forward from the base) by 0.93 along y. mat.usda is the
+# workshop's 18 x 12 inch desk mat, a unit cube pre-scaled to 0.4572 x 0.3048 x 0.006,
+# spawned here with a 90 degree yaw so its local x lies along world y. MAT_SCALE
+# stretches it to the real size on top of that bake; thickness is left alone.
+MAT_SIZE_XY = (0.555, 0.93)
+_WORKSHOP_MAT_LOCAL_XY = (0.4572, 0.3048)          # local x, local y, as baked in mat.usda
+MAT_SCALE = (MAT_SIZE_XY[1] / _WORKSHOP_MAT_LOCAL_XY[0],   # local x -> world y
+             MAT_SIZE_XY[0] / _WORKSHOP_MAT_LOCAL_XY[1],   # local y -> world x
+             1.0)
+# Near edge flush with the BACK of the base plate, so the whole base sits on the
+# mat, as it does on the real bench. Not the robot's placement origin: the base
+# reaches 46.7 mm behind that (measured off the built scene -- /Robot/base spans
+# x -96.7..-1.1 mm with the robot placed at -50), so anchoring on the origin puts
+# the mat's edge through the middle of the base plate.
+BASE_BEHIND_ORIGIN = 0.0467
+MAT_CENTRE = (SO101_CFG.init_state.pos[0] - BASE_BEHIND_ORIGIN + MAT_SIZE_XY[0] / 2, 0.0)
+MAT_YAW_DEG = 90.0          # lays mat.usda's long side across the bench (world y)
+# mat.usda carries no diffuse colour of its own; it renders near-black. The table
+# matches it so the two merge, as they do on the bench.
+TABLE_COLOR = (0.03, 0.03, 0.03)
+
+# Where the mat ACTUALLY is, and this WINS when set: (x, y, yaw_deg) in the env frame.
+# The derivation above is the tidy version -- flush with the base, square to the arm.
+# A hand-laid mat is neither: in the real overhead frame its far edge runs
+# diagonally across the top, which no axis-aligned rectangle can reproduce. So the
+# mat is placed by fitting its rendered footprint to the dark region of the real
+# frame, with the camera held at the pose the arm silhouette fixed. Size stays 93 x
+# 55.5 cm as measured. None = the derivation.
+#
+# What the fit found, and what it could not: the only edge in view is the TABLE's
+# end (both are black), running at 59 deg to the env x axis. A 555 mm mat starting
+# at the base rear would overhang that edge by 83-280 mm, and there is no black past
+# it in the frame -- so the mat is laid square to the table and flush with its end,
+# which puts its near edge about 162 mm BEHIND the base rear rather than at it. The
+# overhead cannot see that edge (black on black); if the mat really does start at
+# the base, the mat is not 555 deep and this number is the one to change.
+MAT_POSE_OVERRIDE = (0.0144, -0.0385, 59.13)
+if MAT_POSE_OVERRIDE is not None:
+    MAT_CENTRE = (MAT_POSE_OVERRIDE[0], MAT_POSE_OVERRIDE[1])
+    MAT_YAW_DEG = MAT_POSE_OVERRIDE[2]
+
+# Where the T and the goal may sit. NOT the mat's centre any more: now that the mat
+# starts at the back of the base, its centre is only 56 mm from the robot origin and
+# the base plate itself reaches x = -1 mm, so a T sampled about the mat centre spawns
+# *inside the arm* and gets shoved out -- which reads as "T drifted 14 mm with no
+# contact", a friction bug that is nothing of the sort.
+#
+# So the play area is anchored to the ARM, not the mat: a band in front of the base
+# at the distance the arm comfortably works, clipped to stay on the mat. Anchoring
+# on the mat's midpoint instead would march the T away from the robot every time
+# the mat got bigger -- the real one is 93 cm long -- until it was out of reach.
+BASE_AHEAD_ORIGIN = 0.0489      # /Robot/base reaches x = -1.1 mm with the robot at -50
+PLAY_AHEAD_OF_BASE = 0.22       # centre of the band, forward of the base's leading edge
+PLAY_HALF = 0.06                # +/- about that centre; 220 +/- 60 mm is well inside reach
+_base_front = SO101_CFG.init_state.pos[0] + BASE_AHEAD_ORIGIN
+_mat_far = MAT_CENTRE[0] + MAT_SIZE_XY[0] / 2
+PLAY_CENTRE = (min(_base_front + PLAY_AHEAD_OF_BASE, _mat_far - PLAY_HALF - 0.03), 0.0)
 
 # --- camera extrinsics ------------------------------------------------------
 # Measured, when config/extrinsics.json exists (./robot calib-solve). Both cameras
@@ -67,6 +124,27 @@ if _MEASURED:
 else:
     OVERHEAD_POS = (MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE + 0.59)
     OVERHEAD_ROT = (math.cos(math.radians(-45.0)), 0.0, 0.0, math.sin(math.radians(-45.0)))
+
+# Fitted overhead pose, and this WINS over the calibration when set. Same story as
+# the wrist camera's CAMERA_POS_OVERRIDE in assets/objects.py: the hand-eye chain
+# is the least trustworthy number in this repo, so the camera is placed by matching
+# the rendered arm silhouette to the real overhead frame over actual Isaac renders.
+# Env frame, opengl convention, quaternion (w, x, y, z) -- kept as a quaternion
+# because nothing here needs to read it off a GUI, and an euler round-trip is one
+# more place for a convention to go wrong. None = use the calibration above.
+#
+# Result of a 600-evaluation Nelder-Mead over the arm silhouette, each evaluation two
+# real renders (robot on / off, for a shadow-immune depth-difference mask): the
+# calibration's pose moved 14.6 mm and 1.4 deg, and its focal length and principal
+# point held (993.7 -> 991.4, cy 300.4 -> 303.3) -- so the overhead calibration was
+# GOOD, and the offset I once flagged as suspect in cy was real. Mean boundary error
+# 14.4 -> 5.9 px on a ~100 px wide arm seen from 1.1 m.
+OVERHEAD_POS_OVERRIDE = (-0.10061, -0.00532, 1.12434)
+OVERHEAD_ROT_OVERRIDE = (0.697998, 0.079330, -0.047049, -0.710135)
+if OVERHEAD_POS_OVERRIDE is not None:
+    OVERHEAD_POS = tuple(OVERHEAD_POS_OVERRIDE)
+if OVERHEAD_ROT_OVERRIDE is not None:
+    OVERHEAD_ROT = tuple(OVERHEAD_ROT_OVERRIDE)
 
 # The wrist camera comes from the hand-placed mount's bore, NOT from the hand-eye
 # calibration -- and from objects.py rather than being worked out again here, so
@@ -117,8 +195,30 @@ class PushTSceneCfg(InteractiveSceneCfg):
 
     mat = AssetBaseCfg(
         prim_path="{ENV_REGEX_NS}/Mat",
-        spawn=sim_utils.UsdFileCfg(usd_path=f"{WORKSHOP_USD}/mat.usda"),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(MAT_CENTRE[0], MAT_CENTRE[1], MAT_Z), rot=_quat_z(90)),
+        spawn=sim_utils.UsdFileCfg(usd_path=f"{WORKSHOP_USD}/mat.usda", scale=MAT_SCALE),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(MAT_CENTRE[0], MAT_CENTRE[1], MAT_Z), rot=_quat_z(MAT_YAW_DEG)),
+    )
+
+    # The TABLE the mat lies on. Both are black, so in the real overhead frame the
+    # mat's own edges are invisible and the only boundary you can see is the table's
+    # end, running diagonally across the upper part of the frame. Fitting the "mat"
+    # to that dark region put its near edge 162 mm behind the base -- impossible for
+    # a mat that starts at the base -- which is how it became clear the line is the
+    # table's. So: the mat stays where it was measured to be, and this table's far
+    # edge sits on the fitted line. Its other edges are out of every camera's view;
+    # the size is just "big enough". Same black as the mat, so the two merge as they
+    # do in reality. Top face at MAT_Z - 3 mm, so the mat rests on it.
+    table = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Table",
+        spawn=sim_utils.CuboidCfg(
+            size=(2.4, 1.5, 0.028),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=TABLE_COLOR, roughness=0.9),
+            collision_props=None,
+            rigid_props=None,
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=(-0.3911, 0.2039, MAT_Z - 0.003 - 0.028/2), rot=_quat_z(59.13)
+        ),
     )
 
     klip_support = KLIP_SUPPORT_CFG
@@ -127,7 +227,7 @@ class PushTSceneCfg(InteractiveSceneCfg):
 
     t_block: RigidObjectCfg = T_BLOCK_CFG.replace(
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE)
+            pos=(PLAY_CENTRE[0], PLAY_CENTRE[1], MAT_SURFACE)
         )
     )
 
@@ -140,14 +240,24 @@ class PushTSceneCfg(InteractiveSceneCfg):
             usd_path=T_BLOCK_CFG.spawn.usd_path,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True, disable_gravity=True),
             collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
-            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.1, 0.75, 0.3), opacity=0.35, roughness=1.0),
+            # OPAQUE, deliberately. It used to be opacity=0.35, which needs
+            # sim.render.enable_translucency -- and translucency is the single
+            # biggest cost in the frame budget (39.2 -> 31.8 ms with it off, which
+            # is the difference between making 30 fps and not). With it off a
+            # translucent prim renders solid BLACK: a black T on a black mat, i.e.
+            # the operator's target disappears exactly when recording starts. An
+            # opaque marker costs nothing and reads like a printed target, which is
+            # what it is on the real bench.
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.10, 0.72, 0.30), roughness=0.9),
         ),
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(MAT_CENTRE[0], MAT_CENTRE[1], MAT_SURFACE + 0.001)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(PLAY_CENTRE[0], PLAY_CENTRE[1], MAT_SURFACE + 0.001)),
     )
 
     camera_front = camera_cfg("front", "{ENV_REGEX_NS}/OverheadCam", pos=OVERHEAD_POS, rot_quat=OVERHEAD_ROT)
+    # near_m past the webcam's own modelled housing -- see the note in camera_cfg.
     camera_grip = camera_cfg(
-        "grip", "{ENV_REGEX_NS}/Robot/gripper/wrist_cam", pos=WRIST_POS, rot_quat=WRIST_ROT
+        "grip", "{ENV_REGEX_NS}/Robot/gripper/wrist_cam", pos=WRIST_POS, rot_quat=WRIST_ROT,
+        near_m=0.02,
     )
 
 
@@ -199,15 +309,16 @@ class EventCfg:
     reset_t_block = EventTerm(
         func=mdp.reset_t_block_pose,
         mode="reset",
-        params={"pose_range": {"x": (-0.08, 0.08), "y": (-0.08, 0.08), "yaw": (-math.pi, math.pi)}},
+        params={"pose_range": {"x": (-PLAY_HALF, PLAY_HALF), "y": (-PLAY_HALF, PLAY_HALF),
+                               "yaw": (-math.pi, math.pi)}},
     )
     reset_goal = EventTerm(
         func=mdp.reset_goal_pose,
         mode="reset",
         params={
             "pose_range": {
-                "x": (MAT_CENTRE[0] - 0.06, MAT_CENTRE[0] + 0.06),
-                "y": (MAT_CENTRE[1] - 0.06, MAT_CENTRE[1] + 0.06),
+                "x": (PLAY_CENTRE[0] - PLAY_HALF, PLAY_CENTRE[0] + PLAY_HALF),
+                "y": (PLAY_CENTRE[1] - PLAY_HALF, PLAY_CENTRE[1] + PLAY_HALF),
                 "yaw": (-math.pi, math.pi),
             }
         },
@@ -231,7 +342,13 @@ class PushTEnvCfg(ManagerBasedRLEnvCfg):
     rewards = None
 
     def __post_init__(self) -> None:
-        self.decimation = 2
+        # decimation 4 with sim.dt 1/120 gives step_dt = 1/30 exactly, which is the
+        # rate our real datasets are recorded at -- and lerobot's aggregate_datasets
+        # refuses to merge datasets whose fps differ, so this is not a preference.
+        # sim.render_interval MUST track it: leaving it at 2 renders twice per step
+        # and costs 20 ms a frame, which alone is the difference between hitting
+        # 30 Hz and not.
+        self.decimation = 4
         self.episode_length_s = 60.0
         self.scene.num_envs = 1
         # Looking over the operator's shoulder at the mat.
@@ -240,11 +357,112 @@ class PushTEnvCfg(ManagerBasedRLEnvCfg):
         self.sim.dt = 1 / 120
         self.sim.render_interval = self.decimation
         self.sim.render.rendering_mode = "quality"
-        self.sim.render.enable_translucency = True   # the goal marker is see-through
+        # Translucency OFF. It was on for the goal marker, which used to be 35%
+        # transparent; the marker is opaque now precisely so this can be off, because
+        # translucency is the biggest single item in the frame budget (39.2 -> 31.8 ms)
+        # and 30 fps recording has only 33.3 ms to spend.
+        self.sim.render.enable_translucency = False
+        # Give the cameras a genuinely fresh frame after a reset, rather than the last
+        # frame of the previous episode -- the first frame of every recorded episode
+        # depends on it.
+        self.rerender_on_reset = True
         # The T's contact with the mat is the whole task. Isaac Lab 2.1 cannot attach
         # a physics material to a USD-spawned rigid body, so set it as the sim-wide
         # default: the T is the only thing here sliding on anything.
         self.sim.physics_material = sim_utils.RigidBodyMaterialCfg(**PLA_ON_MAT)
+
+
+@configclass
+class DREventCfg(EventCfg):
+    """EventCfg plus domain randomization.
+
+    Declared as class-level FIELDS, not assigned in __post_init__: @configclass
+    turns class attributes into dataclass fields, and EventManager walks the
+    fields. Attributes bolted on afterwards are set on the instance, show up in
+    vars(), and are silently ignored by the manager -- the terms appear to exist
+    and never run.
+
+    Ranges, and why:
+      physics   friction is the whole task -- it sets how far the T slides per
+                push -- so it gets the widest treatment, then mass, then gains.
+                Isaac Lab's randomizers rebase to the default on each reset, so
+                scaling every episode does not compound.
+      lighting  the widest range here. The real rig is an open bench under room
+                light and this genuinely varies from session to session.
+      cameras   the NARROWEST, deliberately: millimetres where the workshop uses
+                centimetres. Both cameras were fitted against real frames (wrist
+                3.1 px, overhead 5.9 px of boundary error). Randomising wider than
+                the calibration residual throws the calibration away.
+      colour    a few percent about white, not a four-colour palette. The real arm
+                is white and we know it.
+    """
+
+    t_block_friction = EventTerm(
+        func=base_mdp.randomize_rigid_body_material,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("t_block"),
+            "static_friction_range": (0.6, 1.2),      # PLA_ON_MAT default 0.9
+            "dynamic_friction_range": (0.5, 1.0),     # default 0.75
+            "restitution_range": (0.0, 0.05),
+            "num_buckets": 64,
+            "make_consistent": True,
+        },
+    )
+    t_block_mass = EventTerm(
+        func=base_mdp.randomize_rigid_body_mass,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("t_block", body_names=".*"),
+            "mass_distribution_params": (0.8, 1.3),   # x the measured 48 g
+            "operation": "scale",
+            "distribution": "uniform",
+            "recompute_inertia": True,
+        },
+    )
+    arm_gains = EventTerm(
+        func=base_mdp.randomize_actuator_gains,
+        mode="reset",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "stiffness_distribution_params": (0.8, 1.2),
+            "damping_distribution_params": (0.7, 1.3),
+            "operation": "scale",
+            "distribution": "uniform",
+        },
+    )
+    lighting = EventTerm(
+        func=mdp.randomize_lighting,
+        mode="reset",
+        params={"dome_intensity": (600.0, 1400.0),    # default 900
+                "key_intensity": (3500.0, 8500.0),    # default 6000
+                "color_temperature": (4500.0, 7500.0)},
+    )
+    camera_jitter = EventTerm(
+        func=mdp.randomize_camera_pose,
+        mode="reset",
+        params={"cameras": {
+            "/World/envs/env_0/OverheadCam": {
+                "pos_m": (0.004, 0.004, 0.004), "rot_deg": (0.3, 0.3, 0.3)},
+            "/World/envs/env_0/Robot/gripper/wrist_cam": {
+                "pos_m": (0.002, 0.002, 0.002), "rot_deg": (0.5, 0.5, 0.5)},
+        }},
+    )
+    robot_shade = EventTerm(
+        func=mdp.randomize_robot_color, mode="reset",
+        params={"grey": (0.86, 0.97), "tint": 0.03},
+    )
+
+
+@configclass
+class PushTDREnvCfg(PushTEnvCfg):
+    """push-T with domain randomization, for data meant to transfer.
+
+    A separate task id rather than a flag on the plain env, so that "which scene
+    was this recorded in" is answerable from the dataset's task name alone.
+    """
+
+    events: DREventCfg = DREventCfg()
 
 
 @configclass

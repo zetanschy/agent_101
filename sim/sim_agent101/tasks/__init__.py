@@ -15,3 +15,10 @@ gym.register(
     disable_env_checker=True,
     kwargs={"env_cfg_entry_point": f"{__name__}.push_t_env_cfg:PushTEvalEnvCfg"},
 )
+
+gym.register(
+    id="Agent101-So101-Push-T-DR",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={"env_cfg_entry_point": f"{__name__}.push_t_env_cfg:PushTDREnvCfg"},
+)
