@@ -1,4 +1,10 @@
-"""MDP terms for push-T, on top of the workshop's and Isaac Lab's own."""
+"""MDP terms for this workspace's tasks, on top of the workshop's and Isaac Lab's own."""
+
+from .reach import (  # noqa: F401
+    orientation_command_error,
+    position_command_error,
+    position_command_error_tanh,
+)
 
 from .randomize import (  # noqa: F401
     randomize_camera_pose,

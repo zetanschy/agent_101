@@ -107,6 +107,15 @@ case "$cmd" in
              bash ./scripts/sim.sh scripts/sim_convert_assets.py "$@" ;;
   sim-play)             # build the push-T scene, step it, render both cameras
              bash ./scripts/sim.sh scripts/sim_play.py "$@" ;;
+  sim-train)            # train a policy with rsl_rl PPO (reach, by default)
+             # HEADLESS unless you ask for --gui: rendering 4096 arms is most of
+             # the cost of training them. Checkpoints and tensorboard logs land in
+             # sim/outputs/rsl_rl/<experiment>/<timestamp>/.
+             bash ./scripts/sim.sh scripts/sim_train.py "$@" ;;
+  sim-policy)           # run a trained checkpoint and report its tracking error
+             # Windowed by default, the opposite of sim-train: this one is for
+             # watching. Defaults to the newest so101_reach checkpoint.
+             bash ./scripts/sim.sh scripts/sim_policy.py "$@" ;;
   leader-publish)       # stream the leader's joint angles to sim/outputs/calib/joints.json
              # The serial buses live in Docker, so anything reading an arm runs here.
              # Two consumers: calib-capture (which cannot open the follower bus
@@ -246,6 +255,10 @@ so rather than failing with "docker: command not found".
                                 lerobot's reference implementation (no arm needed)
   ./robot sim-assets            convert the printed T + camera mount CAD to USD
   ./robot sim-play [--gui]      build the push-T scene in Isaac Sim and check it
+  ./robot sim-train             train reach with rsl_rl PPO (headless, 4096 envs)
+                                --task Agent101-So101-Reach-DR for randomized gains
+                                tensorboard --logdir sim/outputs/rsl_rl
+  ./robot sim-policy            watch the newest checkpoint and score its tracking
   ./robot sim-teleop            drive the Isaac scene from the real leader arm
                                 (starts and stops the joint publisher for you)
   ./robot leader-publish --no-follower

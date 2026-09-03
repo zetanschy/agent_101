@@ -66,6 +66,10 @@ this repo: it needs the GPU plus a 2.3 GB shader cache and 37 GB of Omniverse da
     ./robot sim-assets            # STL -> USD, once (and after editing the CAD)
     ./robot sim-play              # build the scene, step it, render both cameras
     ./robot sim-play --gui        # ...and watch
+    ./robot sim-teleop            # drive the scene from the real leader arm
+    ./robot sim-record            # ...and write a LeRobot dataset while you do
+    ./robot sim-train             # train reach with PPO (headless, 4096 envs)
+    ./robot sim-policy            # watch a checkpoint and score its tracking
 
 `sim-play` writes renders to `outputs/sim/` and checks the things that fail silently:
 the T resting on the mat rather than sinking or drifting, both cameras returning
@@ -91,11 +95,19 @@ finished. If you repair it, `SIM_CONDA_ENV` is the only thing that should change
       assets/objects.py       T block, camera mount, camera factory
       assets/so101.py         the arm, pointed at the workshop USD
       mdp/push_t.py           where the T is, where it should go, when that is done
-      tasks/push_t_env_cfg.py the scene
+      mdp/randomize.py        lighting, camera and robot-colour randomization
+      mdp/reach.py            distance to a commanded gripper pose
+      tasks/push_t_env_cfg.py the push-T scene
+      tasks/reach_env_cfg.py  the reach task, which is the one with rewards
+      tasks/agents/           PPO hyperparameters, keyed to a task by gym.register
     scripts/
       sim.sh                  runs a script inside the Isaac environment
       sim_convert_assets.py   STL -> USD
       sim_play.py             build + validate the scene
+      sim_teleop.py           leader arm -> the Isaac scene
+      sim_record.py           ...and out to a LeRobot dataset
+      sim_train.py            rsl_rl PPO
+      sim_policy.py           run a checkpoint, report tracking error
       sim_camera_check.py     sim camera assumptions vs the real cameras
       sim_calibrate_cameras.py checkerboard intrinsics
 
@@ -112,3 +124,75 @@ Both measure the T at its **centroid**, not its mesh origin — the origin sits 
 middle of the crossbar, so scoring there would reward parking the bar on the goal
 with the stem pointing anywhere. Yaw error is wrapped to (-π, π] and deliberately not
 folded by symmetry: a T has none, and upside down is a different outcome on the mat.
+
+`Agent101-So101-Push-T-DR` — the same scene with domain randomization on every
+reset: friction, mass, actuator gains, lighting, camera pose and the robot's shade.
+A separate task id rather than a flag, so *which scene was this recorded in* is
+answerable from a dataset's task name alone.
+
+## Reach: the RL task
+
+Push-T is an imitation task — the scene exists to be teleoped into a dataset, and
+`PushTEnvCfg` has `rewards = None`. Reach is the other half, and the reason it is
+here is narrow: nothing in this repo otherwise exercises **training** in Isaac Lab.
+It needs no object and no cameras, it is the standard first manipulation task, and
+it trains in minutes, so it is the cheapest available proof that the arm model, the
+workshop's actuator gains and the rsl_rl stack all work before something harder
+depends on them.
+
+Built from Isaac Lab's own `manager_based/manipulation/reach` and the SO-ARM101
+recipe on the [Seeed wiki](https://wiki.seeedstudio.com/es/training_soarm101_policy_with_isaacLab/)
+(`MuammerBay/isaac_so_arm101`, BSD-3), with four changes:
+
+| | here | the reference |
+|---|---|---|
+| arm | `SO101_CFG`, workshop USD + gains, joints `Rotation`/`Pitch`/… | its own SO-ARM USD, lerobot joint names |
+| target box | derived from this bench: 0.10–0.25 m ahead of the root, ±0.10 m across, 0.05–0.20 m over the mat | a fixed box |
+| control rate | 30 Hz on a 1/120 s step, matching push-T and `DATASET_FPS` | 30 Hz on 1/60 |
+| orientation reward | weight 0 | weight 0 for SO-101, unexplained |
+
+    ./robot sim-train                                  # 4096 envs, headless
+    ./robot sim-train --task Agent101-So101-Reach-DR   # randomized actuator gains
+    ./robot sim-train --max-iterations 250 --resume    # continue the newest run
+    tensorboard --logdir sim/outputs/rsl_rl
+
+    ./robot sim-policy                                 # newest checkpoint, windowed
+    ./robot sim-policy --headless --steps 600          # just the error numbers
+    ./robot sim-policy --export                        # policy.pt + policy.onnx
+
+Watch `Metrics/ee_pose/position_error` — mean distance from the gripper to the
+commanded point, in metres. Measured here, 250 iterations (24.5M steps, 4m21s on an
+RTX 3060, 4096 envs) takes it from 0.185 m — what an untrained policy scores on this
+target box — to 0.007 m. The agent config's default is 1000 iterations, which is where the
+reference leaves it; this task was already at 7 mm by 250, so watch the curve rather
+than the iteration count.
+
+`sim-policy` on that checkpoint reports **mean 9.6 mm, p90 8.0 mm, worst 121 mm**
+over 300 steps. The mean sitting *above* the p90 is the expected shape, not a bug:
+the target resamples every 4 s and the first steps afterwards are travel, so a few
+large values pull the mean up while the settled error is what the p90 shows.
+
+### Three things about this task that are not the reference's
+
+**The target box stops short of where push-T plays.** The T is sampled 0.19–0.31 m
+from the root; reach targets stop at 0.25 m. Past ~0.27 m the SO-101 is near full
+extension, the set of orientations it can achieve at a point collapses, and the
+tracking error cannot go to zero however good the policy is. The arm *does* get out
+to the T at 0.31 m — lying nearly flat on the mat, which is one configuration rather
+than a region worth sampling free-space targets in.
+
+**The action space is not push-T's.** Reach drives the five arm joints as a scaled
+delta on the rest pose (`target = REST_POSE + 0.5 * action`), because an untrained
+policy emitting absolute radians flails through the whole joint range on step one.
+push-T sends absolute targets for all six joints, because a teleop recording *is*
+absolute joint angles. A reach checkpoint therefore does not drop into the push-T
+action pipeline unchanged; anything deploying one on the real arm has to apply the
+same affine map.
+
+**The scene has no bench.** Mat, table and light box are visual-only in push-T, so
+they change nothing physical — but this scene is cloned thousands of times, where
+"visual only" still costs a prim and a draw call per environment. The bench survives
+where it matters, in the target box. What it costs is that the arm can sweep below
+the bench plane, which the real one cannot; targets are all above the mat so it has
+no reason to, but watch a checkpoint in `./robot sim-policy` before trusting it near
+real hardware.
