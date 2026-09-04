@@ -3,7 +3,9 @@
 
     ./robot sim-play                       # headless, writes renders + a report
     ./robot sim-play --gui                 # watch it
+    ./robot sim-play --gui --random        # ...with the arm flailing, so things move
     ./robot sim-play --steps 300 --task Agent101-So101-Push-T-Eval
+    ./robot sim-play --gui --random --task Agent101-So101-Push-T-RL
 
 Checks, in order, the things that silently go wrong when a scene is assembled:
   * the T spawns ON the mat and settles instead of sinking, exploding or drifting
@@ -30,6 +32,10 @@ parser.add_argument("--pose", action="store_true",
                     help="open the window with physics OFF, to drag prims and read their transform")
 parser.add_argument("--gui", action="store_true",
                     help="open the Isaac Sim window and hold it open after the checks")
+parser.add_argument("--random", action="store_true",
+                    help="drive random actions instead of holding still, so the arm moves and pushes")
+parser.add_argument("--random-hold", type=int, default=15,
+                    help="steps to hold each random action (default 15 = half a second)")
 parser.add_argument("--out", default=None, help="where to write renders (default sim/outputs)")
 # Six lerobot joint angles in DEGREES, lerobot's own order, exactly as
 # robot.get_observation() reports them. Comparing a sim render against a real
@@ -144,6 +150,32 @@ def main() -> int:
     obs, _ = env.reset()
     actions = env.unwrapped.action_manager.action.clone()
 
+    _random_state = {"held": actions, "left": 0}
+
+    def next_actions():
+        """Zeros hold the arm at its rest pose; --random makes it move.
+
+        Holding still is the right default because the checks below ask whether the T
+        SITS there -- a block that drifts with nothing touching it is a friction bug.
+        Random actions answer a different question: what the scene and the camera look
+        like when something is actually happening in them.
+
+        Each draw is HELD for --random-hold steps rather than resampled every step.
+        Resampled at 30 Hz, uniform noise averages to nothing and the arm vibrates
+        around its rest pose: measured over 200 steps it wandered 20 degrees at the
+        base and never once touched the block. Held for half a second at a time it
+        travels, which is the point of looking.
+        """
+        if not args.random:
+            return actions
+        import torch
+
+        if _random_state["left"] <= 0:
+            _random_state["held"] = torch.empty_like(actions).uniform_(-1.0, 1.0)
+            _random_state["left"] = args.random_hold
+        _random_state["left"] -= 1
+        return _random_state["held"]
+
     if args.joints:
         import math
 
@@ -200,7 +232,7 @@ def main() -> int:
 
     t0 = mdp.t_pose_world(env.unwrapped)[0].tolist()
     for _ in range(args.steps):
-        obs, _, _, _, _ = env.step(actions)
+        obs, _, _, _, _ = env.step(next_actions())
 
     scene = env.unwrapped.scene
     t1 = mdp.t_pose_world(env.unwrapped)[0].tolist()
@@ -214,13 +246,22 @@ def main() -> int:
     print(f"\nT block after {args.steps} steps")
     print(f"  centroid start  x={t0[0]:+.4f} y={t0[1]:+.4f} yaw={t0[2]:+.3f}")
     print(f"  centroid now    x={t1[0]:+.4f} y={t1[1]:+.4f} yaw={t1[2]:+.3f}")
-    print(f"  drifted         {((t1[0]-t0[0])**2 + (t1[1]-t0[1])**2) ** 0.5 * 1000:.1f} mm  (nothing pushed it)")
+    print(f"  drifted         {((t1[0]-t0[0])**2 + (t1[1]-t0[1])**2) ** 0.5 * 1000:.1f} mm"
+          f"  ({'random actions' if args.random else 'nothing pushed it'})")
     print(f"  root z          {z - origin_z:+.4f} m above the env origin")
     print(f"  settled={settled}  success={success}  goal error dx={err[0]:+.3f} dy={err[1]:+.3f} dyaw={err[2]:+.3f}")
 
+    # Whatever cameras this task HAS. The teleop scene carries two; the RL push-T
+    # scene carries only the wrist one, and a hardcoded pair turned a task without an
+    # overhead into a KeyError three lines into the report.
+    from isaaclab.sensors import TiledCamera
+
+    known = {"camera_front": "front_c270", "camera_grip": "grip_kwc500"}
+    cams = [(k, known.get(k, k)) for k in sorted(scene.keys()) if isinstance(scene[k], TiledCamera)]
+
     print("\ncameras")
     lines = []
-    for key, name in (("camera_front", "front_c270"), ("camera_grip", "grip_kwc500")):
+    for key, name in cams:
         cam = scene[key]
         rgb = cam.data.output["rgb"]
         lines.append(f"  {key:13} {save(name, rgb)}")
@@ -233,14 +274,14 @@ def main() -> int:
     problems = []
     if abs(z - origin_z - 0.035) > 0.004:
         problems.append(f"T sits at z={z - origin_z:.4f}, expected 0.035 (the mat's top face)")
-    if ((t1[0] - t0[0]) ** 2 + (t1[1] - t0[1]) ** 2) ** 0.5 > 0.01:
+    if not args.random and ((t1[0] - t0[0]) ** 2 + (t1[1] - t0[1]) ** 2) ** 0.5 > 0.01:
         problems.append("T drifted >10 mm with no contact -- check friction and the initial pose")
-    for key, name in (("camera_front", "front"), ("camera_grip", "grip")):
+    for key, _ in cams:
         m = scene[key].data.output["rgb"][0].float().mean().item()
         if m < 2.0:
-            problems.append(f"{name} camera is black (mean {m:.2f}) -- lighting or the near plane")
+            problems.append(f"{key} is black (mean {m:.2f}) -- lighting or the near plane")
 
-    print("\n" + ("FAILED\n  " + "\n  ".join(problems) if problems else "OK: scene builds, T rests on the mat, both cameras render"))
+    print("\n" + ("FAILED\n  " + "\n  ".join(problems) if problems else f"OK: scene builds, T rests on the surface, {len(cams)} camera(s) render"))
 
     if args.gui:
         # Keep stepping so the window stays live and the episode keeps resetting --
@@ -253,7 +294,7 @@ def main() -> int:
             while app.is_running():
                 if stepping:
                     try:
-                        env.step(actions)
+                        env.step(next_actions())
                     except RuntimeError as e:
                         # Moving a prim that lives INSIDE the robot articulation (which
                         # klip_support does) makes PhysX rebuild it and invalidates the

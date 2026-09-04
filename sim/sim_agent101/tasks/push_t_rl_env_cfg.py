@@ -115,6 +115,45 @@ WORKSPACE_Y = (-0.30, 0.30)
 # happened to spawn near the goal yaw, so it paid for luck instead of shaping.
 SUCCESS_COVERAGE = 0.70
 
+# --- where the arm starts, which is also where its actions are measured from ------
+# NOT the workshop's REST_POSE. That is "arm up and out of the way" and it puts the
+# gripper 302 mm above the env origin; the table is at 35. With mjlab's 0.8 rad action
+# scale measured from there, the LOWEST the gripper reached over 600 steps x 64 envs of
+# random actions was 115 mm -- it cannot touch the block, so no policy can ever learn
+# to push it. mjlab hit the same wall on its own arm and fixed it the same way: it
+# calls 0.8 "the action scale that puts the block's side within reach", which is a
+# statement about a scale AND a home pose together.
+#
+# Solved with kinematics.fk_gripper and scipy least_squares inside the URDF's real
+# joint limits: gripper 40 mm above the table, 10 cm to the SIDE of where the block
+# spawns. Position error 0.00 mm and 1.03 rad of margin to the nearest joint limit, so
+# 0.8 rad of action in any direction stays legal rather than being clipped.
+#
+# Three things this pose is answering, all of them measured:
+#   BESIDE the block, not over it. The first solve put the gripper 40 mm above the
+#   spawn point and the jaws rested on the block: sim-play reported the T drifting
+#   28.8 mm with nothing pushing it, which is the scene nudging its own task object.
+#   LOW. The whole point of replacing REST_POSE is to start where the work is.
+#   AWAY FROM THE LIMITS. Selecting on limit margin AFTER solving position, rather
+#   than folding margin into the residual: this arm has 5 joints for a 3D target, so
+#   the null space is 2-dimensional and the solver will happily park in a corner of
+#   it. Every pose that pinned a joint (elbow at 1.571 pulling back toward the base,
+#   wrist_pitch at -1.658 reaching over the block) came out of that.
+#
+# Orientation is deliberately unconstrained. At this reach the SO-101 cannot point its
+# gripper straight down -- Wrist_Pitch pins and the best alignment is -0.37 against a
+# perfect -1.0 -- and a pushing task does not need it to.
+PUSH_HOME = {
+    "Rotation": -0.4466,
+    "Pitch": 0.3990,
+    "Elbow": 0.5405,
+    "Wrist_Pitch": 0.6310,
+    "Wrist_Roll": -0.0709,
+    # Shut, just off the hard limit. The jaw-open penalty measures from -0.175 rad, so
+    # this starts the episode with that term already at zero.
+    "Jaw": -0.1500,
+}
+
 WRIST_POS, WRIST_ROT = wrist_camera_in_gripper()
 
 
@@ -144,7 +183,13 @@ class PushTRLSceneCfg(InteractiveSceneCfg):
         ),
     )
 
-    robot = SO101_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+    robot = SO101_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Robot",
+        # The home pose goes in init_state because use_default_offset=True measures
+        # every action from it: changing it moves both where the episode starts and
+        # what "zero action" means.
+        init_state=SO101_CFG.init_state.replace(joint_pos=dict(PUSH_HOME)),
+    )
 
     # The printed mount and the modelled webcam, exactly as the teleop scene carries
     # them: visual only, riding the wrist, so what the camera sees includes its own

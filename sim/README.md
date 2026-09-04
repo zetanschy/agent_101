@@ -302,6 +302,41 @@ version centred both on the same point, and an untrained policy scored
 `Episode_Reward/success = 0.021` — the reward paying out for the reset draw rather
 than for anything the policy did. Separated, an untrained policy scores exactly 0.
 
+### Looking at it before you train
+
+    ./robot sim-play --task Agent101-So101-Push-T-RL --gui --random
+
+`sim-play` builds the scene, steps it, saves every camera it finds to `sim/outputs/`
+and reports what it checked. `--random` drives random actions so things actually
+move; without it the arm holds its home pose, which is the right default because the
+checks ask whether the T *sits* there — a block that drifts untouched is a friction
+bug. Each random draw is held for half a second (`--random-hold`), because resampled
+every step at 30 Hz the noise averages out and the arm just vibrates in place.
+
+That run is what caught the two problems below, neither of which would have shown up
+until a training run had already failed.
+
+### The home pose is not the workshop's rest pose
+
+`REST_POSE` is "arm up and out of the way": it puts the gripper **302 mm** above the
+env origin, and the table is at **35**. With mjlab's 0.8 rad action scale measured
+from there, the lowest the gripper reached over 600 steps × 64 envs of random actions
+was **115 mm** — the policy cannot touch the block, so it can never learn to push it.
+mjlab hit the same wall and says so obliquely: it calls 0.8 "the action scale that
+puts the block's side within reach", which is a claim about a scale *and* a home pose
+together.
+
+`PUSH_HOME` is solved with `kinematics.fk_gripper` and scipy, inside the URDF's real
+limits: gripper 40 mm above the table, 10 cm to the side of the block's spawn,
+position error 0.00 mm, **1.03 rad** of margin to the nearest joint limit. Beside the
+block rather than over it because the first solve rested the jaws on it and `sim-play`
+reported the T drifting 28.8 mm with nothing pushing it. Selected on limit margin
+*after* solving position, because 5 joints for a 3D target leaves a 2-dimensional null
+space and the solver will otherwise park in a corner of it.
+
+Measured after: still at home, the T moves **0.0 mm**; under random actions it gets
+pushed **293 mm**.
+
 ### Where it stands
 
 Wired and verified stepping, not trained. At 256 envs every term is live and finite,
