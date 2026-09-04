@@ -120,7 +120,46 @@ case "$cmd" in
              #   --goal manual  one arm, and you drag /World/GoalHandle or use
              #                  W/S A/D Q/E to move the target yourself
              #   --goal auto    one arm, target walking a circle; works headless
+             #   --real         put the REAL arm in the loop: a ghost arm in the
+             #                  viewport shows where it actually is. Starts the
+             #                  bus-side bridge in the container and stops it after.
+             #   --engage       with --real, actually command the arm. Without it
+             #                  the bridge is read-only and NOTHING MOVES.
+             _real=0; _engage=0
+             for _a in "$@"; do
+               [ "$_a" = "--real" ] && _real=1
+               [ "$_a" = "--engage" ] && _engage=1
+             done
+             if [ "$_real" = 1 ]; then
+               # Same shape as sim-teleop: Isaac must run natively for the GPU, the
+               # serial bus must run in Docker, so start the bridge here and clean it
+               # up on the way out however this exits.
+               needs_docker "sim-policy --real"
+               _fresh() { python3 -c "
+import json,pathlib,sys,time
+f=pathlib.Path('sim/outputs/policy/state.json')
+sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else 1)
+" 2>/dev/null; }
+               echo "starting the policy bridge in the background ..."
+               [ "$_engage" = 1 ] \
+                 && echo "  --engage: THE ARM WILL MOVE. Keep a hand near the power." \
+                 || echo "  read-only: the bridge will not command anything."
+               _bridge=$($DC run -d lerobot python scripts/robot/policy_bridge.py \
+                          $([ "$_engage" = 1 ] && echo --engage)) || exit 1
+               trap '"'"'[ -n "$_bridge" ] && { docker stop -t 2 "$_bridge" >/dev/null 2>&1; docker rm -f "$_bridge" >/dev/null 2>&1; }'"'"' EXIT INT TERM
+               for _ in $(seq 1 60); do _fresh && break; sleep 1; done
+               if ! _fresh; then
+                 echo "the bridge never published arm state. Its output:" >&2
+                 docker logs "$_bridge" 2>&1 | tail -20 >&2
+                 exit 1
+               fi
+             fi
              bash ./scripts/sim/sim.sh scripts/sim/policy.py "$@" ;;
+  policy-bridge)        # the bus side of sim-policy --real, on its own
+             # sim-policy --real starts this for you. Run it yourself when you want
+             # it in its own terminal, or to watch the arm's state without Isaac.
+             needs_docker policy-bridge
+             $RUN python scripts/robot/policy_bridge.py "$@" ;;
   leader-publish)       # stream the leader's joint angles to sim/outputs/calib/joints.json
              # The serial buses live in Docker, so anything reading an arm runs here.
              # Two consumers: calib-capture (which cannot open the follower bus
@@ -269,6 +308,10 @@ so rather than failing with "docker: command not found".
   ./robot sim-policy --goal manual
                                 one arm, and you drag the goal around while the
                                 policy chases it (--goal auto to run it hands-free)
+  ./robot sim-policy --real --goal manual
+                                the same, with the REAL arm in the loop: a ghost arm
+                                shows where it is. Read-only until you add --engage
+  ./robot policy-bridge         just the bus side, if you want it in its own terminal
   ./robot sim-teleop            drive the Isaac scene from the real leader arm
                                 (starts and stops the joint publisher for you)
   ./robot leader-publish --no-follower

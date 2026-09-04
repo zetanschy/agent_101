@@ -61,6 +61,22 @@ def gripper_deg_to_pct(deg: float) -> float:
     return (float(deg) - lo) / (hi - lo) * 100.0
 
 
+def urdf_deg_to_lerobot(values: dict) -> dict:
+    """{URDF joint: DEGREES} -> {lerobot joint: lerobot unit}, gripper included.
+
+    The inverse of lerobot_to_urdf_deg, and the direction that matters when
+    something in the simulator wants to COMMAND the real arm: the five arm joints
+    pass through as degrees, the Jaw comes back out as the 0-100 percent the bus
+    actually expects.
+    """
+    out = {}
+    for urdf, lr in URDF_TO_LEROBOT.items():
+        if urdf not in values:
+            continue
+        out[lr] = gripper_deg_to_pct(values[urdf]) if urdf == "Jaw" else float(values[urdf])
+    return out
+
+
 def lerobot_to_urdf_deg(values: dict) -> dict:
     """{lerobot joint: lerobot unit} -> {URDF joint: DEGREES}, gripper included.
 

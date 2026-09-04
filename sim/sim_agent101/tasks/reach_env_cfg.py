@@ -31,7 +31,8 @@ from __future__ import annotations
 
 import isaaclab.envs.mdp as base_mdp
 import isaaclab.sim as sim_utils
-from isaaclab.assets import AssetBaseCfg
+from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.assets import ArticulationCfg, AssetBaseCfg
 from isaaclab.envs import ManagerBasedRLEnvCfg
 from isaaclab.managers import CurriculumTermCfg as CurrTerm
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -316,3 +317,93 @@ class ReachDREnvCfg(ReachEnvCfg):
     """Reach with randomized actuator gains, for a policy meant to leave the sim."""
 
     events: ReachDREventCfg = ReachDREventCfg()
+
+
+# --- the real-arm view ------------------------------------------------------
+# A second arm in the same place, showing where the REAL robot is while the first
+# shows what the policy asked for. Cyan and see-through so the two read apart at a
+# glance, and so "they are on top of each other" is itself the thing you can see.
+GHOST_COLOR = (0.20, 0.75, 0.95)
+GHOST_OPACITY = 0.4
+COMMANDED_COLOR = (0.93, 0.93, 0.95)      # the real arm is white; match it
+
+# BESIDE the commanded arm, not inside it, and this is a workaround rather than a
+# preference: two arms in the same place COLLIDE, and the cost is not cosmetic. With
+# the ghost coincident the policy's own tracking error goes from 11 mm to 158 mm --
+# it reads as a broken checkpoint, and it is the ghost shoving the robot.
+#
+# Both config-level ways out were tried and neither works on the workshop's USD:
+#   * spawn with collision_props=CollisionPropertiesCfg(collision_enabled=False).
+#     Silently does nothing here -- after spawning, all seven of the ghost's collider
+#     prims still read physics:collisionEnabled = true.
+#   * write that attribute afterwards, from a startup event. PhysX has already built
+#     its articulation view by then and the next reset dies with "Failed to set DOF
+#     positions in backend" -- the same trap as writing the camera mount's transform
+#     after the articulation exists (see mdp/push_t.py).
+#
+# 0.6 m: the arm reaches about 0.32 m, so at this separation the two cannot touch
+# even fully extended toward each other. Verified back at 11.1 mm, which is the
+# no-ghost number exactly.
+GHOST_OFFSET_Y = 0.6
+
+
+@configclass
+class ReachRealSceneCfg(ReachSceneCfg):
+    """The play scene plus a ghost arm driven from the real robot's encoders."""
+
+    # No gravity, no drive gains, and parked GHOST_OFFSET_Y to the side. This
+    # articulation never simulates: every step it is snapped to the measured joint
+    # angles with write_joint_state_to_sim.
+    ghost: ArticulationCfg = SO101_CFG.replace(
+        prim_path="{ENV_REGEX_NS}/Ghost",
+        init_state=SO101_CFG.init_state.replace(
+            pos=(SO101_CFG.init_state.pos[0], SO101_CFG.init_state.pos[1] + GHOST_OFFSET_Y, 0.0)
+        ),
+        # Gravity off, and nothing else touched. max_depenetration_velocity=0 looks
+        # like the way to say "this body never resolves a contact" and PhysX rejects
+        # it outright -- "maxDepenVel must be greater than zero", once per link, per
+        # env, forever.
+        spawn=SO101_CFG.spawn.replace(
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(disable_gravity=True),
+        ),
+        actuators={
+            "frozen": ImplicitActuatorCfg(
+                joint_names_expr=[".*"], effort_limit_sim=1.0, stiffness=0.0, damping=0.0
+            )
+        },
+    )
+
+
+@configclass
+class ReachRealEventCfg(EventCfg):
+    """Reset events, plus the two paint jobs -- once, at startup."""
+
+    paint_commanded = EventTerm(
+        func=mdp.set_arm_appearance, mode="startup",
+        params={"asset_name": "robot", "color": COMMANDED_COLOR},
+    )
+    paint_ghost = EventTerm(
+        func=mdp.set_arm_appearance, mode="startup",
+        params={"asset_name": "ghost", "color": GHOST_COLOR, "opacity": GHOST_OPACITY},
+    )
+
+
+@configclass
+class ReachRealEnvCfg(ReachPlayEnvCfg):
+    """One arm the policy drives, one ghost showing the real robot. See
+    ./robot sim-policy --real.
+
+    Nothing here changes the POLICY's world: the ghost has no collisions and the
+    observation still reads only `robot`. It is a display.
+    """
+
+    scene: ReachRealSceneCfg = ReachRealSceneCfg(num_envs=1, env_spacing=1.0)
+    events: ReachRealEventCfg = ReachRealEventCfg()
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.scene.num_envs = 1
+        # Translucency ON, or the ghost renders solid BLACK -- the same trap push-T's
+        # goal marker fell into. One environment, so the frame cost is affordable
+        # here in a way it is not at 4096.
+        self.sim.render.enable_translucency = True

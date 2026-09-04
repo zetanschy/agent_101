@@ -2,6 +2,7 @@
 
 from .reach import (  # noqa: F401
     orientation_command_error,
+    set_arm_appearance,
     position_command_error,
     position_command_error_tanh,
 )

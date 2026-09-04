@@ -24,6 +24,8 @@ consumers; each wrapper `cd`s to this directory and sources it.
     viz.sh                 ./robot viz — rerun timeline for one episode
     data.sh                ./robot data {list|viz|upload|delete|repair}
     train.sh               ./robot train — lerobot training, wandb, HF push
+    policy_bridge.py       ./robot policy-bridge — the bus side of sim-policy --real;
+                           the only thing here that writes to a motor
     merge_datasets.py      ./robot data merge
     repair_timestamps.py   ./robot data repair
 
@@ -39,7 +41,8 @@ and a large cache in `$HOME`. `sim.sh` selects the environment and runs the rest
     record.py              ./robot sim-record — ...and write a LeRobot dataset
     train.py               ./robot sim-train — rsl_rl PPO
     policy.py              ./robot sim-policy — run a checkpoint, score its tracking;
-                           --goal manual to drag the target around yourself
+                           --goal manual to drag the target around yourself,
+                           --real to put the real arm in the loop with a ghost
     camera_check.py        ./robot sim-camera-check — sim camera model vs the real ones
     calibrate_cameras.py   ./robot sim-calibrate — intrinsics, from a checkerboard
     calibrate_extrinsics.py  ./robot calib-* — where the cameras are, and the leader

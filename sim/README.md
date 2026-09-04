@@ -185,6 +185,36 @@ goal, draggable with the translate gizmo while the sim runs, or driven with W/S
 (forward/back), A/D (left/right), Q/E (up/down), R to recentre. `auto` walks it round
 a circle hands-free, which is how the manual path gets tested headless.
 
+### Trying it on the real arm
+
+    ./robot sim-policy --real --goal manual            # nothing moves; watch first
+    ./robot sim-policy --real --goal manual --engage   # ...now the arm follows
+
+The scene gains a **ghost arm**: the white one is what the policy commanded, the
+translucent cyan one beside it is where the real robot actually is, snapped from its
+encoders every step. Drag the goal and you watch both at once. `./robot` starts
+`scripts/robot/policy_bridge.py` in the container and stops it after; that bridge is
+the only process in this repo that writes to a motor. The two halves talk through
+`sim/outputs/policy/{targets,state}.json`, atomically renamed, the same way
+`leader-publish` and `sim-teleop` already do.
+
+**Nothing moves without `--engage`.** `--real` alone runs the policy, draws both arms
+and prints the worst per-joint gap while the bridge stays read-only — which is the
+honest way to look at a checkpoint before trusting it. With `--engage`: commands are
+rate-limited to 60 °/s per joint, a target frame older than 100 ms stops the
+commanding, the gripper is never commanded at all (the policy does not drive it), and
+torque is released on the way out.
+
+Know what this checkpoint does not know before you engage it. It was trained with a
+**massless wrist** — the printed mount and the webcam are visual-only in the sim, so
+their ~100 g on the last link is unmodelled — with **no bench collision geometry**,
+and with five joints. It can ask for a pose that puts the gripper through the table.
+
+The ghost sits 0.6 m to the side rather than overlaid, and that is a workaround, not
+a preference: two arms in the same place collide, and with the ghost coincident the
+policy's own tracking error goes from 11 mm to 158 mm. Both config-level fixes were
+tried — see the note on `GHOST_OFFSET_Y` in `tasks/reach_env_cfg.py`.
+
 manual and auto disable the 4 s resampling — otherwise the goal jumps away mid-drag —
 stretch the episode so a time-out cannot reset the arm on you, and clamp the goal to
 the training box, so dragging past the edge stops at the edge instead of asking for

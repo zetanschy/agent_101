@@ -7,6 +7,7 @@
     ./robot sim-policy --goal auto            # the goal walks a slow circle itself
     ./robot sim-policy --checkpoint sim/outputs/rsl_rl/so101_reach/<run>/model_400.pt
     ./robot sim-policy --export               # also write policy.pt / policy.onnx
+    ./robot sim-policy --real --goal manual   # ...with the REAL arm following along
 
 WINDOWED by default, the opposite of sim-train: the point of this command is to look
 at the thing. A reach policy can reach a low mean error by flinging the arm through
@@ -36,6 +37,20 @@ trained on: drag past the edge and it stops at the edge, rather than asking for 
 pose the arm was never taught and letting the checkpoint look broken when it is the
 request that is wrong.
 
+--real puts the real SO-101 in the loop. The scene gains a GHOST arm: the solid one
+is what the policy commanded, the translucent cyan one is where the real robot
+actually is, so the sim2real gap is a thing you watch rather than a number you infer.
+Targets go out through scripts/robot/policy_bridge.py, which ./robot starts in the
+container for you and which is the only process here that touches a motor.
+
+NOTHING MOVES without --engage. --real alone runs the policy, draws both arms and
+prints the per-joint difference while the bridge stays read-only. Add --engage and
+the arm follows, rate-limited, watchdogged, and with torque released on the way out.
+Before you do, know what this checkpoint does not know: it was trained with a
+massless wrist (the mount and the webcam are visual-only in the sim), with no bench
+collision geometry, and with five joints. It can ask for a pose that puts the gripper
+through the table.
+
 Prints mean and 90th-percentile position error over the run, in millimetres, which is
 the number to compare against the arm's own repeatability before believing a
 checkpoint is good enough to deploy.
@@ -62,6 +77,10 @@ parser.add_argument("--steps", type=int, default=None, help="control steps to ru
 # declaring one twice is an argparse conflict at import, before anything runs.
 parser.add_argument("--export", action="store_true", help="write policy.pt and policy.onnx beside the checkpoint")
 parser.add_argument("--real-time", action="store_true", help="pace the loop at the task's control rate")
+parser.add_argument("--real", action="store_true",
+                    help="put the real arm in the loop: ghost arm from its encoders, targets to the bridge")
+parser.add_argument("--engage", action="store_true",
+                    help="with --real: actually command the arm. Without it nothing moves.")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 if args.headless and args.goal == "manual":
@@ -73,12 +92,21 @@ if args.headless and args.steps is None:
     # 20 s at 30 Hz. A headless run has no window to close, so without this it never
     # ends.
     args.steps = 600
+if args.real:
+    # The ghost arm lives in its own task, and a real arm can only follow one policy.
+    args.task = "Agent101-So101-Reach-Real"
+    args.num_envs = 1
+    # Wall-clock pacing is not optional once hardware is following: free-running, the
+    # simulator would hand the bridge targets faster than the bus can carry them.
+    args.real_time = True
 if args.goal == "manual" and not args.real_time:
     # Free-running, the sim goes as fast as the renderer allows and the arm answers a
     # drag in a fraction of the time it takes to make it. Pace it.
     args.real_time = True
 app = AppLauncher(args).app
 
+import json  # noqa: E402
+import os  # noqa: E402
 import time  # noqa: E402
 
 import gymnasium as gym  # noqa: E402
@@ -95,17 +123,99 @@ from pxr import Gf, Usd, UsdGeom  # noqa: E402
 
 import sim_agent101  # noqa: E402,F401  (registers the envs)
 from sim_agent101 import mdp  # noqa: E402
-from sim_agent101.tasks.reach_env_cfg import CMD_POS_X, CMD_POS_Y, CMD_POS_Z, EE_BODY  # noqa: E402
+from sim_agent101.tasks.reach_env_cfg import ARM_JOINTS, CMD_POS_X, CMD_POS_Y, CMD_POS_Z, EE_BODY  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOGS = ROOT / "sim" / "outputs" / "rsl_rl"
 HANDLE = "/World/GoalHandle"
+IPC = ROOT / "sim" / "outputs" / "policy"
+TARGETS, STATE = IPC / "targets.json", IPC / "state.json"
 
 # The command term works in the ROBOT BASE frame, so the box and everything derived
 # from it stay there too -- one conversion, at the edge, where the handle lives.
 BOX = (CMD_POS_X, CMD_POS_Y, CMD_POS_Z)
 CENTRE = np.array([sum(r) / 2 for r in BOX])
 HALF = np.array([(hi - lo) / 2 for lo, hi in BOX])
+
+
+class RealArm:
+    """The real robot, as seen from inside the simulator.
+
+    Two directions, both through files the bridge in the container also holds open:
+    what the policy wants goes out to targets.json, where the arm actually is comes
+    back in state.json and gets written straight onto the ghost articulation.
+
+    Deliberately NOT a controller. It never decides to move anything -- it reports
+    what the policy already commanded, and refuses to mark a frame engaged unless the
+    operator asked for that on the command line.
+    """
+
+    def __init__(self, env, engage: bool) -> None:
+        self.inner = env.unwrapped
+        self.robot = self.inner.scene["robot"]
+        self.ghost = self.inner.scene["ghost"]
+        self.engage = engage
+        # URDF joint names in the ARTICULATION's own order, which is not the order
+        # anything else in this repo lists them in. Zipping the two by position is
+        # how a policy ends up commanding the elbow with a wrist angle.
+        self.names = list(self.robot.joint_names)
+        self.ghost_names = list(self.ghost.joint_names)
+        self.state_age = float("inf")
+        self.measured: dict[str, float] = {}
+        IPC.mkdir(parents=True, exist_ok=True)
+        for stale in (TARGETS, STATE):
+            stale.unlink(missing_ok=True)   # never inherit a previous session's frame
+        print(f"[sim-policy] real arm: {'ENGAGED, the arm will move' if engage else 'read-only, nothing will move'}",
+              flush=True)
+
+    def publish_targets(self) -> None:
+        """What the policy is asking the joints to do, in URDF degrees."""
+        # joint_pos_target, not the raw action: the action term has already applied
+        # its scale and its offset from the rest pose, and the target is what the
+        # simulated servo is actually chasing.
+        target = self.robot.data.joint_pos_target[0].cpu().numpy()
+        # ARM_JOINTS, not every joint with a lerobot name. The Jaw has an actuator but
+        # no action term, so its target sits at 0 rad rather than at the rest pose --
+        # publishing it would command the real gripper shut on the first frame, which
+        # is the sort of thing you only find out with a finger in the way.
+        payload = {"t": time.time(), "engaged": bool(self.engage),
+                   "joints_deg": {n: math.degrees(float(v)) for n, v in zip(self.names, target)
+                                  if n in ARM_JOINTS}}
+        tmp = TARGETS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload))
+        os.replace(tmp, TARGETS)            # atomic: the reader polls this at 30 Hz
+
+    def pull_state(self) -> None:
+        """Snap the ghost onto the real arm's measured angles."""
+        try:
+            d = json.loads(STATE.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        self.state_age = time.time() - float(d.get("t", 0.0))
+        self.measured = dict(d.get("joints_deg", {}))
+        if self.state_age > 1.0 or not self.measured:
+            return
+        pos = torch.tensor(
+            [[math.radians(self.measured.get(n, 0.0)) for n in self.ghost_names]],
+            dtype=torch.float32, device=self.inner.device)
+        # write_joint_state_to_sim, not a drive target: the ghost has no gains and no
+        # collisions, so it is placed, not simulated.
+        self.ghost.write_joint_state_to_sim(pos, torch.zeros_like(pos))
+
+    def report(self) -> str:
+        if not self.measured:
+            return "real arm: no state yet -- is the bridge running?"
+        if self.state_age > 1.0:
+            return f"real arm: state {self.state_age:.1f}s STALE"
+        target = self.robot.data.joint_pos_target[0].cpu().numpy()
+        worst, at = 0.0, ""
+        for n, v in zip(self.names, target):
+            if n not in self.measured:
+                continue
+            gap = abs(math.degrees(float(v)) - self.measured[n])
+            if gap > worst:
+                worst, at = gap, n
+        return f"real arm: worst joint gap {worst:5.1f} deg at {at:<12s}"
 
 
 class GoalControl:
@@ -239,6 +349,7 @@ def main() -> None:
         print(f"[sim-policy] exported to {out}", flush=True)
 
     goal = GoalControl(env, args.goal) if args.goal != "task" else None
+    real = RealArm(env, args.engage) if args.real else None
 
     # Scored with the task's own reward term, so "how far off is it" here means
     # exactly what it meant during training.
@@ -257,10 +368,26 @@ def main() -> None:
             with torch.inference_mode():
                 obs, _, _, _ = env.step(policy(obs))
                 errors.append(mdp.position_command_error(env.unwrapped, "ee_pose", asset_cfg).mean().item())
+                if real is not None:
+                    # INSIDE the inference_mode block, and it has to be: the ghost is
+                    # moved with write_joint_state_to_sim, which updates the
+                    # articulation's joint_acc in place. Those buffers were created
+                    # under inference mode by the step above, and torch refuses an
+                    # in-place write to an inference tensor from outside it.
+                    #
+                    # After the step, so the target published is the one the policy
+                    # just produced rather than the previous frame's.
+                    real.publish_targets()
+                    real.pull_state()
             step += 1
-            if goal is not None and step % 15 == 0:
-                print(f"\r[sim-policy] goal (base) {goal.goal_b[0]:+.3f} {goal.goal_b[1]:+.3f} "
-                      f"{goal.goal_b[2]:+.3f} m   error {errors[-1] * 1000:6.1f} mm", end="", flush=True)
+            if step % 15 == 0 and (goal is not None or real is not None):
+                line = ""
+                if goal is not None:
+                    line += (f"goal (base) {goal.goal_b[0]:+.3f} {goal.goal_b[1]:+.3f} "
+                             f"{goal.goal_b[2]:+.3f} m   error {errors[-1] * 1000:6.1f} mm")
+                if real is not None:
+                    line += ("   " if line else "") + real.report()
+                print(f"\r[sim-policy] {line}", end="", flush=True)
             if args.steps is not None and step >= args.steps:
                 break
             if args.real_time:
