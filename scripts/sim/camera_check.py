@@ -12,7 +12,7 @@ Two claims are checked, both on live capture:
      tree cannot silently swap the overhead and wrist cameras in the sim config.
 
 Nothing here measures absolute FOV -- that needs a calibration target. See
-scripts/sim_calibrate_cameras.py.
+scripts/sim/calibrate_cameras.py.
 
     ./robot sim-camera-check [--save DIR]
 """
@@ -33,7 +33,7 @@ def _load(name):
     kinematics.py are deliberately dependency-free, so load them by path.
     """
     import importlib.util
-    path = pathlib.Path(__file__).resolve().parent.parent / "sim" / "sim_agent101" / f"{name}.py"
+    path = pathlib.Path(__file__).resolve().parents[2] / "sim" / "sim_agent101" / f"{name}.py"
     import sys as _sys
     spec = importlib.util.spec_from_file_location(f"_sim_agent101_{name}", path)
     mod = importlib.util.module_from_spec(spec)

@@ -24,7 +24,7 @@ If a port or camera index changes, edit [.env](.env) — nothing else.
 
 `./robot login` prompts for both tokens and stores them in `.env.local`
 (gitignored, `chmod 600`), then verifies each against the API. Every container and
-`scripts/train.sh` read that one file, so credentials survive `--rm` runs — unlike
+`scripts/robot/train.sh` read that one file, so credentials survive `--rm` runs — unlike
 a `wandb login` inside a container, which dies with it. `./robot login --status`
 shows what's configured without printing secrets. To move to a cloud GPU box,
 copy that single file: `scp .env.local user@box:agent_101/`.
@@ -73,8 +73,8 @@ resuming re-attaches to the same run. `--no-wandb` opts out per run,
 `--wandb-entity` override the destination. Set the default project in
 [.env](.env).
 
-For a rented GPU box, [scripts/setup-cloud.sh](scripts/setup-cloud.sh) installs
-the same stack without Docker; then call `bash scripts/train.sh` with identical flags.
+For a rented GPU box, [scripts/setup/setup_cloud.sh](scripts/setup/setup_cloud.sh) installs
+the same stack without Docker; then call `bash scripts/robot/train.sh` with identical flags.
 
 ## Notes
 

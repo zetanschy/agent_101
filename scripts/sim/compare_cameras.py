@@ -25,7 +25,7 @@ import time
 import cv2
 import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 SIM_OUT = ROOT / "sim" / "outputs"
 PAIRS = {"front": ("front_c270.png", 0), "grip": ("grip_kwc500.png", 2)}
 WARMUP_FRAMES = 40

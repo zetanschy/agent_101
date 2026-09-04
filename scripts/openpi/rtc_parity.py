@@ -5,8 +5,8 @@ The two stacks cannot share a process — le101 needs CUDA torch, openpi needs
 JAX — so this runs in two passes over a JSON file:
 
     ./robot rtc-parity            # both passes, in their own containers
-    python scripts/rtc_parity.py --dump  out.json    # in agent101/lerobot
-    python scripts/rtc_parity.py --check out.json    # in agent101/openpi
+    python scripts/openpi/rtc_parity.py --dump  out.json    # in agent101/lerobot
+    python scripts/openpi/rtc_parity.py --check out.json    # in agent101/openpi
 
 The dump exercises le101's RTCProcessor directly: prefix weights over a grid of
 (d, s, H, schedule), and a full guided denoise step against a linear denoiser

@@ -2,7 +2,7 @@
 # One-shot setup for a box WITHOUT Docker — a rented GPU (Vast.ai / RunPod) where
 # you install straight onto the host. Assumes a CUDA base image + Python 3.12.
 #   git clone --recursive https://github.com/zetanschy/agent_101 && cd agent_101
-#   bash scripts/setup-cloud.sh
+#   bash scripts/setup/setup_cloud.sh
 #
 # On your own machine you do NOT need this: the image already has everything, so
 #   ./robot build && ./robot preflight && ./robot train --dataset ... --name ...
@@ -28,13 +28,13 @@ python -c "import torch; ok=torch.cuda.is_available(); print('CUDA:', ok, '| GPU
 cat <<'EOF'
 
 == next steps ==
-1) bash scripts/login.sh         # HF (WRITE) + wandb keys in one go -> .env.local
+1) bash scripts/setup/login.sh         # HF (WRITE) + wandb keys in one go -> .env.local
                                  # or copy .env.local over from your workstation:
                                  #   scp .env.local user@box:agent_101/
                                  # train.sh turns wandb on by itself once a key exists.
-2) bash scripts/preflight.sh             # gpu kernels, vram, ram, disk, cpu, python
-   bash scripts/preflight.sh --smoke     # 20 real steps: proves the batch fits
-3) bash scripts/train.sh --dataset <you>/<dataset> --name pi05_run --push
+2) bash scripts/setup/preflight.sh             # gpu kernels, vram, ram, disk, cpu, python
+   bash scripts/setup/preflight.sh --smoke     # 20 real steps: proves the batch fits
+3) bash scripts/robot/train.sh --dataset <you>/<dataset> --name pi05_run --push
    (LoRA + bf16 + grad-checkpointing -> fits ~24GB. Drop --push to keep it local.)
 3) checkpoints land in outputs/train/pi05_run/ — pushed to the Hub if you passed --push.
    Loss curves show up in wandb automatically (project agent_101).

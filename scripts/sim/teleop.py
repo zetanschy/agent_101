@@ -75,7 +75,7 @@ from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 import sim_agent101  # noqa: E402,F401  (registers the envs)
 from sim_agent101.kinematics import LEROBOT_TO_URDF, lerobot_to_urdf_deg  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 JOINTS_FILE = ROOT / "sim" / "outputs" / "calib" / "joints.json"
 URDF_TO_LEROBOT = {v: k for k, v in LEROBOT_TO_URDF.items()}
 

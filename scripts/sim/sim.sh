@@ -14,7 +14,7 @@
 # the workshop's USD assets rather than its Isaac Lab 2.3 Python.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # .env then .env.local, the order the compose files use: shared config first, then
 # the gitignored overrides and secrets (HF_TOKEN, WANDB_API_KEY). The sim commands are
 # the ones that do NOT go through Docker, so without this nothing ever loads

@@ -2,7 +2,7 @@
 
 Two families. Push-T is teleoped and recorded, so its cfgs carry no rewards and
 nothing here points at an agent. Reach is trained, so its ids also carry an
-rsl_rl_cfg_entry_point -- that is how scripts/sim_train.py gets the hyperparameters
+rsl_rl_cfg_entry_point -- that is how scripts/sim/train.py gets the hyperparameters
 for a task it is only given the name of.
 """
 

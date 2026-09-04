@@ -64,7 +64,7 @@ from isaaclab_tasks.utils import get_checkpoint_path, load_cfg_from_registry, pa
 
 import sim_agent101  # noqa: E402,F401  (registers the envs)
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Not ROOT/outputs: that directory is root-owned here (Docker made it) and the sim
 # commands run natively as the user.
 LOGS = ROOT / "sim" / "outputs" / "rsl_rl"
@@ -78,7 +78,7 @@ torch.backends.cudnn.allow_tf32 = True
 def _have_wandb_creds() -> bool:
     """A key in the environment, or a `wandb login` netrc entry. Same test as train.sh.
 
-    .env.local is where the key lives and scripts/sim.sh exports it, so by the time
+    .env.local is where the key lives and scripts/sim/sim.sh exports it, so by the time
     this runs it is an ordinary environment variable.
     """
     if os.environ.get("WANDB_API_KEY"):

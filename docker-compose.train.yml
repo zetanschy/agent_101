@@ -1,7 +1,7 @@
 # Training-only compose: GPU + dataset, NO robot devices / cameras / X11.
 # Use on a cloud GPU box (or any machine) to fine-tune from a pushed dataset.
 #   ./robot train --dataset <id> --name <run>          <- normal way (forwards secrets)
-#   docker compose -f docker-compose.train.yml run --rm train bash scripts/train.sh ...
+#   docker compose -f docker-compose.train.yml run --rm train bash scripts/robot/train.sh ...
 services:
   train:
     build: .

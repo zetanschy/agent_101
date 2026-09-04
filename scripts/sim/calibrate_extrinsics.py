@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Measure where the two cameras actually are, in the robot's base frame.
 
-Intrinsics come from scripts/sim_calibrate_cameras.py. This is the other half: the
+Intrinsics come from scripts/sim/calibrate_cameras.py. This is the other half: the
 POSE of each camera, which the sim currently estimates (OVERHEAD_POS was back-solved
 from one frame's field of view, and the wrist camera's direction is a hand-set angle).
 
@@ -38,7 +38,7 @@ import time
 import cv2
 import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def _load(name):
     """Import a sim_agent101 submodule without executing the package __init__.
@@ -48,7 +48,7 @@ def _load(name):
     kinematics.py are deliberately dependency-free, so load them by path.
     """
     import importlib.util
-    path = pathlib.Path(__file__).resolve().parent.parent / "sim" / "sim_agent101" / f"{name}.py"
+    path = pathlib.Path(__file__).resolve().parents[2] / "sim" / "sim_agent101" / f"{name}.py"
     import sys as _sys
     spec = importlib.util.spec_from_file_location(f"_sim_agent101_{name}", path)
     mod = importlib.util.module_from_spec(spec)

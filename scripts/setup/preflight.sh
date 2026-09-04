@@ -3,9 +3,9 @@
 # rent — GPU kernels, VRAM, RAM, disk, vCPU, python version, AV1 decoder —
 # before a 13GB download and a 30k-step run.
 #
-#   bash scripts/preflight.sh                       # checks only, ~10s
-#   bash scripts/preflight.sh --smoke               # + 20 real training steps
-#   bash scripts/preflight.sh --smoke --batch 32 --dataset <id> --base <model>
+#   bash scripts/setup/preflight.sh                       # checks only, ~10s
+#   bash scripts/setup/preflight.sh --smoke               # + 20 real training steps
+#   bash scripts/setup/preflight.sh --smoke --batch 32 --dataset <id> --base <model>
 #
 # The kernel check matters most on new silicon (RTX 5090 = Blackwell = sm_120):
 # a torch wheel built without your card's compute capability imports fine and
@@ -15,7 +15,7 @@
 # --smoke is the real proof: it runs the actual policy, LoRA, dataset and video
 # decode for a few steps, so you know your --batch fits before committing.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 smoke=0; batch=16; dataset="zetanschy/raw_cap_to_cup_199"; base="lerobot/pi05_base"; workers=4
 while [ $# -gt 0 ]; do
@@ -117,7 +117,7 @@ print("== gpu ==")
 try:
     import torch
 except ImportError:
-    line("FAIL", "torch", "not installed — run scripts/setup-cloud.sh first")
+    line("FAIL", "torch", "not installed — run scripts/setup/setup_cloud.sh first")
     print("\nFAILED")
     sys.exit(1)
 
@@ -178,7 +178,7 @@ echo
 echo "== smoke: 20 real steps ($base on $dataset, batch $batch) =="
 echo "   first run downloads the base model (~13GB)"
 rm -rf outputs/train/gpu_smoke
-bash scripts/train.sh --dataset "$dataset" --base "$base" --name gpu_smoke \
+bash scripts/robot/train.sh --dataset "$dataset" --base "$base" --name gpu_smoke \
   --steps 20 --batch "$batch" --num_workers "$workers" --no-wandb
 
 echo

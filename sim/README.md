@@ -61,7 +61,7 @@ real captures before collecting data.
 
 Isaac Sim here is a **native conda install, not Docker**, unlike everything else in
 this repo: it needs the GPU plus a 2.3 GB shader cache and 37 GB of Omniverse data in
-`$HOME`. `scripts/sim.sh` selects the environment from `SIM_CONDA_ENV` in `.env`.
+`$HOME`. `scripts/sim/sim.sh` selects the environment from `SIM_CONDA_ENV` in `.env`.
 
     ./robot sim-assets            # STL -> USD, once (and after editing the CAD)
     ./robot sim-play              # build the scene, step it, render both cameras
@@ -164,7 +164,7 @@ over a logger. `--no-wandb` and `--wandb-offline` override; `--wandb` forces it 
 and fails fast if there is nothing to authenticate with.
 
 Two things worth knowing, both of which look like wandb working when it is not.
-`scripts/sim.sh` now sources `.env.local` as well as `.env` — the sim commands are
+`scripts/sim/sim.sh` now sources `.env.local` as well as `.env` — the sim commands are
 the ones that skip Docker, so nothing else would ever export the key for them. And
 `sim_train.py` calls `wandb.finish()` explicitly, because Kit ends the process inside
 `app.close()` without running atexit handlers: without it the run directory appears,

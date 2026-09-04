@@ -3,8 +3,8 @@
 # instance, which is itself a container and cannot nest one.
 #
 #   git clone --recursive https://github.com/zetanschy/agent_101 && cd agent_101
-#   bash scripts/setup-openpi-cloud.sh
-#   bash scripts/openpi_train.sh --exp-name=smoke --batch-size 16 --overwrite
+#   bash scripts/openpi/setup_cloud.sh
+#   bash scripts/openpi/train.sh --exp-name=smoke --batch-size 16 --overwrite
 #
 # This mirrors Dockerfile.openpi, which is the version that has been verified to
 # import cleanly — deliberately NOT `uv sync` on openpi itself, because openpi's
@@ -19,7 +19,7 @@
 #   - lerobot needs the `dataset` extra, because openpi's policy_config reaches
 #     training.checkpoints -> training.data_loader -> lerobot.datasets.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 echo "== python =="
 py=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
@@ -103,9 +103,9 @@ PY
 cat <<'EOF'
 
 == next ==
-  bash scripts/openpi_train.sh --exp-name=smoke --batch-size 16 --overwrite
+  bash scripts/openpi/train.sh --exp-name=smoke --batch-size 16 --overwrite
       -> computes norm stats (~12 min), then trains. Kill after ~20 steps to check
          that the batch fits and to read the step time.
-  bash scripts/openpi_train.sh --exp-name=cap_to_cup_200 --overwrite
+  bash scripts/openpi/train.sh --exp-name=cap_to_cup_200 --overwrite
       -> the real run. Use tmux. Add --resume (NOT --overwrite) after a crash.
 EOF

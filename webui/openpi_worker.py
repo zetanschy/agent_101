@@ -11,7 +11,7 @@ Why a separate worker rather than a branch inside infer_worker.py: openpi needs
 JAX-on-GPU with CPU torch, lerobot pi05 needs CUDA torch, and those cannot share one
 image. This one runs from agent101/openpi; infer_worker.py runs from agent101/lerobot.
 
-The policy/camera/observation logic is imported from scripts/evaluate_openpi.py so
+The policy/camera/observation logic is imported from scripts/openpi/evaluate.py so
 there is exactly one definition of how a frame becomes an openpi observation — that
 script stays the standalone/headless entry point.
 """
@@ -33,8 +33,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _load_eval_module():
-    """Import scripts/evaluate_openpi.py without making it a package."""
-    spec = importlib.util.spec_from_file_location("evaluate_openpi", ROOT / "scripts" / "evaluate_openpi.py")
+    """Import scripts/openpi/evaluate.py without making it a package."""
+    spec = importlib.util.spec_from_file_location(
+        "openpi_evaluate", ROOT / "scripts" / "openpi" / "evaluate.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

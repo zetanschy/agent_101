@@ -45,7 +45,7 @@ app = AppLauncher(args).app
 import isaaclab.sim as sim_utils  # noqa: E402
 from isaaclab.sim.converters import MeshConverter, MeshConverterCfg  # noqa: E402
 
-HERE = pathlib.Path(__file__).resolve().parent.parent / "sim" / "sim_agent101" / "assets"
+HERE = pathlib.Path(__file__).resolve().parents[2] / "sim" / "sim_agent101" / "assets"
 CAD, USD = HERE / "cad", HERE / "usd"
 
 
@@ -53,7 +53,7 @@ def convert(stl: str, name: str, *, dynamic: bool, mass: float | None,
             translation=(0.0, 0.0, 0.0), rotation=(1.0, 0.0, 0.0, 0.0)) -> pathlib.Path:
     out = USD / f"{name}.usd"
     if out.exists() and not args.force:
-        print(f"  {name}: already converted ({out.relative_to(HERE.parent.parent.parent)})")
+        print(f"  {name}: already converted ({out.relative_to(HERE.parents[2])})")
         return out
     # Isaac Lab 2.1's MeshConverter does basename.split(".") and unpacks two values,
     # so any dot in the stem -- "t_20_factor_0.5.stl" -- crashes it. Stage a

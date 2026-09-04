@@ -104,7 +104,7 @@ CAMERAS = {c.name: c for c in (TOP, WRIST)}
 def default_config(width: int = 640, height: int = 480) -> dict:
     return {
         "_comment": "Regenerate spec values with: python -m sim_agent101.cameras --write. "
-                    "Calibrated values are written by scripts/sim_calibrate_cameras.py and "
+                    "Calibrated values are written by scripts/sim/calibrate_cameras.py and "
                     "must not be overwritten by --write (it refuses).",
         "cameras": {name: cam.intrinsics(width, height) for name, cam in CAMERAS.items()},
     }

@@ -62,61 +62,61 @@ case "$cmd" in
   build|setup)  # one command for every box: build the image, or install natively
              if [ "$MODE" = native ]; then
                case "${1:-}" in
-                 --openpi|openpi) bash ./scripts/setup-openpi-cloud.sh ;;
-                 *)               bash ./scripts/setup-cloud.sh ;;
+                 --openpi|openpi) bash ./scripts/openpi/setup_cloud.sh ;;
+                 *)               bash ./scripts/setup/setup_cloud.sh ;;
                esac
              else $DC build "$@"; fi ;;
   pull)      $DC pull "$@" ;;
   stop|kill) # force-stop any running lerobot containers (escape hatch for a wedged run)
              ids=$(docker ps -q --filter ancestor=agent101/lerobot)
              [ -n "$ids" ] && docker kill $ids && echo "stopped." || echo "nothing running." ;;
-  doctor)    bash ./scripts/doctor.sh "$@" ;;   # host-side pre-flight: cameras + USB health
+  doctor)    bash ./scripts/setup/doctor.sh "$@" ;;   # host-side pre-flight: cameras + USB health
   shell|bash) needs_docker shell; grant_display; $RUN bash "$@" ;;
-  teleop) needs_docker teleop;    grant_display; $RUN ./scripts/teleop.sh "$@" ;;
-  record) needs_docker record;    grant_display; $RUN ./scripts/record.sh "$@" ;;
-  infer) needs_docker infer;     grant_display; $RUN ./scripts/infer.sh "$@" ;;   # run a trained policy (sync/rtc/async)
+  teleop) needs_docker teleop;    grant_display; $RUN ./scripts/robot/teleop.sh "$@" ;;
+  record) needs_docker record;    grant_display; $RUN ./scripts/robot/record.sh "$@" ;;
+  infer) needs_docker infer;     grant_display; $RUN ./scripts/robot/infer.sh "$@" ;;   # run a trained policy (sync/rtc/async)
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   webui) needs_docker webui;     port="${WEBUI_PORT:-8000}"; echo "web UI -> http://localhost:${port}"
              $DC run --rm -p "${port}:8000" lerobot python webui/app.py ;;
-  data) needs_docker data;      grant_display; $RUN ./scripts/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
-  calibrate) needs_docker calibrate; $RUN ./scripts/calibrate.sh "$@" ;;
-  login)     bash ./scripts/login.sh "$@" ;;  # HF + wandb tokens -> .env.local (host-side)
-  train)     native_or train_run bash scripts/train.sh "$@" ;;    # LoRA fine-tune on the GPU
-  preflight) native_or train_run bash scripts/preflight.sh "$@" ;; # check GPU/VRAM/RAM/disk first
+  data) needs_docker data;      grant_display; $RUN ./scripts/robot/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
+  calibrate) needs_docker calibrate; $RUN ./scripts/robot/calibrate.sh "$@" ;;
+  login)     bash ./scripts/setup/login.sh "$@" ;;  # HF + wandb tokens -> .env.local (host-side)
+  train)     native_or train_run bash scripts/robot/train.sh "$@" ;;    # LoRA fine-tune on the GPU
+  preflight) native_or train_run bash scripts/setup/preflight.sh "$@" ;; # check GPU/VRAM/RAM/disk first
   openpi-eval|openpi)   # reference stack: openpi (JAX) policy on the real arm
              needs_docker openpi-eval
              $DC -f docker-compose.openpi.yml run --rm openpi \
-               python scripts/evaluate_openpi.py "$@" ;;
+               python scripts/openpi/evaluate.py "$@" ;;
   openpi-webui)         # same browser panel, openpi backend (separate port)
              needs_docker openpi-webui
              port="${OPENPI_WEBUI_PORT:-8001}"; echo "openpi web UI -> http://localhost:${port}"
              $DC -f docker-compose.openpi.yml run --rm -p "${port}:8000" openpi \
                python webui/app.py ;;
-  openpi-build) if [ "$MODE" = native ]; then bash ./scripts/setup-openpi-cloud.sh
+  openpi-build) if [ "$MODE" = native ]; then bash ./scripts/openpi/setup_cloud.sh
                 else $DC -f docker-compose.openpi.yml build "$@"; fi ;;
   rtc-parity)           # check openpi's RTC port against lerobot's, in both images
              needs_docker rtc-parity
              ref="${1:-/workspace/outputs/rtc_ref.json}"
-             $DC run --rm --entrypoint python lerobot scripts/rtc_parity.py --dump "$ref" \
+             $DC run --rm --entrypoint python lerobot scripts/openpi/rtc_parity.py --dump "$ref" \
                && $DC -f docker-compose.openpi.yml run --rm openpi-train \
-                    python scripts/rtc_parity.py --check "$ref" ;;
+                    python scripts/openpi/rtc_parity.py --check "$ref" ;;
   # --- sim2real (Isaac Sim) -------------------------------------------------
   # These do NOT go through Docker: Isaac Sim is a native conda install that needs
-  # the GPU plus a large shader/asset cache in $HOME. scripts/sim.sh picks the env.
+  # the GPU plus a large shader/asset cache in $HOME. scripts/sim/sim.sh picks the env.
   sim-assets)           # convert the printed CAD (STL) into simulatable USD
-             bash ./scripts/sim.sh scripts/sim_convert_assets.py "$@" ;;
+             bash ./scripts/sim/sim.sh scripts/sim/convert_assets.py "$@" ;;
   sim-play)             # build the push-T scene, step it, render both cameras
-             bash ./scripts/sim.sh scripts/sim_play.py "$@" ;;
+             bash ./scripts/sim/sim.sh scripts/sim/play.py "$@" ;;
   sim-train)            # train a policy with rsl_rl PPO (reach, by default)
              # HEADLESS unless you ask for --gui: rendering 4096 arms is most of
              # the cost of training them. Checkpoints and tensorboard logs land in
              # sim/outputs/rsl_rl/<experiment>/<timestamp>/, and wandb is on when
              # there are credentials for it -- the same rule ./robot train follows.
-             bash ./scripts/sim.sh scripts/sim_train.py "$@" ;;
+             bash ./scripts/sim/sim.sh scripts/sim/train.py "$@" ;;
   sim-policy)           # run a trained checkpoint and report its tracking error
              # Windowed by default, the opposite of sim-train: this one is for
              # watching. Defaults to the newest so101_reach checkpoint.
-             bash ./scripts/sim.sh scripts/sim_policy.py "$@" ;;
+             bash ./scripts/sim/sim.sh scripts/sim/policy.py "$@" ;;
   leader-publish)       # stream the leader's joint angles to sim/outputs/calib/joints.json
              # The serial buses live in Docker, so anything reading an arm runs here.
              # Two consumers: calib-capture (which cannot open the follower bus
@@ -126,7 +126,7 @@ case "$cmd" in
              #                  and a real arm lurching to meet the leader is just
              #                  a hazard.
              needs_docker leader-publish
-             $RUN python scripts/calibrate_extrinsics.py teleop "$@" ;;
+             $RUN python scripts/sim/calibrate_extrinsics.py teleop "$@" ;;
   sim-record)           # teleoperate the sim and record a LeRobot dataset
              # Same one-command shape as sim-teleop: the joint publisher is started
              # in the container, the sim runs natively, and both are cleaned up.
@@ -143,7 +143,7 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
                needs_docker sim-record
                echo "starting the leader publisher in the background ..."
                _pub=$($DC run -d lerobot \
-                        python scripts/calibrate_extrinsics.py teleop --no-follower) || exit 1
+                        python scripts/sim/calibrate_extrinsics.py teleop --no-follower) || exit 1
                trap '[ -n "$_pub" ] && { docker stop -t 2 "$_pub" >/dev/null 2>&1; docker rm -f "$_pub" >/dev/null 2>&1; }' EXIT INT TERM
                for _ in $(seq 1 60); do _fresh && break; sleep 1; done
                if ! _fresh; then
@@ -152,7 +152,7 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
                  exit 1
                fi
              fi
-             bash ./scripts/sim.sh scripts/sim_record.py "$@" ;;
+             bash ./scripts/sim/sim.sh scripts/sim/record.py "$@" ;;
   sim-teleop)           # drive the Isaac scene from the real leader arm
              # ONE command. Isaac must run natively (GPU, shader cache) and the
              # serial bus must run in Docker, so this starts the publisher in the
@@ -177,7 +177,7 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
                # it exits, so when the publisher dies at startup `docker logs` finds
                # nothing and the failure is unreportable. Remove it in the trap.
                _pub=$($DC run -d lerobot \
-                        python scripts/calibrate_extrinsics.py teleop --no-follower) || exit 1
+                        python scripts/sim/calibrate_extrinsics.py teleop --no-follower) || exit 1
                trap '[ -n "$_pub" ] && { docker stop -t 2 "$_pub" >/dev/null 2>&1; docker rm -f "$_pub" >/dev/null 2>&1; }' EXIT INT TERM
                for _ in $(seq 1 60); do _fresh && break; sleep 1; done
                if ! _fresh; then
@@ -186,25 +186,25 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
                  exit 1
                fi
              fi
-             bash ./scripts/sim.sh scripts/sim_teleop.py "$@" ;;
+             bash ./scripts/sim/sim.sh scripts/sim/teleop.py "$@" ;;
   sim-shell)            # a python REPL inside the Isaac Sim environment
-             bash ./scripts/sim.sh "$@" ;;
+             bash ./scripts/sim/sim.sh "$@" ;;
   sim-camera-check)     # check the sim's camera assumptions against the real ones
-             python3 ./scripts/sim_camera_check.py "$@" ;;
+             python3 ./scripts/sim/camera_check.py "$@" ;;
   sim-calibrate)        # measure real intrinsics from a checkerboard
-             python3 ./scripts/sim_calibrate_cameras.py "$@" ;;
+             python3 ./scripts/sim/calibrate_cameras.py "$@" ;;
   sim-compare-cameras)  # sim render next to a live capture, for tuning extrinsics
-             python3 ./scripts/sim_compare_cameras.py "$@" ;;
+             python3 ./scripts/sim/compare_cameras.py "$@" ;;
   print-targets)        # every printable: checkerboard, charuco, push-T goal
-             python3 ./scripts/make_print_targets.py "$@" ;;
+             python3 ./scripts/sim/print_targets.py "$@" ;;
   calib-board)          # just the ChArUco board (print-targets makes all three)
-             python3 ./scripts/calibrate_extrinsics.py board "$@" ;;
+             python3 ./scripts/sim/calibrate_extrinsics.py board "$@" ;;
   calib-capture)        # record arm poses looking at the board
              # On the HOST: the live preview needs a GUI OpenCV and the container
              # ships the headless build. It shells into the container for each joint
              # read, which is the only part that needs lerobot and the serial bus.
              needs_docker calib-capture
-             python3 ./scripts/calibrate_extrinsics.py capture "$@" ;;
+             python3 ./scripts/sim/calibrate_extrinsics.py capture "$@" ;;
   calib-teleop)         # drive the follower from the leader, publishing its joints
              # The calibration flow's name for leader-publish: same publisher, but
              # this one DOES drive the follower, because calibration needs the real
@@ -212,18 +212,18 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
              # calib-capture runs in another -- the follower bus can only be opened
              # once, so capture reads the joints this publishes rather than the arm.
              needs_docker calib-teleop
-             $RUN python scripts/calibrate_extrinsics.py teleop "$@" ;;
+             $RUN python scripts/sim/calibrate_extrinsics.py teleop "$@" ;;
   calib-solve)          # solve both cameras' pose in the robot base frame
-             python3 ./scripts/calibrate_extrinsics.py solve "$@" ;;
+             python3 ./scripts/sim/calibrate_extrinsics.py solve "$@" ;;
   # openpi training (GPU only, no arm). Norm stats MUST run first: openpi does not
   # compute them during training, and without them the run trains on wrong statistics.
   # openpi's scripts live in the submodule (/opt/openpi), but we stay in /workspace so
   # its ./checkpoints and ./assets land in this repo (gitignored) instead of inside the
   # submodule checkout.
   openpi-norm-stats)
-             native_or openpi_run bash scripts/openpi_train.sh --norm-stats-only "$@" ;;
+             native_or openpi_run bash scripts/openpi/train.sh --norm-stats-only "$@" ;;
   openpi-train)
-             native_or openpi_run bash scripts/openpi_train.sh "$@" ;;   # computes norm stats if absent
+             native_or openpi_run bash scripts/openpi/train.sh "$@" ;;   # computes norm stats if absent
   run)       grant_display; $RUN "$@" ;;      # raw: ./robot run lerobot-train ...
   help|-h|--help|"")
     cat <<'EOF'

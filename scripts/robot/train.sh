@@ -9,7 +9,7 @@
 #   ./robot train --dataset zetanschy/cap_to_cup --name pi05_cap \
 #        --steps 20000 --batch 32 --rank 16
 # On a cloud GPU box (setup-cloud.sh, no docker) call it directly:
-#   bash scripts/train.sh --dataset zetanschy/cap_to_cup --name pi05_cap
+#   bash scripts/robot/train.sh --dataset zetanschy/cap_to_cup --name pi05_cap
 #
 # LoRA + bf16 + gradient checkpointing keep VRAM low (fits ~24GB). pi05 applies
 # sensible default LoRA targets (gemma_expert q/v + action projections).
@@ -36,7 +36,7 @@ set -euo pipefail
 # because outside docker nothing else loads it — compose's env_file does that job
 # in the container, and without it --push fails whoami even after ./robot login.
 # Already-exported vars win; commented-out lines are skipped by the prefix filter.
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/../.." && pwd)"
 for f in "$root/.env" "$root/.env.local"; do
   [ -f "$f" ] || continue
   while IFS='=' read -r k v; do

@@ -148,7 +148,7 @@ def _quat_rotate(q, v):
 def mount_local_to_gripper(p):
     """A point in the support's own frame, expressed relative to the gripper body.
 
-    The support's placement is BAKED into its USD (see scripts/sim_convert_assets.py),
+    The support's placement is BAKED into its USD (see scripts/sim/convert_assets.py),
     so its prim sits at identity and anything that must ride with it -- the webcam, the
     wrist camera -- cannot simply be parented under it and inherit the pose. They are
     siblings, positioned through here instead, off the same KLIP_MOUNT_* constants.

@@ -56,7 +56,7 @@ parser.add_argument("--episode-time-s", type=float, default=30.0)
 parser.add_argument("--fps", type=int, default=30, help="must match the real dataset (30)")
 parser.add_argument("--no-dr", action="store_true", help="plain scene instead of the randomized one")
 parser.add_argument("--source", choices=("auto", "direct", "file"), default="auto",
-                    help="where leader angles come from; see scripts/sim_teleop.py")
+                    help="where leader angles come from; see scripts/sim/teleop.py")
 parser.add_argument("--port", default=None)
 parser.add_argument("--id", default=None)
 parser.add_argument("--resume", action="store_true", help="append to an existing dataset")
@@ -96,7 +96,7 @@ import sim_agent101  # noqa: F401  (registers the envs)
 from sim_agent101.assets.so101 import JOINT_NAMES
 from sim_agent101.kinematics import URDF_TO_LEROBOT, gripper_deg_to_pct, lerobot_to_urdf_deg
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 JOINTS_FILE = ROOT / "sim" / "outputs" / "calib" / "joints.json"
 
 # The feature order our real datasets use. Also the URDF/articulation order, which
@@ -299,7 +299,7 @@ def main() -> int:
     (root / "meta").mkdir(parents=True, exist_ok=True)
     (root / "meta" / "units.json").write_text(json.dumps(
         {"joints": "degrees", "gripper": "percent_0_100",
-         "note": "written by scripts/sim_record.py; lerobot's joint_units() heuristic "
+         "note": "written by scripts/sim/record.py; lerobot's joint_units() heuristic "
                  "misreads small-motion tasks, prefer this"}, indent=2) + "\n")
 
     print(f"\n{task_id}   {1/step_dt:.1f} Hz   {args.episodes} episodes of up to "

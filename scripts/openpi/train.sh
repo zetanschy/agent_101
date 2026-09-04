@@ -14,7 +14,7 @@
 # The stats live at assets/<config>/<dataset repo_id>/norm_stats.json, so they are
 # keyed by dataset: change the repo_id and they are correctly treated as missing.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 # JAX preallocates only 75% of VRAM by default, i.e. ~18GB of a 24GB card — under the
 # 22.5GB openpi documents for LoRA fine-tuning, so it OOMs before the model even fits.
@@ -24,7 +24,7 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}"
 echo "XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_PYTHON_CLIENT_MEM_FRACTION"
 
 # Credentials from .env / .env.local, same loader as train.sh. Needed because
-# `bash scripts/login.sh` on a Docker-less box writes .env.local, and openpi's
+# `bash scripts/setup/login.sh` on a Docker-less box writes .env.local, and openpi's
 # train.py wants WANDB_API_KEY (wandb_enabled defaults True) while the dataset pull
 # wants HF_TOKEN if it is ever private. Already-exported values win.
 for f in .env .env.local; do

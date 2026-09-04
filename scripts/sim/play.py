@@ -57,7 +57,7 @@ from isaaclab_tasks.utils import parse_env_cfg  # noqa: E402
 import sim_agent101  # noqa: E402,F401  (registers the envs)
 from sim_agent101 import mdp  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Not ROOT/outputs: that directory is root-owned here (Docker made it) and these
 # sim commands run natively as the user.
 OUT = pathlib.Path(args.out) if args.out else ROOT / "sim" / "outputs"

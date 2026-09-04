@@ -54,7 +54,7 @@ import sim_agent101  # noqa: E402,F401  (registers the envs)
 from sim_agent101 import mdp  # noqa: E402
 from sim_agent101.tasks.reach_env_cfg import EE_BODY  # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 LOGS = ROOT / "sim" / "outputs" / "rsl_rl"
 
 

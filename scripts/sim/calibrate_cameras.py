@@ -32,7 +32,7 @@ import time
 import cv2
 import numpy as np
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def _load(name):
     """Import a sim_agent101 submodule without executing the package __init__.
@@ -42,7 +42,7 @@ def _load(name):
     kinematics.py are deliberately dependency-free, so load them by path.
     """
     import importlib.util
-    path = pathlib.Path(__file__).resolve().parent.parent / "sim" / "sim_agent101" / f"{name}.py"
+    path = pathlib.Path(__file__).resolve().parents[2] / "sim" / "sim_agent101" / f"{name}.py"
     import sys as _sys
     spec = importlib.util.spec_from_file_location(f"_sim_agent101_{name}", path)
     mod = importlib.util.module_from_spec(spec)
