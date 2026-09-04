@@ -174,18 +174,22 @@ the config is written, and the transaction log stays at zero bytes.
     ./robot sim-policy --headless --steps 600          # just the error numbers
     ./robot sim-policy --export                        # policy.pt + policy.onnx
 
-    ./robot sim-demo                                   # ONE arm, and you move the goal
-    ./robot sim-demo --auto                            # the goal walks a circle itself
+    ./robot sim-policy --goal manual                   # ONE arm, and you move the goal
+    ./robot sim-policy --goal auto                     # the goal walks a circle itself
 
-`sim-demo` is the one to show someone. A single arm, and `/World/GoalHandle` — an
-orange ball that *is* the goal: drag it with the translate gizmo while the sim runs,
-or drive it with W/S (forward/back), A/D (left/right), Q/E (up/down), R to recentre.
-It disables the 4 s resampling and overwrites the command term's buffer each step, so
-the policy is the same checkpoint `sim-policy` scores; only who chooses the target
-changes. The goal is clamped to the box the policy was trained on, so dragging past
-the edge stops at the edge instead of asking for something unreachable and looking
-broken. Measured chasing the `--auto` circle at 12 cm/s: 7–18 mm, against 7 mm for a
-target standing still.
+`--goal` picks **who chooses the target**, and the policy is identical in all three.
+`task` is the environment's own sampler — a new pose every 4 s, the distribution the
+policy trained on, and the setting to score a checkpoint in. `manual` is the one to
+show someone: a single arm and `/World/GoalHandle`, an orange ball that *is* the
+goal, draggable with the translate gizmo while the sim runs, or driven with W/S
+(forward/back), A/D (left/right), Q/E (up/down), R to recentre. `auto` walks it round
+a circle hands-free, which is how the manual path gets tested headless.
+
+manual and auto disable the 4 s resampling — otherwise the goal jumps away mid-drag —
+stretch the episode so a time-out cannot reset the arm on you, and clamp the goal to
+the training box, so dragging past the edge stops at the edge instead of asking for
+something unreachable and making the checkpoint look broken. Measured chasing the
+`auto` circle at 12 cm/s: 7–18 mm, against 7 mm for a target standing still.
 
 Watch `Metrics/ee_pose/position_error` — mean distance from the gripper to the
 commanded point, in metres. Measured here, 250 iterations (24.5M steps, 4m21s on an
