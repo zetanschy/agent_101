@@ -154,7 +154,21 @@ recipe on the [Seeed wiki](https://wiki.seeedstudio.com/es/training_soarm101_pol
     ./robot sim-train                                  # 4096 envs, headless
     ./robot sim-train --task Agent101-So101-Reach-DR   # randomized actuator gains
     ./robot sim-train --max-iterations 250 --resume    # continue the newest run
+    ./robot sim-train --name reach-v2                  # names the log dir and the run
     tensorboard --logdir sim/outputs/rsl_rl
+
+**wandb is on by default**, the same rule `./robot train` follows: a `WANDB_API_KEY`
+in `.env.local` or a `wandb login` in `~/.netrc`, project from `WANDB_PROJECT`. With
+no credentials it says so and logs to tensorboard alone rather than failing a run
+over a logger. `--no-wandb` and `--wandb-offline` override; `--wandb` forces it on
+and fails fast if there is nothing to authenticate with.
+
+Two things worth knowing, both of which look like wandb working when it is not.
+`scripts/sim.sh` now sources `.env.local` as well as `.env` — the sim commands are
+the ones that skip Docker, so nothing else would ever export the key for them. And
+`sim_train.py` calls `wandb.finish()` explicitly, because Kit ends the process inside
+`app.close()` without running atexit handlers: without it the run directory appears,
+the config is written, and the transaction log stays at zero bytes.
 
     ./robot sim-policy                                 # newest checkpoint, windowed
     ./robot sim-policy --headless --steps 600          # just the error numbers

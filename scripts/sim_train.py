@@ -17,11 +17,17 @@ Logs and checkpoints go to sim/outputs/rsl_rl/<experiment>/<timestamp>/:
 
     tensorboard --logdir sim/outputs/rsl_rl
 
+WANDB IS ON when credentials exist, the same rule ./robot train follows: a
+WANDB_API_KEY in .env.local or a `wandb login` in ~/.netrc, project from
+WANDB_PROJECT. No credentials and it says so and logs to tensorboard alone, rather
+than failing a training run over a logger. --no-wandb and --wandb-offline override.
+
 HEADLESS BY DEFAULT, and that is not a detail -- rendering 4096 arms is most of the
 cost of training them. --gui is for looking at a scene, not for training in.
 """
 
 import argparse
+import os
 import pathlib
 from datetime import datetime
 
@@ -36,6 +42,12 @@ parser.add_argument("--gui", action="store_true", help="open the Isaac Sim windo
 parser.add_argument("--resume", action="store_true", help="load the newest checkpoint and keep going")
 parser.add_argument("--load-run", default=".*", help="with --resume: which run directory (regex, newest match wins)")
 parser.add_argument("--checkpoint", default="model_.*.pt", help="with --resume: which checkpoint file (regex)")
+parser.add_argument("--name", default=None, help="name this run; suffixes the log dir and names the wandb run")
+parser.add_argument("--wandb", action="store_true", help="force wandb on (fails fast if there are no credentials)")
+parser.add_argument("--no-wandb", action="store_true", help="force wandb off; tensorboard only")
+parser.add_argument("--wandb-offline", action="store_true", help="log to disk for a later `wandb sync`")
+parser.add_argument("--wandb-project", default=None, help="default: $WANDB_PROJECT, else agent_101")
+parser.add_argument("--wandb-entity", default=None, help="team/org, if not your personal account")
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 args.headless = not args.gui
@@ -63,6 +75,77 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
 
+def _have_wandb_creds() -> bool:
+    """A key in the environment, or a `wandb login` netrc entry. Same test as train.sh.
+
+    .env.local is where the key lives and scripts/sim.sh exports it, so by the time
+    this runs it is an ordinary environment variable.
+    """
+    if os.environ.get("WANDB_API_KEY"):
+        return True
+    try:
+        return "api.wandb.ai" in (pathlib.Path.home() / ".netrc").read_text(errors="ignore")
+    except OSError:
+        return False
+
+
+def configure_logging(agent_cfg) -> str:
+    """Point the runner at wandb or tensorboard. Returns what to tell the user.
+
+    ON BY DEFAULT when credentials exist, off (with a note) when they do not --
+    ./robot train behaves the same way, and the reason is that a missing logger
+    credential should not cost you a training run you have already started.
+    """
+    if args.no_wandb:
+        agent_cfg.logger = "tensorboard"
+        return "wandb: off (--no-wandb)"
+
+    offline = args.wandb_offline
+    if not (args.wandb or offline or _have_wandb_creds()):
+        agent_cfg.logger = "tensorboard"
+        return ("wandb: off (no credentials). Either\n"
+                "  echo 'WANDB_API_KEY=<key>' >> .env.local   (from wandb.ai/authorize)\n"
+                "  wandb login                                (caches ~/.netrc)\n"
+                "or pass --wandb-offline to log to disk.")
+    if not offline and not _have_wandb_creds():
+        # Only reachable via an explicit --wandb: asking for it and not having it is
+        # worth failing on, before an hour of training goes somewhere it cannot log.
+        raise SystemExit("wandb: --wandb given but no WANDB_API_KEY and no netrc entry")
+
+    agent_cfg.logger = "wandb"
+    agent_cfg.wandb_project = (args.wandb_project or os.environ.get("WANDB_PROJECT") or "agent_101")
+    if offline:
+        # Runs land in ./wandb/ for a later `wandb sync`. No network, no credentials.
+        os.environ["WANDB_MODE"] = "offline"
+    entity = args.wandb_entity or os.environ.get("WANDB_ENTITY")
+    if entity:
+        # WANDB_USERNAME, not WANDB_ENTITY: rsl_rl's WandbSummaryWriter reads the
+        # former and passes it to wandb.init(entity=...). Set only the variable this
+        # repo documents and the run lands in your personal account instead of the
+        # team, silently and with no error to notice.
+        os.environ["WANDB_USERNAME"] = entity
+    return (f"wandb: project={agent_cfg.wandb_project}"
+            f"{f' entity={entity}' if entity else ''}{' (offline)' if offline else ''}")
+
+
+def finish_logging(agent_cfg) -> None:
+    """Close the wandb run, explicitly.
+
+    The same failure as the flush=True on every print below, and it costs more: Kit
+    ends the process inside app.close() without running atexit handlers, and wandb's
+    atexit hook is what finalizes a run. Without this the run directory appears, the
+    config is written, and the transaction log stays at ZERO BYTES -- an offline run
+    that syncs nothing and an online run that shows up crashed with no metrics. It
+    looks like wandb is working right up until you go and read the run.
+    """
+    if getattr(agent_cfg, "logger", None) != "wandb":
+        return
+    import wandb
+
+    if wandb.run is not None:
+        wandb.finish()
+
+
 def main() -> None:
     env_cfg = parse_env_cfg(args.task, device=args.device, num_envs=args.num_envs)
     agent_cfg = load_cfg_from_registry(args.task, "rsl_rl_cfg_entry_point")
@@ -70,6 +153,9 @@ def main() -> None:
         agent_cfg.max_iterations = args.max_iterations
     if args.seed is not None:
         agent_cfg.seed = args.seed
+    if args.name:
+        agent_cfg.run_name = args.name
+    logging_note = configure_logging(agent_cfg)
     # The env seed has to be set from the agent's, not left to default: some of the
     # randomization happens while the environment is being built, before anything
     # the runner does could seed it.
@@ -108,10 +194,18 @@ def main() -> None:
           f"= {env_cfg.scene.num_envs * agent_cfg.num_steps_per_env} transitions/iteration, "
           f"{agent_cfg.max_iterations} iterations", flush=True)
     print(f"[sim-train] logging to {run_dir.relative_to(ROOT)}", flush=True)
+    # The wandb run takes its name from the log directory's basename, so --name shows
+    # up in both places or neither.
+    print(f"[sim-train] {logging_note}", flush=True)
     print_dict(agent_cfg.to_dict(), nesting=1)
 
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
-    env.close()
+    # finally, so a Ctrl-C partway through an hour of training still leaves a synced
+    # run behind rather than an empty one.
+    try:
+        runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+    finally:
+        env.close()
+        finish_logging(agent_cfg)
 
 
 if __name__ == "__main__":

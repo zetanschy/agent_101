@@ -110,7 +110,8 @@ case "$cmd" in
   sim-train)            # train a policy with rsl_rl PPO (reach, by default)
              # HEADLESS unless you ask for --gui: rendering 4096 arms is most of
              # the cost of training them. Checkpoints and tensorboard logs land in
-             # sim/outputs/rsl_rl/<experiment>/<timestamp>/.
+             # sim/outputs/rsl_rl/<experiment>/<timestamp>/, and wandb is on when
+             # there are credentials for it -- the same rule ./robot train follows.
              bash ./scripts/sim.sh scripts/sim_train.py "$@" ;;
   sim-policy)           # run a trained checkpoint and report its tracking error
              # Windowed by default, the opposite of sim-train: this one is for
@@ -257,6 +258,8 @@ so rather than failing with "docker: command not found".
   ./robot sim-play [--gui]      build the push-T scene in Isaac Sim and check it
   ./robot sim-train             train reach with rsl_rl PPO (headless, 4096 envs)
                                 --task Agent101-So101-Reach-DR for randomized gains
+                                wandb on when credentials exist, as ./robot train;
+                                --no-wandb / --wandb-offline / --name to override
                                 tensorboard --logdir sim/outputs/rsl_rl
   ./robot sim-policy            watch the newest checkpoint and score its tracking
   ./robot sim-teleop            drive the Isaac scene from the real leader arm

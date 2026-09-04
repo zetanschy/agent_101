@@ -15,7 +15,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-[ -f "$ROOT/.env" ] && set -a && . "$ROOT/.env" && set +a
+# .env then .env.local, the order the compose files use: shared config first, then
+# the gitignored overrides and secrets (HF_TOKEN, WANDB_API_KEY). The sim commands are
+# the ones that do NOT go through Docker, so without this nothing ever loads
+# .env.local for them -- and the failure is silent, because a missing key just means
+# sim-train quietly logs to tensorboard instead of wandb.
+set -a
+[ -f "$ROOT/.env" ] && . "$ROOT/.env"
+[ -f "$ROOT/.env.local" ] && . "$ROOT/.env.local"
+set +a
 
 ENV_NAME="${SIM_CONDA_ENV:-45pysaac}"
 CONDA_ROOT="${SIM_CONDA_ROOT:-$HOME/anaconda3}"
