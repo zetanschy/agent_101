@@ -199,8 +199,10 @@ the only process in this repo that writes to a motor. The two halves talk throug
 `leader-publish` and `sim-teleop` already do.
 
 **Nothing moves without `--engage`.** `--real` alone runs the policy, draws both arms
-and prints the worst per-joint gap while the bridge stays read-only — which is the
-honest way to look at a checkpoint before trusting it. With `--engage`: commands are
+and prints the worst per-joint gap while the bridge stays read-only — and read-only
+also *releases torque*, so the arm hangs limp. Push it around by hand and watch the
+ghost follow in the viewport: that is the cheapest end-to-end check of the whole
+chain, and it needs no policy at all. With `--engage`: commands are
 rate-limited to 60 °/s per joint, a target frame older than 100 ms stops the
 commanding, the gripper is never commanded at all (the policy does not drive it), and
 torque is released on the way out.

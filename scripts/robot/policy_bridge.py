@@ -19,8 +19,11 @@ would have had to go before you let it.
 SAFETY, in the order it matters:
 
   * DISENGAGED BY DEFAULT. Without --engage this process opens the bus, reads it, and
-    never writes. The simulator's own --engage is a second, independent switch: a
-    target frame that does not say engaged is not sent even here.
+    never writes -- and releases torque, so the arm hangs limp and can be pushed
+    around by hand. Doing exactly that, and watching the ghost follow in the
+    viewport, is the cheapest end-to-end test of this chain and needs no policy at
+    all. The simulator's own --engage is a second, independent switch: a target frame
+    that does not say engaged is not sent even here.
   * RATE LIMIT. Commands move at most MAX_DEG_PER_S per joint. A policy trained in a
     simulation with a massless wrist can ask for a step change; the real arm answering
     one at full torque is how a gripper meets a table.
@@ -103,12 +106,33 @@ def main() -> int:
     p.add_argument("--hz", type=float, default=HZ)
     a = p.parse_args()
 
-    from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+    # so_follower, NOT so101_follower. The pinned lerobot in this container names the
+    # follower module after the family and the LEADER after the model
+    # (lerobot.teleoperators.so101_leader), which reads like a typo and is not one --
+    # calibrate_extrinsics.py and openpi/evaluate.py both import it this way. The
+    # Isaac-side scripts run against a different lerobot, so do not copy an import
+    # across that boundary without checking it.
+    from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
-    follower = SO101Follower(SO101FollowerConfig(
-        port=os.environ.get("ROBOT_PORT", "/dev/ttyACM1"),
-        id=os.environ.get("ROBOT_ID", "zetans_follower"), cameras={}, use_degrees=True))
+    kwargs = dict(port=os.environ.get("ROBOT_PORT", "/dev/ttyACM1"),
+                  id=os.environ.get("ROBOT_ID", "zetans_follower"), cameras={}, use_degrees=True)
+    if "disable_torque_on_disconnect" in SO101FollowerConfig.__dataclass_fields__:
+        kwargs["disable_torque_on_disconnect"] = True    # however this process ends
+    follower = SO101Follower(SO101FollowerConfig(**kwargs))
     follower.connect()
+
+    # connect() leaves TORQUE ON -- configure() disables it to write the motor
+    # settings and turns it back on. Holding position is right when the policy is
+    # driving and wrong when it is not: read-only should mean the arm is limp, so you
+    # can push it around by hand and watch the ghost in the viewport mirror it. That
+    # is the cheapest end-to-end check of this whole chain, and it needs no policy.
+    if not a.engage:
+        try:
+            follower.bus.disable_torque()
+            print("  torque OFF: move the arm by hand, the ghost will follow", flush=True)
+        except Exception as exc:                                  # noqa: BLE001
+            print(f"  WARNING: could not release torque ({exc}). The arm is holding.", flush=True)
+
     IPC.mkdir(parents=True, exist_ok=True)
 
     dt = 1.0 / a.hz

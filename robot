@@ -146,7 +146,7 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
                  || echo "  read-only: the bridge will not command anything."
                _bridge=$($DC run -d lerobot python scripts/robot/policy_bridge.py \
                           $([ "$_engage" = 1 ] && echo --engage)) || exit 1
-               trap '"'"'[ -n "$_bridge" ] && { docker stop -t 2 "$_bridge" >/dev/null 2>&1; docker rm -f "$_bridge" >/dev/null 2>&1; }'"'"' EXIT INT TERM
+               trap '[ -n "$_bridge" ] && { docker stop -t 2 "$_bridge" >/dev/null 2>&1; docker rm -f "$_bridge" >/dev/null 2>&1; }' EXIT INT TERM
                for _ in $(seq 1 60); do _fresh && break; sleep 1; done
                if ! _fresh; then
                  echo "the bridge never published arm state. Its output:" >&2
