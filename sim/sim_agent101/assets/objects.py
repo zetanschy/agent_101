@@ -328,9 +328,13 @@ def camera_cfg(
     fx/fy/cx/cy into config/cameras.json and this picks them up untouched.
     """
     if intrinsics is None:
-        from ..cameras import load
+        # load_scaled, not load: same optics at whatever render size is asked for, so
+        # an RL env can take a 64x48 frame off the calibrated lens without either
+        # re-calibrating or silently changing the field of view. At 640x480 the scale
+        # factor is 1 and this is load().
+        from ..cameras import load_scaled
 
-        intrinsics = load(width, height)
+        intrinsics = load_scaled(width, height)
     k = intrinsics[name]
     if (k["width"], k["height"]) != (width, height):
         raise ValueError(f"{name}: intrinsics are {k['width']}x{k['height']}, camera wants {width}x{height}")

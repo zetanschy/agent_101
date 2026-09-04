@@ -35,6 +35,14 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
+# LINE-BUFFERED STDOUT, for every sim script at once. Kit ends the process inside
+# app.close() without draining python's buffer, so a script that prints less than a
+# buffer's worth -- a short training run, an eval summary -- writes nothing at all
+# when its output is redirected, exits 0, and looks exactly like a silent crash. It
+# cost an hour of bisecting a working env. flush=True at each call site is the
+# workaround; this is the fix.
+export PYTHONUNBUFFERED=1
+
 # Kit refuses to start without this and there is no interactive prompt to answer
 # from a script.
 export OMNI_KIT_ACCEPT_EULA=YES

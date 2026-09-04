@@ -1,5 +1,18 @@
 """MDP terms for this workspace's tasks, on top of the workshop's and Isaac Lab's own."""
 
+from .push_t_rl import (  # noqa: F401
+    coverage as push_coverage,
+    coverage_success as push_coverage_success,
+    displacement_penalty as push_displacement_penalty,
+    ee_guidance as push_ee_guidance,
+    jaw_open_penalty as push_jaw_open_penalty,
+    joint_velocity_hinge as push_joint_velocity_hinge,
+    orientation_reward as push_orientation_reward,
+    position_reward as push_position_reward,
+    precision_bonus as push_precision_bonus,
+    t_out_of_bounds as push_t_out_of_bounds,
+)
+
 from .reach import (  # noqa: F401
     orientation_command_error,
     set_arm_appearance,

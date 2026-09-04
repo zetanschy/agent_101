@@ -125,6 +125,36 @@ def load(width: int = 640, height: int = 480) -> dict:
     return default_config(width, height)["cameras"]
 
 
+def load_scaled(width: int, height: int) -> dict:
+    """Intrinsics rescaled to a different render size, at the SAME field of view.
+
+    load() refuses any size but the calibrated one, and it is right to: an intrinsic
+    matrix is only meaningful with the image it was measured on, and quietly reusing
+    one at another size is how the sim ends up with a different lens than the robot.
+
+    A pure downscale is the exception. Halve both dimensions and every pixel quantity
+    -- fx, fy, cx, cy -- halves with them, and the field of view is untouched. That is
+    what an RL env wants: the real optics at 64x48, because a policy does not need
+    640x480 and the rollout buffer very much notices.
+
+    The ASPECT has to match. Squaring off a 4:3 lens is not a rescale, it either
+    crops the width or stretches the picture, and this module exists because that
+    exact mistake put 11 degrees of extra view into the sim once already.
+    """
+    native = load()
+    out = {}
+    for name, k in native.items():
+        sx, sy = width / k["width"], height / k["height"]
+        if abs(sx - sy) > 1e-6:
+            raise ValueError(
+                f"{name}: {width}x{height} is not {k['width']}x{k['height']} rescaled "
+                f"(x by {sx:.4f}, y by {sy:.4f}). Same aspect only -- changing it changes the lens."
+            )
+        out[name] = dict(k, width=width, height=height,
+                         fx=k["fx"] * sx, fy=k["fy"] * sy, cx=k["cx"] * sx, cy=k["cy"] * sy)
+    return out
+
+
 def _main() -> int:
     import argparse
 

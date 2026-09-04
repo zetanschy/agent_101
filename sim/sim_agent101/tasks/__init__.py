@@ -70,3 +70,23 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:ReachPPORunnerCfg",
     },
 )
+
+gym.register(
+    id="Agent101-So101-Push-T-RL",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.push_t_rl_env_cfg:PushTRLEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PushTPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="Agent101-So101-Push-T-RL-Play",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.push_t_rl_env_cfg:PushTRLPlayEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:PushTPPORunnerCfg",
+    },
+)

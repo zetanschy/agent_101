@@ -5,4 +5,4 @@ Isaac Lab's own convention and the reason gym.register can hand a training scrip
 the right hyperparameters for a task it has never seen.
 """
 
-from .rsl_rl_ppo_cfg import ReachPPORunnerCfg  # noqa: F401
+from .rsl_rl_ppo_cfg import PushTPPORunnerCfg, ReachPPORunnerCfg  # noqa: F401

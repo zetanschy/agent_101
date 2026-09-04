@@ -56,3 +56,24 @@ class ReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class PushTPPORunnerCfg(ReachPPORunnerCfg):
+    """Push-T is a much harder problem than reach, and sized accordingly.
+
+    Reach converges in 250 iterations; mjlab's push-T runs are quoted in hundreds of
+    millions of steps. Bigger rollouts (48 steps against 24) because the episode is
+    20 s rather than 12 and the reward only pays once contact happens, and a wider
+    net because the observation now carries the block AND the goal.
+    """
+
+    num_steps_per_env = 48
+    max_iterations = 5000
+    experiment_name = "so101_push_t"
+    policy = RslRlPpoActorCriticCfg(
+        init_noise_std=1.0,
+        actor_hidden_dims=[256, 128, 64],
+        critic_hidden_dims=[256, 128, 64],
+        activation="elu",
+    )

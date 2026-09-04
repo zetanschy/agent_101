@@ -259,3 +259,59 @@ where it matters, in the target box. What it costs is that the arm can sweep bel
 the bench plane, which the real one cannot; targets are all above the mat so it has
 no reason to, but watch a checkpoint in `./robot sim-policy` before trusting it near
 real hardware.
+
+## Push-T with RL: mjlab's objective on this bench
+
+`Agent101-So101-Push-T-RL`. The teleop push-T scene has no rewards — it exists to be
+driven by hand. This is the RL twin, and the objective is **ported from mjlab's
+`Mjlab-Push-T-Yam-D435-Push`**, the variant whose gripper is penalized for being open
+so the task stays a *pushing* problem instead of becoming a scoop.
+
+    ./robot sim-train --task Agent101-So101-Push-T-RL --enable_cameras
+    ./robot sim-policy --task Agent101-So101-Push-T-RL-Play --experiment so101_push_t
+
+`--enable_cameras` is required: the scene carries the wrist camera.
+
+mjlab is not an Isaac Lab backend — it reimplements the same manager API on MuJoCo
+Warp — so nothing could be imported. What ports is the *shape* of the objective, and
+the reasoning behind each term is kept in `mdp/push_t_rl.py` because it is the part
+that took mjlab twelve runs to get right: position and orientation **added** rather
+than multiplied, orientation **gated on position** so the block cannot be spun in
+place for free, yaw through `cos` rather than a Gaussian that underflows at ±π/2,
+`ee_guidance` in **3D** and gated off near the goal, coverage as the quantity
+gym-pusht actually scores, and `precision` as a second finer scale rather than a
+sharpened first one.
+
+Four things are ours rather than mjlab's:
+
+| | here | mjlab |
+|---|---|---|
+| surface | one **black table**, and it is the collider | its own terrain |
+| eye | the **KWC-500 on the printed klip_support**, at the pose fitted to real frames | a RealSense D435 on its bracket |
+| block | our printed **10 cm** T (`t_20_factor_0.5.stl` is the 20 cm design at half scale) | its own T |
+| goal box | **±3 cm by ±5 cm** | ±2 cm by ±10 cm |
+
+The goal box is the one that needed judgement. mjlab randomizes the goal ±10 cm in y;
+through this wrist camera that is too wide, and mjlab hit exactly this on its own
+D435 variant — the goal rendered at **0 px** and coverage ≥ 0.90 collapsed from 62% to
+19%, because a policy can place the block coarsely from `goal_pose` as state but
+cannot close the last millimetres against a target it never sees.
+
+The spawn box and the goal box **do not overlap** (disjoint by 5.5 cm in x). The first
+version centred both on the same point, and an untrained policy scored
+`Episode_Reward/success = 0.021` — the reward paying out for the reset draw rather
+than for anything the policy did. Separated, an untrained policy scores exactly 0.
+
+### Where it stands
+
+Wired and verified stepping, not trained. At 256 envs every term is live and finite,
+`success` and `precision` are 0 as they should be before learning, and the block
+leaves the workspace often — expected from random actions at mjlab's 0.8 action scale.
+
+Two things to watch on the first real run. `joint_vel_hinge` is the largest term by an
+order of magnitude (-0.59 against +0.03 of task reward) even at its smallest weight,
+and the curriculum ramps it 100x from there; mjlab's YAM may simply move slower than
+an SO-101 driven by 0.8 rad deltas, so `max_vel` is the first thing to raise if the
+policy learns to stand still. And the camera is in the **scene** but not in the
+policy's observation — mjlab feeds its actor a 42×24 frame, which is the right end
+state and a much longer run.
