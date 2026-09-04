@@ -125,14 +125,25 @@ SUCCESS_COVERAGE = 0.70
 # statement about a scale AND a home pose together.
 #
 # Solved with kinematics.fk_gripper and scipy least_squares inside the URDF's real
-# joint limits: gripper 40 mm above the table, 10 cm to the SIDE of where the block
-# spawns. Position error 0.00 mm and 1.03 rad of margin to the nearest joint limit, so
+# joint limits: gripper 40 mm above the table, 16 cm to the SIDE of the block's spawn
+# centre. Position error 0.00 mm and 1.01 rad of margin to the nearest joint limit, so
 # 0.8 rad of action in any direction stays legal rather than being clipped.
 #
+# 16 cm, not 10: the block spawns anywhere in +/-7 cm of y, so a home 10 cm aside
+# leaves only 3 cm to a gripper whose jaws are about that wide, and the episodes where
+# the two overlap start with the arm already shoving the block. Measured at 10 cm, the
+# mean block height over 8 envs rose 2.8 mm in the first 60 steps with ZERO actions
+# commanded, which is contact, not settling. 16 cm leaves 9 cm of clearance.
+#
+# Solved in the BASE frame, whose origin is the table top now that the robot stands on
+# it -- so the target z below is the height above the surface, with no bench offset to
+# carry around.
+#
 # Three things this pose is answering, all of them measured:
-#   BESIDE the block, not over it. The first solve put the gripper 40 mm above the
-#   spawn point and the jaws rested on the block: sim-play reported the T drifting
-#   28.8 mm with nothing pushing it, which is the scene nudging its own task object.
+#   BESIDE the block, and clear of its whole spawn box, not over it. The first solve
+#   put the gripper 40 mm above the spawn point and the jaws rested on the block:
+#   sim-play reported the T drifting 28.8 mm with nothing pushing it, which is the
+#   scene nudging its own task object before the policy has done anything.
 #   LOW. The whole point of replacing REST_POSE is to start where the work is.
 #   AWAY FROM THE LIMITS. Selecting on limit margin AFTER solving position, rather
 #   than folding margin into the residual: this arm has 5 joints for a 3D target, so
@@ -144,11 +155,11 @@ SUCCESS_COVERAGE = 0.70
 # gripper straight down -- Wrist_Pitch pins and the best alignment is -0.37 against a
 # perfect -1.0 -- and a pushing task does not need it to.
 PUSH_HOME = {
-    "Rotation": -0.4466,
-    "Pitch": 0.3990,
-    "Elbow": 0.5405,
-    "Wrist_Pitch": 0.6310,
-    "Wrist_Roll": -0.0709,
+    "Rotation": -0.6992,
+    "Pitch": 0.7312,
+    "Elbow": 0.4016,
+    "Wrist_Pitch": -0.0414,
+    "Wrist_Roll": -0.0540,
     # Shut, just off the hard limit. The jaw-open penalty measures from -0.175 rad, so
     # this starts the episode with that term already at zero.
     "Jaw": -0.1500,
@@ -183,12 +194,23 @@ class PushTRLSceneCfg(InteractiveSceneCfg):
         ),
     )
 
+    # STANDING ON THE TABLE, at z = TABLE_TOP. The teleop scene puts the arm at z = 0
+    # with the mat surface at 0.035 -- that is its measured bench geometry and it is
+    # left alone -- but this env's table is a 25 mm slab spanning z 0.010 to 0.035, so
+    # a robot at z = 0 has its base plate UNDER the slab and the links rise straight
+    # through it. It renders exactly as it sounds.
+    #
+    # Raising the robot moves its base frame with it, which is why PUSH_HOME is solved
+    # against a base-frame z that now means "height above the table" directly.
     robot = SO101_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot",
         # The home pose goes in init_state because use_default_offset=True measures
         # every action from it: changing it moves both where the episode starts and
         # what "zero action" means.
-        init_state=SO101_CFG.init_state.replace(joint_pos=dict(PUSH_HOME)),
+        init_state=SO101_CFG.init_state.replace(
+            pos=(SO101_CFG.init_state.pos[0], SO101_CFG.init_state.pos[1], TABLE_TOP),
+            joint_pos=dict(PUSH_HOME),
+        ),
     )
 
     # The printed mount and the modelled webcam, exactly as the teleop scene carries
@@ -198,9 +220,14 @@ class PushTRLSceneCfg(InteractiveSceneCfg):
     kwc500_body = KWC500_BODY_CFG
     kwc500_barrel = KWC500_BARREL_CFG
 
+    # TABLE_TOP exactly, NOT the top plus half the thickness. The T's USD origin is on
+    # its bottom face -- measured: spawned at TABLE_TOP + thickness/2 it reads z =
+    # 0.045 at reset and settles at 0.035, a 10 mm drop burning the first frames of
+    # every episode on a transient. The teleop scene carries the same warning about
+    # its mat.
     t_block: RigidObjectCfg = T_BLOCK_CFG.replace(
         init_state=RigidObjectCfg.InitialStateCfg(
-            pos=(SPAWN_CENTRE[0], SPAWN_CENTRE[1], TABLE_TOP + T_BLOCK_GEOMETRY.thickness / 2)
+            pos=(SPAWN_CENTRE[0], SPAWN_CENTRE[1], TABLE_TOP)
         )
     )
 

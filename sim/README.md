@@ -316,6 +316,21 @@ every step at 30 Hz the noise averages out and the arm just vibrates in place.
 That run is what caught the two problems below, neither of which would have shown up
 until a training run had already failed.
 
+### The arm stands on the table
+
+The teleop scene puts the robot at z = 0 with the mat surface at 0.035 — that is its
+measured bench geometry and it is left alone. This env's table is a 25 mm slab
+spanning z 0.010–0.035, so a robot at z = 0 has its base plate *under* the slab and
+the links rise straight through it. The robot is placed at `TABLE_TOP` instead, which
+also moves its base frame — which is why `PUSH_HOME` is solved against a base-frame z
+that means "height above the table" directly. Verified: at home the lowest body sits
+at 35.0 mm, exactly the surface.
+
+The block spawns at `TABLE_TOP` exactly, not `TABLE_TOP + thickness/2`: the T's USD
+origin is on its bottom face, and dropped from clear air it settles at 35.00 mm.
+Spawned half a thickness high it fell 10 mm at every reset, burning the first frames
+of the episode on a transient — the same trap the teleop scene documents for its mat.
+
 ### The home pose is not the workshop's rest pose
 
 `REST_POSE` is "arm up and out of the way": it puts the gripper **302 mm** above the
@@ -327,8 +342,12 @@ puts the block's side within reach", which is a claim about a scale *and* a home
 together.
 
 `PUSH_HOME` is solved with `kinematics.fk_gripper` and scipy, inside the URDF's real
-limits: gripper 40 mm above the table, 10 cm to the side of the block's spawn,
-position error 0.00 mm, **1.03 rad** of margin to the nearest joint limit. Beside the
+limits: gripper 40 mm above the table, **16 cm** to the side of the block's spawn
+centre, position error 0.00 mm, **1.01 rad** of margin to the nearest joint limit. 16
+cm rather than 10 because the block spawns anywhere within ±7 cm of y, and a home 10 cm
+aside left only 3 cm to a gripper about that wide: measured, the mean block height rose
+2.8 mm in the first 60 steps with zero actions commanded, which is contact, not
+settling. Beside the
 block rather than over it because the first solve rested the jaws on it and `sim-play`
 reported the T drifting 28.8 mm with nothing pushing it. Selected on limit margin
 *after* solving position, because 5 joints for a 3D target leaves a 2-dimensional null
