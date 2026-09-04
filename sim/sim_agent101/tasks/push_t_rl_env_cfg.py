@@ -402,7 +402,9 @@ class CurriculumCfg:
 
 @configclass
 class PushTRLEnvCfg(ManagerBasedRLEnvCfg):
-    scene: PushTRLSceneCfg = PushTRLSceneCfg(num_envs=1024, env_spacing=1.5)
+    # 4096, which is what mjlab's hyperparameters assume: 4096 x 24 steps is the 98k
+    # transitions an iteration those numbers were tuned against.
+    scene: PushTRLSceneCfg = PushTRLSceneCfg(num_envs=4096, env_spacing=1.5)
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     events: EventCfg = EventCfg()

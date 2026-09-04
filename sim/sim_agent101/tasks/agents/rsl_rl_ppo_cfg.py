@@ -59,21 +59,75 @@ class ReachPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 
 
 @configclass
-class PushTPPORunnerCfg(ReachPPORunnerCfg):
-    """Push-T is a much harder problem than reach, and sized accordingly.
+class StdFloorActorCriticCfg(RslRlPpoActorCriticCfg):
+    """RslRlPpoActorCriticCfg plus a floor under the exploration noise.
 
-    Reach converges in 250 iterations; mjlab's push-T runs are quoted in hundreds of
-    millions of steps. Bigger rollouts (48 steps against 24) because the episode is
-    20 s rather than 12 and the reward only pays once contact happens, and a wider
-    net because the observation now carries the block AND the goal.
+    class_name is what rsl_rl eval()s to find the policy class; agents/std_floor.py
+    registers ActorCriticStdFloor into the namespace it looks in, and std_min/std_max
+    are passed straight through as constructor kwargs.
     """
 
-    num_steps_per_env = 48
+    class_name: str = "ActorCriticStdFloor"
+    std_min: float = 0.2
+    std_max: float = 1.0
+
+
+@configclass
+class PushTPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    """mjlab's Mjlab-Push-T-Yam-D435-Push hyperparameters, as rsl_rl 2.3.3 takes them.
+
+    Not retuned. These are the numbers behind the runs that worked over there, walked
+    down the config chain (d435_push -> d435 -> precise_random_goal -> precise ->
+    reachable -> lift_cube_vision), and the point of copying them exactly is that if
+    this task fails to learn with the settings that work on the same objective, the
+    problem is the arm or the scene, not the optimizer.
+
+    Two of them are load-bearing and would be easy to lose:
+
+      STD FLOOR at 0.2. mjlab measured sigma collapsing to 0.026 with only 3.1% of
+      episodes ever reaching contact geometry -- there was no exploration left to find
+      the descent with. rsl_rl has no such bound, so agents/std_floor.py adds it. Its
+      note is explicit that entropy_coef alone does NOT do this job.
+
+      OBS NORMALIZATION on. mjlab's runner sets obs_normalization=True on both actor
+      and critic; the rsl_rl equivalent is empirical_normalization, which Isaac Lab's
+      own configs leave off.
+
+    What could NOT be carried across: mjlab's actor and critic are CNN policies over a
+    42x24 wrist frame, with obs_groups mapping actor/critic to (state, camera). Our
+    observation is state only for now, so the CNN half has nothing to attach to and
+    the MLP dims are what remain. That is a real difference in the policy, not just in
+    plumbing -- see the README.
+    """
+
+    # 4096 envs x 24 steps = 98k transitions an iteration, 5000 iterations = 491M steps.
+    num_steps_per_env = 24
     max_iterations = 5000
+    save_interval = 100
     experiment_name = "so101_push_t"
-    policy = RslRlPpoActorCriticCfg(
+    run_name = ""
+    resume = False
+    # mjlab: obs_normalization=True on both actor and critic.
+    empirical_normalization = True
+    policy = StdFloorActorCriticCfg(
         init_noise_std=1.0,
-        actor_hidden_dims=[256, 128, 64],
-        critic_hidden_dims=[256, 128, 64],
+        actor_hidden_dims=[256, 256, 128],
+        critic_hidden_dims=[256, 256, 128],
         activation="elu",
+        std_min=0.2,
+        std_max=1.0,
+    )
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        clip_param=0.2,
+        entropy_coef=0.005,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-3,
+        schedule="adaptive",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
     )

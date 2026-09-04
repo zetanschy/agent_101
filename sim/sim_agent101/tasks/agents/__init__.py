@@ -5,4 +5,5 @@ Isaac Lab's own convention and the reason gym.register can hand a training scrip
 the right hyperparameters for a task it has never seen.
 """
 
+from . import std_floor  # noqa: F401  (registers ActorCriticStdFloor with rsl_rl)
 from .rsl_rl_ppo_cfg import PushTPPORunnerCfg, ReachPPORunnerCfg  # noqa: F401
