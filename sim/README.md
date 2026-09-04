@@ -174,6 +174,19 @@ the config is written, and the transaction log stays at zero bytes.
     ./robot sim-policy --headless --steps 600          # just the error numbers
     ./robot sim-policy --export                        # policy.pt + policy.onnx
 
+    ./robot sim-demo                                   # ONE arm, and you move the goal
+    ./robot sim-demo --auto                            # the goal walks a circle itself
+
+`sim-demo` is the one to show someone. A single arm, and `/World/GoalHandle` — an
+orange ball that *is* the goal: drag it with the translate gizmo while the sim runs,
+or drive it with W/S (forward/back), A/D (left/right), Q/E (up/down), R to recentre.
+It disables the 4 s resampling and overwrites the command term's buffer each step, so
+the policy is the same checkpoint `sim-policy` scores; only who chooses the target
+changes. The goal is clamped to the box the policy was trained on, so dragging past
+the edge stops at the edge instead of asking for something unreachable and looking
+broken. Measured chasing the `--auto` circle at 12 cm/s: 7–18 mm, against 7 mm for a
+target standing still.
+
 Watch `Metrics/ee_pose/position_error` — mean distance from the gripper to the
 commanded point, in metres. Measured here, 250 iterations (24.5M steps, 4m21s on an
 RTX 3060, 4096 envs) takes it from 0.185 m — what an untrained policy scores on this

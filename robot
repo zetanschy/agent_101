@@ -113,6 +113,10 @@ case "$cmd" in
              # sim/outputs/rsl_rl/<experiment>/<timestamp>/, and wandb is on when
              # there are credentials for it -- the same rule ./robot train follows.
              bash ./scripts/sim/sim.sh scripts/sim/train.py "$@" ;;
+  sim-demo)             # one arm, one goal you move by hand, chasing a checkpoint
+             # Windowed: drag /World/GoalHandle, or use W/S A/D Q/E. --auto walks
+             # the goal in a circle instead, which also works headless.
+             bash ./scripts/sim/sim.sh scripts/sim/demo_reach.py "$@" ;;
   sim-policy)           # run a trained checkpoint and report its tracking error
              # Windowed by default, the opposite of sim-train: this one is for
              # watching. Defaults to the newest so101_reach checkpoint.
@@ -262,6 +266,7 @@ so rather than failing with "docker: command not found".
                                 --no-wandb / --wandb-offline / --name to override
                                 tensorboard --logdir sim/outputs/rsl_rl
   ./robot sim-policy            watch the newest checkpoint and score its tracking
+  ./robot sim-demo              one arm, one goal you drag around, policy chasing it
   ./robot sim-teleop            drive the Isaac scene from the real leader arm
                                 (starts and stops the joint publisher for you)
   ./robot leader-publish --no-follower
