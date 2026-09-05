@@ -143,8 +143,10 @@
             <button id="btnGoal" class="ghost" disabled title="apply to the running policy, no reload">⚡ live</button>
           </div>
           <div class="hint">Where the printed footprint sits <b>in the robot base frame</b>, measured
-            not guessed: the camera never sees it (1 mm tall, in a geom group the wrist camera does
-            not render), so the policy is told. Wrong numbers give an accurate push to the wrong place.</div>
+            not guessed. The camera does see the footprint, but the policy never learned to read it —
+            ablated in sim over 32 episodes: true goal <b>96.9%</b> solved to 2 mm, zeroed <b>0%</b> at
+            103 mm, displaced 15 cm <b>0%</b> at 89 mm. Wrong numbers do not degrade the push, they aim
+            it somewhere else.</div>
           <div class="row mt">
             <div class="num"><label>Control Hz</label><input id="rlHz" type="number" placeholder="50" min="1" /></div>
             <div class="num"><label>Max deg/s</label><input id="rlMaxDps" type="number" placeholder="60" min="1" /></div>

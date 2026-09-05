@@ -27,11 +27,16 @@ Three things about that vector are worth knowing before trusting a run:
     survivable because the policy was trained with +/-1.5 rad/s of uniform noise on
     that term -- a band far wider than the differentiator's error -- so the network
     cannot have learned to depend on it precisely.
-  * THE GOAL IS OPERATOR-SUPPLIED. The footprint is 1 mm tall and lives in a geom
-    group the wrist camera never rendered, so even in simulation the policy was told
-    where the goal was rather than seeing it. On the real table that has to come from
-    a person measuring: goal_pose is (x, y) metres and yaw in the ROBOT BASE frame.
-    Get it wrong and the policy will push the T, accurately, to the wrong place.
+  * THE GOAL IS OPERATOR-SUPPLIED, AND THE POLICY IS ENTIRELY DEPENDENT ON IT. The
+    footprint IS visible to the wrist camera in this task -- it has _cam geoms in
+    group 3, and it covers 27 px of the average frame -- so it is tempting to assume
+    vision covers the goal and these numbers are a formality. Measured over 32
+    episodes, it is the opposite: with the true goal the policy solves 96.9% of them
+    to 2 mm and 1.9 deg; with the term zeroed, 0.0%, 103 mm and 78.8 deg; with it
+    displaced 15 cm and 90 deg, 0.0%, 89 mm and 65.9 deg. It never learned to read
+    the footprint, because a precise state input was always there. So goal_pose is
+    (x, y) metres and yaw in the ROBOT BASE frame, measured rather than guessed, and
+    getting it wrong does not degrade the push -- it aims it somewhere else.
   * LAST ACTION IS THE RAW NETWORK OUTPUT, pre-scale, and is zeroed on every `run`.
     Feeding back the scaled target instead is a silent 2x error in one sixth of the
     observation.
