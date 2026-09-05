@@ -266,3 +266,31 @@ def t_out_of_bounds(
     t = t_pose_world(env, asset_cfg)
     return ((t[:, 0] < x_range[0]) | (t[:, 0] > x_range[1])
             | (t[:, 1] < y_range[0]) | (t[:, 1] > y_range[1]))
+
+
+def ee_below_surface(
+    env,
+    height: float,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=["gripper", "jaw"]),
+) -> torch.Tensor:
+    """End the episode once the hand has gone INTO the table.
+
+    mjlab ends its push-T episodes on an end-effector/ground contact above 10 N, and
+    the reason to have some version of that is not tidiness. Without it the arm spends
+    training driving through the surface, and at 4096 envs that is not merely ugly:
+    PhysX's GPU collision stack overflows on the deep-penetration contact patches --
+    "collisionStackSize buffer overflow detected... CONTACTS HAVE BEEN DROPPED" -- and
+    the demand grows as the policy flails, from 577 MB to 896 MB within one run at
+    HALF that env count. Dropped contacts mean the simulator quietly stops resolving
+    some of the pushing the task is made of.
+
+    A height test rather than mjlab's contact sensor, deliberately. The contact version
+    needs activate_contact_sensors on every arm plus a filtered sensor per env, which
+    is its own per-env memory at this scale; this needs nothing, and for a flat table
+    at a known height it answers the same question. It costs the distinction between
+    resting a finger on the table and slamming it, which the reward's action-rate and
+    velocity terms already discourage.
+    """
+    robot: Articulation = env.scene[robot_cfg.name]
+    z = robot.data.body_pos_w[:, robot_cfg.body_ids, 2] - env.scene.env_origins[:, 2:3]
+    return (z < height).any(dim=-1)

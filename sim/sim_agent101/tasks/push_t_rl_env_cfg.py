@@ -71,7 +71,11 @@ from ..assets.so101 import JOINT_NAMES, SO101_CFG
 # m: big enough that nothing runs off it, small enough to be one cheap cuboid.
 TABLE_TOP = 0.035
 TABLE_THICKNESS = 0.025
-TABLE_SIZE = (1.2, 1.0)
+# Only as big as the task. It was 1.2 x 1.0 m, which at env_spacing 1.5 puts each
+# env's table AABB almost against its neighbours' and hands the broadphase 4096 large
+# overlapping boxes to sort out. 0.8 x 0.7 still covers the whole workspace box
+# (0.44 x 0.60) and the arm's base behind it, with room to spare.
+TABLE_SIZE = (0.8, 0.7)
 TABLE_COLOR = (0.03, 0.03, 0.03)
 
 # --- where the task happens -------------------------------------------------
@@ -380,6 +384,19 @@ class TerminationsCfg:
         func=mdp.push_t_out_of_bounds,
         params={"x_range": WORKSPACE_X, "y_range": WORKSPACE_Y},
     )
+    # mjlab's ee_ground_collision, as a height test on the WRIST body only, 20 mm below
+    # the surface. Both numbers are measured, not guessed:
+    #
+    #   The jaw is excluded because at the home pose its origin is only 17 mm above the
+    #   table, so any test tight enough to mean something fires on a graze.
+    #   20 mm below means the wrist is unambiguously inside a 25 mm slab. At 5 mm this
+    #   term ended 130 episodes an iteration and mean episode length was 15 steps --
+    #   half a second -- so the policy never saw the task at all.
+    hand_through_table = DoneTerm(
+        func=mdp.push_ee_below_surface,
+        params={"height": TABLE_TOP - 0.020,
+                "robot_cfg": SceneEntityCfg("robot", body_names=["gripper"])},
+    )
 
 
 @configclass
@@ -404,7 +421,7 @@ class CurriculumCfg:
 class PushTRLEnvCfg(ManagerBasedRLEnvCfg):
     # 4096, which is what mjlab's hyperparameters assume: 4096 x 24 steps is the 98k
     # transitions an iteration those numbers were tuned against.
-    scene: PushTRLSceneCfg = PushTRLSceneCfg(num_envs=4096, env_spacing=1.5)
+    scene: PushTRLSceneCfg = PushTRLSceneCfg(num_envs=2048, env_spacing=1.5)
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     events: EventCfg = EventCfg()
@@ -433,6 +450,20 @@ class PushTRLEnvCfg(ManagerBasedRLEnvCfg):
         # right there, silently, with exit code 0 and no traceback. A small render is
         # the whole point of a camera in an RL env, so the antialiaser goes instead.
         self.sim.render.antialiasing_mode = "Off"
+        # PhysX's GPU collision stack, raised from Isaac Lab's 64 MB default. At 4096
+        # envs -- an arm standing on a table, a decomposed T block on it, per env --
+        # PhysX overflows it and says so, once per substep: "collisionStackSize buffer
+        # overflow detected, please increase its size to at least 376226584 in the
+        # scene desc! CONTACTS HAVE BEEN DROPPED". Dropped contacts are the part that
+        # matters: the sim keeps running and silently stops resolving some of the
+        # pushing this task is about.
+        #
+        # 256 MB, not more. A bigger buffer is not the fix and 512 MB made it worse
+        # -- at 4096 envs the process aborted in scene cloning with malloc(): invalid
+        # size. The fix is the hand_through_table termination above, which stops the
+        # deep-penetration contact storms that were driving the demand up to 896 MB
+        # inside a single run.
+        self.sim.physx.gpu_collision_stack_size = 512 * 1024 * 1024
 
 
 @configclass

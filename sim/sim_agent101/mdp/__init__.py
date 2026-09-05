@@ -2,6 +2,7 @@
 
 from .push_t_rl import (  # noqa: F401
     coverage as push_coverage,
+    ee_below_surface as push_ee_below_surface,
     coverage_success as push_coverage_success,
     displacement_penalty as push_displacement_penalty,
     ee_guidance as push_ee_guidance,
