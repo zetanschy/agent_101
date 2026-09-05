@@ -129,6 +129,34 @@
             It cannot be inferred from the checkpoint — only the dataset name can.</div>
         </div>
 
+        <div class="grp" id="grpRl" hidden>
+          <div class="glabel">RL policy <span class="only">· active</span></div>
+          <div class="hint" style="margin-top:0">Trained in mjlab against one reward, so there is
+            no task prompt and no chunking. Joints, home pose and action scale are read from the
+            ONNX metadata — the only thing this page has to tell it is <b>where the goal is</b>.</div>
+          <div class="row mt">
+            <div class="num"><label>Goal X (m) <span class="tag">⚡</span></label><input id="goalX" type="number" step="0.01" value="0.23" /></div>
+            <div class="num"><label>Goal Y (m) <span class="tag">⚡</span></label><input id="goalY" type="number" step="0.01" value="0" /></div>
+          </div>
+          <div class="stepwrap">
+            <div class="num"><label>Goal yaw (deg) <span class="tag">⚡</span></label><input id="goalYaw" type="number" step="1" value="0" /></div>
+            <button id="btnGoal" class="ghost" disabled title="apply to the running policy, no reload">⚡ live</button>
+          </div>
+          <div class="hint">Where the printed footprint sits <b>in the robot base frame</b>, measured
+            not guessed: the camera never sees it (1 mm tall, in a geom group the wrist camera does
+            not render), so the policy is told. Wrong numbers give an accurate push to the wrong place.</div>
+          <div class="row mt">
+            <div class="num"><label>Control Hz</label><input id="rlHz" type="number" placeholder="50" min="1" /></div>
+            <div class="num"><label>Max deg/s</label><input id="rlMaxDps" type="number" placeholder="60" min="1" /></div>
+          </div>
+          <div class="hint">Trained at <b>50 Hz</b>. The rate limit is a leash for a policy whose sim
+            had a massless wrist — it can ask for a step change, and the real arm answering one at
+            full torque is how a gripper meets a table.</div>
+          <div class="chk mt"><input type="checkbox" id="rlDry" /><label for="rlDry" style="margin:0">dry run — compute and log, <b>send nothing</b></label></div>
+          <div class="hint">The honest first run for a checkpoint that has only ever driven a
+            simulated arm: watch the targets in the log before letting it drive.</div>
+        </div>
+
         <div class="grp">
           <div class="glabel">Execution · any mode</div>
           <div class="row">
@@ -192,8 +220,11 @@ async function loadModels() {
   const d = await api('/api/models');
   $('model').innerHTML = d.models.map(m => {
     MODEL_KIND[m.path] = m.kind;
-    const tag = m.kind === 'openpi' ? 'openpi: ' : '';
-    return `<option value="${m.path}">${tag}${m.path}</option>`;
+    const tag = m.kind === 'openpi' ? 'openpi: ' : (m.kind === 'rl' ? 'RL: ' : '');
+    // RL exports sit five directories deep under thirdparty/mjlab/logs; the run
+    // (task + timestamp) is the part that identifies them.
+    const label = m.kind === 'rl' ? m.path.split('/').slice(-2).join('/') : m.path;
+    return `<option value="${m.path}">${tag}${label}</option>`;
   }).join('');
   applyKind();
 }
@@ -202,22 +233,29 @@ async function loadModels() {
 // authoritatively on Load, this is just so the form shows the right knobs.
 function selectedKind() {
   const custom = $('modelCustom').value.trim();
-  if (custom) return MODEL_KIND[custom] || (/checkpoints?\//.test(custom) ? 'openpi' : 'lerobot');
+  if (custom) return MODEL_KIND[custom]
+    || (/\.onnx$/.test(custom) ? 'rl' : (/checkpoints?\//.test(custom) ? 'openpi' : 'lerobot'));
   return MODEL_KIND[$('model').value] || 'lerobot';
 }
 
 function applyKind() {
-  const openpi = selectedKind() === 'openpi';
-  $('tuneMode').textContent = openpi ? 'openpi' : $('mode').value;
+  const kind = selectedKind(), openpi = kind === 'openpi', rl = kind === 'rl';
+  $('tuneMode').textContent = rl ? 'RL policy' : (openpi ? 'openpi' : $('mode').value);
   $('grpOpenpi').hidden = !openpi;
-  if (openpi) { $('grpRtc').hidden = true; $('grpSync').hidden = true; }
+  $('grpRl').hidden = !rl;
+  if (openpi || rl) { $('grpRtc').hidden = true; $('grpSync').hidden = true; }
   else syncModeUI();
-  // Grey out (and disable) the lerobot-rollout knobs openpi ignores.
-  for (const id of ['mode','steps','horizon','queueThreshold','interp','compile']) {
+  // An RL policy shares none of the VLA knobs — not even the "any mode" ones, which
+  // are chunking and denoising concepts it has no equivalent of. Grey out whatever
+  // the selected stack ignores rather than leaving it live and inert.
+  const dead = rl ? ['mode','steps','actionSteps','horizon','queueThreshold','interp','compile','task','cams']
+                  : (openpi ? ['mode','steps','horizon','queueThreshold','interp','compile'] : []);
+  for (const id of ['mode','steps','actionSteps','horizon','queueThreshold','interp','compile','task','cams']) {
     const el = $(id); if (!el) continue;
-    el.disabled = openpi;
-    const box = el.closest('.row, .stepwrap, .chk');
-    if (box) box.style.opacity = openpi ? 0.35 : 1;
+    const off = dead.includes(id);
+    el.disabled = off;
+    const box = el.closest('.row, .stepwrap, .chk') || el.parentElement;
+    if (box) box.style.opacity = off ? 0.35 : 1;
   }
 }
 $('model').addEventListener('change', applyKind);
@@ -233,6 +271,9 @@ function params() {
     units: $('units').value, config: $('opConfig').value.trim(),
     op_mode: $('opMode').value,
     actions: $('actionSteps').value,
+    // RL-only; ignored by both VLA backends
+    goal_x: $('goalX').value, goal_y: $('goalY').value, goal_yaw: $('goalYaw').value,
+    hz: $('rlHz').value, max_deg_per_s: $('rlMaxDps').value, dry_run: $('rlDry').checked,
     record: $('rec').checked ? ($('recName').value.trim() || 'eval') : null };
 }
 
@@ -255,6 +296,7 @@ $('btnStop').onclick   = () => act(async () => { await post('/api/stop'); $('msg
 $('btnHome').onclick   = () => act(async () => { const r = await post('/api/home'); $('msg').textContent = r.ok ? 'home done ✓' : r.msg; }, 'homing…');
 $('btnSteps').onclick  = () => act(async () => { const r = await post('/api/steps', {steps: $('steps').value}); $('msg').textContent = r.ok ? `denoise steps → ${r.steps} (live)` : r.msg; });
 $('btnActionSteps').onclick = () => act(async () => { const r = await post('/api/action-steps', {action_steps: $('actionSteps').value}); $('msg').textContent = r.ok ? `action steps → ${r.action_steps} (live, queue flushed)` : r.msg; });
+$('btnGoal').onclick   = () => act(async () => { const r = await post('/api/goal', {goal_x: $('goalX').value, goal_y: $('goalY').value, goal_yaw: $('goalYaw').value}); $('msg').textContent = r.ok ? `goal → x=${r.goal[0]} y=${r.goal[1]} yaw=${r.goal[2]}° (live)` : r.msg; });
 
 async function poll() {
   try {
@@ -273,8 +315,10 @@ async function poll() {
       $('btnStart').disabled  = !loaded || running || homing;
       $('btnStop').disabled   = !running;
       $('btnHome').disabled   = homing;
-      $('btnSteps').disabled  = !loaded;
-      $('btnActionSteps').disabled = !loaded;
+      const rl = (s.loaded_sig || {}).stack === 'rl';
+      $('btnSteps').disabled  = !loaded || rl;
+      $('btnActionSteps').disabled = !loaded || rl;
+      $('btnGoal').disabled   = !loaded || !rl;   // live goal only once an RL policy is up
     }
     if (s.log) { const el = $('log'); const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20; el.textContent = s.log; if (atBottom) el.scrollTop = el.scrollHeight; }
   } catch (e) {}

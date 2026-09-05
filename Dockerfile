@@ -41,7 +41,11 @@ COPY thirdparty/le101 /opt/le101
 RUN pip install --no-cache-dir -e "/opt/le101[feetech,core_scripts,training,pi,peft]"
 
 # Web UI backend (small; last layer so it doesn't invalidate the lerobot layer).
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
+# onnxruntime runs the mjlab-trained RL policies (webui/rl_worker.py). CPU build on
+# purpose: the exported push-T net is 516 KB (two conv layers, a spatial softmax and a
+# 256-256-128 MLP) and runs in well under a millisecond on CPU, so a GPU build would
+# only add a CUDA version to keep in step with torch's for no measurable gain.
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" onnxruntime
 
 # openpi (JAX) alongside torch, so ONE web UI can load either stack's policies and
 # switch between them per model. This is safe despite appearances: jax's CUDA deps are

@@ -94,7 +94,51 @@ def openpi_available() -> bool:
         return False
 
 
+def rl_available() -> bool:
+    """Whether this image can run mjlab RL exports (needs onnxruntime; see Dockerfile)."""
+    try:
+        import onnxruntime  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 OPENPI = openpi_available()
+
+# The SO-101's joints, in URDF names — the vocabulary mjlab's exporter writes into the
+# ONNX metadata. Sourced from kinematics.py so there is one definition of the arm.
+ARM_JOINTS = ("Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw")
+
+_joint_cache: dict[tuple, tuple | None] = {}
+
+
+def onnx_joints(path: str) -> tuple | None:
+    """Joint names an ONNX export was trained for, or None if they can't be read.
+
+    Cached on (path, mtime): /api/models is polled by the page, and re-opening every
+    export on each poll would be pointless work. None means 'unknown', not 'none' —
+    callers must not treat it as a mismatch.
+    """
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return None
+    if key in _joint_cache:
+        return _joint_cache[key]
+    joints = None
+    try:
+        import onnxruntime as ort
+
+        meta = ort.InferenceSession(
+            path, providers=["CPUExecutionProvider"]
+        ).get_modelmeta().custom_metadata_map
+        if meta.get("joint_names"):
+            joints = tuple(s.strip() for s in meta["joint_names"].split(","))
+    except Exception:  # noqa: BLE001 - an unreadable export is 'unknown', not fatal
+        joints = None
+    _joint_cache[key] = joints
+    return joints
 
 
 def is_openpi_checkpoint(path: str) -> bool:
@@ -107,6 +151,41 @@ def is_openpi_checkpoint(path: str) -> bool:
     """
     p = Path(path)
     return p.is_dir() and (p / "params").is_dir() and (p / "assets").is_dir()
+
+
+def is_rl_policy(path: str) -> bool:
+    """A mjlab-trained RL policy, i.e. an ONNX export rather than a VLA checkpoint.
+
+    Detected from the artifact, like is_openpi_checkpoint: one dropdown holds all
+    three stacks and Load dispatches per selection. mjlab writes exactly one .onnx per
+    run, named after the run directory.
+    """
+    return path.endswith(".onnx")
+
+
+def rl_args(p: dict):
+    """Args for webui/rl_worker.py — no task string, no chunking; a goal pose instead.
+
+    The RL policy was told where the goal is rather than seeing it (the footprint is
+    1 mm tall and renders in a geom group the wrist camera never saw), so on a real
+    table the operator has to measure it. Everything else about the contract — joints,
+    home pose, action scale — is read from the ONNX metadata by the worker.
+    """
+    policy = p.get("policy") or ""
+    gx = str(p.get("goal_x", "") or "0.23")
+    gy = str(p.get("goal_y", "") or "0.0")
+    gyaw = str(p.get("goal_yaw", "") or "0.0")
+    args = [f"--policy={policy}", f"--goal-x={gx}", f"--goal-y={gy}", f"--goal-yaw={gyaw}"]
+    if str(p.get("hz", "") or "").strip():
+        args.append(f"--hz={p['hz']}")
+    if str(p.get("max_deg_per_s", "") or "").strip():
+        args.append(f"--max-deg-per-s={p['max_deg_per_s']}")
+    if p.get("dry_run"):
+        args.append("--dry-run")
+    sig = {"stack": "rl", "policy": policy, "goal_x": gx, "goal_y": gy, "goal_yaw": gyaw,
+           "hz": str(p.get("hz", "") or ""), "max_deg_per_s": str(p.get("max_deg_per_s", "") or ""),
+           "dry_run": bool(p.get("dry_run"))}
+    return args, sig
 
 
 def openpi_args(p: dict):
@@ -253,6 +332,22 @@ def list_models():
                 if is_openpi_checkpoint(p):
                     out.append({"path": str(Path(p)), "kind": "openpi"})
 
+    # mjlab RL exports. thirdparty/ is inside the ./:/workspace mount, so the training
+    # runs are visible in here without a mount of their own. Sorted by mtime, not by
+    # path: the paths start with the experiment name, so a string sort buries the run
+    # you just finished under whichever task sorts first.
+    rl = glob.glob(str(ROOT / "thirdparty/mjlab/logs/rsl_rl/*/*/*.onnx"))
+    for p in sorted(rl, key=lambda f: os.path.getmtime(f), reverse=True):
+        joints = onnx_joints(p)
+        # Only offer policies whose joints ARE this arm's. mjlab trains other robots in
+        # the same tree -- the YAM push-T runs sit right beside the SO-101 ones -- and
+        # a 7-joint policy pointed at a 6-joint bus is not a mistake to make on
+        # hardware. Unknown joints (no onnxruntime yet) are listed rather than hidden,
+        # since the worker rejects a mismatch anyway.
+        if joints is not None and set(joints) != set(ARM_JOINTS):
+            continue
+        out.append({"path": str(Path(p)), "kind": "rl"})
+
     seen, uniq = set(), []
     for m in out:
         if m["path"] not in seen:
@@ -275,7 +370,7 @@ def models():
 @app.get("/api/capabilities")
 def capabilities():
     """Which stacks this image supports; the page dispatches per selected model."""
-    return {"openpi": OPENPI, "lerobot": True}
+    return {"openpi": OPENPI, "lerobot": True, "rl": rl_available()}
 
 
 @app.get("/api/status")
@@ -293,7 +388,9 @@ def status():
 
 @app.post("/api/load")
 def load(body: dict = Body(...)):
-    if not (body.get("task") or "").strip():
+    # An RL policy has no task string — it was trained against one reward, not
+    # prompted — so the requirement is checked per stack rather than up front.
+    if not is_rl_policy((body.get("policy") or "").strip()) and not (body.get("task") or "").strip():
         return _err("task is required", 400)
     if _alive(_home):
         return _err("busy: homing — wait for it to finish", 409)
@@ -303,7 +400,13 @@ def load(body: dict = Body(...)):
     if policy_in.startswith("/") and not Path(policy_in).exists():
         return _err(f"no such path in this container: {policy_in} "
                     "(is it mounted? openpi checkpoints come from /checkpoints)", 400)
-    if is_openpi_checkpoint(policy_in):
+    if is_rl_policy(policy_in):
+        if not rl_available():
+            return _err("this image cannot run RL policies — onnxruntime is missing "
+                        "(rebuild: ./robot build)", 400)
+        args, sig = rl_args(body)
+        worker_script = "webui/rl_worker.py"
+    elif is_openpi_checkpoint(policy_in):
         if not OPENPI:
             return _err("this image cannot run openpi policies (rebuild: ./robot build)", 400)
         args, sig = openpi_args(body)
@@ -404,6 +507,30 @@ def action_steps(body: dict = Body(...)):
     if _loaded is not None:          # keep the signature honest so Load isn't skipped later
         _loaded["action_steps"] = str(int(n))
     return {"ok": True, "action_steps": int(n)}
+
+
+@app.post("/api/goal")
+def goal(body: dict = Body(...)):
+    """Live-move the RL policy's goal without reloading.
+
+    The goal is where the printed footprint physically sits, so this is the knob you
+    reach for most: slide the footprint on the table, retype the numbers, keep running.
+    """
+    if not _alive(_worker):
+        return _err("no model loaded", 409)
+    if not (_loaded and _loaded.get("stack") == "rl"):
+        return _err("goal applies to RL policies only", 409)
+    try:
+        x = float(body.get("goal_x")); y = float(body.get("goal_y"))
+        yaw = float(body.get("goal_yaw"))
+    except (TypeError, ValueError):
+        return _err("goal_x, goal_y and goal_yaw must be numbers", 400)
+    since = len(_log_text())
+    _send(f"goal {x} {y} {yaw}")
+    _wait_new_marker("GOAL_SET", since, 5)
+    if _loaded is not None:      # keep the signature honest so Load isn't skipped later
+        _loaded.update(goal_x=str(x), goal_y=str(y), goal_yaw=str(yaw))
+    return {"ok": True, "goal": [x, y, yaw]}
 
 
 @app.post("/api/home")

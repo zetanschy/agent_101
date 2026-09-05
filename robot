@@ -329,6 +329,7 @@ so rather than failing with "docker: command not found".
   ./robot calib-solve           solve where both cameras are, in the base frame
                                 to measure where both cameras really are (extrinsics)
   ./robot webui                        browser control panel: home/infer/record/params
+                                       loads lerobot, openpi and mjlab RL (.onnx) policies
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
   ./robot data viz --name N [--episode 0]      visualize an episode (scrubbable)
