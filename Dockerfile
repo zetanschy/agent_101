@@ -72,5 +72,24 @@ RUN pip install --no-cache-dir --no-deps -e /opt/openpi \
     && python -c "import jax, torch; from openpi.training import config; \
 print('jax', jax.__version__, '| torch', torch.__version__, '| openpi importable')"
 
+# Inspect Robots: benchmark harness for evaluating any LLM agent or VLA on this arm
+# (evals/, ./robot eval). Last layer, so adding it does not invalidate the openpi one.
+#
+# NO [lerobot] EXTRA, deliberately. inspect-robots-so101 declares
+# `lerobot[feetech]>=0.5,<0.6`, and this image carries the le101 fork at 0.6.1 --
+# installing the extra would drag the fork out from under everything else in here.
+# The cap is conservative rather than load-bearing: the adapter's whole lerobot seam
+# is seven symbols, and all seven resolve against 0.6.1 (checked with importlib in
+# CI-less fashion, see evals/README.md). Two of them are the fallback arms of a
+# try/except chain whose first arm, lerobot.utils.feature_utils, is the one that
+# resolves -- so the paths the cap was written for are not the paths taken here.
+# If a future lerobot moves that seam, the policy breaks loudly at import, not
+# silently mid-eval.
+RUN pip install --no-cache-dir \
+        "inspect-robots" "inspect-robots-agent" \
+        "inspect-robots-so101 @ git+https://github.com/robocurve/inspect-robots-so101" \
+    && python -c "import inspect_robots, inspect_robots_so101, inspect_robots_agent; \
+print('inspect-robots stack importable')"
+
 WORKDIR /workspace
 CMD ["bash"]
