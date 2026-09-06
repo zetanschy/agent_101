@@ -69,10 +69,33 @@ def _env(key: str, default: str) -> str:
 
 
 def calibration_path() -> pathlib.Path:
-  """The calibration lerobot itself would load for this robot_type/robot_id."""
+  """The calibration file for this robot_type/robot_id, as lerobot lays them out.
+
+  lerobot's DEFAULT location is HF_LEROBOT_CALIBRATION/robots/<driver name>/<id>.json,
+  and docker-compose.yml mounts ./calibration over that cache path -- which is why this
+  repo keeps both robots/so101_follower/ and robots/so_follower/ with the same file:
+  lerobot renamed the driver, and whichever name it asks for has to be there.
+
+  An explicitly passed `calibration_dir`, by contrast, is used VERBATIM: Robot.__init__
+  does `calibration_dir / f"{id}.json"` with no robots/<name> level. Pointing it at
+  ./calibration therefore looks for calibration/zetans_follower.json, which does not
+  exist -- the failure this function's parent directory now feeds so_arm_config to
+  avoid. Both the safety clamp and the driver read whatever this returns, so they
+  cannot disagree about which calibration is in force.
+  """
   robot_type = _env("ROBOT_TYPE", "so101_follower")
   robot_id = _env("ROBOT_ID", "zetans_follower")
-  return ROOT / "calibration" / "robots" / robot_type / f"{robot_id}.json"
+  by_type = ROOT / "calibration" / "robots" / robot_type / f"{robot_id}.json"
+  if by_type.is_file():
+    return by_type
+  # lerobot 0.6.x names the driver so_follower; keep working if .env says so101.
+  alias = ROOT / "calibration" / "robots" / "so_follower" / f"{robot_id}.json"
+  if alias.is_file():
+    return alias
+  raise FileNotFoundError(
+    f"no calibration for robot_id={robot_id!r} at {by_type} or {alias}. "
+    f"Calibrate once with:  ./robot calibrate"
+  )
 
 
 def half_spans() -> dict[str, float]:
@@ -212,9 +235,9 @@ def so_arm_config(
     port=_env("ROBOT_PORT", "/dev/ttyACM1"),
     robot_type=_env("ROBOT_TYPE", "so101_follower"),
     robot_id=_env("ROBOT_ID", "zetans_follower"),
-    # The repo's version-controlled calibration, which docker-compose mounts over
-    # lerobot's default cache location; passed explicitly so a host run finds it too.
-    calibration_dir=str(ROOT / "calibration"),
+    # The DIRECTORY CONTAINING <robot_id>.json, not the calibration root: lerobot
+    # appends "<id>.json" to this verbatim. See calibration_path().
+    calibration_dir=str(calibration_path().parent),
     cameras=cameras,
     camera_configs=camera_configs(cameras) if with_cameras else None,
     cam_width=int(_env("CAM_WIDTH", "640")),
