@@ -85,5 +85,18 @@ cfg = c.get_config('pi05_soarm101_lora'); \
 print('openpi + lerobot import OK | jax', jax.__version__); \
 print('pi05_soarm101_lora:', cfg.model.__class__.__name__, 'horizon =', cfg.model.action_horizon)"
 
+# Inspect Robots, so the openpi pi0.5 checkpoint can be scored on the same benchmark
+# as the LLM agent (evals/, ./robot eval-openpi). Only the core and the SO-ARM adapter:
+# the agent policy lives in the lerobot image, and installing its HTTP stack here would
+# be dependency surface this container never executes.
+#
+# NO [lerobot] EXTRA -- this image already carries the lerobot openpi needs for serial
+# and camera I/O, and the extra would pull a different one in on top of it.
+RUN pip install --no-cache-dir \
+        "inspect-robots" \
+        "inspect-robots-so101 @ git+https://github.com/robocurve/inspect-robots-so101" \
+    && python -c "import inspect_robots, inspect_robots_so101; \
+print('inspect-robots stack importable in the openpi image')"
+
 WORKDIR /workspace
 CMD ["bash"]

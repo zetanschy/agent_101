@@ -78,6 +78,12 @@ case "$cmd" in
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   eval) needs_docker eval;      $RUN python -m evals.run "$@" ;;               # Inspect Robots benchmark: LLM agent or VLA
   eval-preflight) needs_docker eval-preflight; $RUN inspect-robots-so101-preflight "$@" ;;  # prove compat, no motion
+  eval-openpi)          # the openpi (JAX) pi0.5 checkpoint on the same benchmark.
+             # Its own image because openpi pins jax and its own lerobot; the task,
+             # the rig config and evals/run.py are shared with ./robot eval.
+             needs_docker eval-openpi
+             $DC -f docker-compose.openpi.yml run --rm openpi \
+               python -m evals.run --policy openpi "$@" ;;
   webui) needs_docker webui;     port="${WEBUI_PORT:-8000}"; echo "web UI -> http://localhost:${port}"
              $DC run --rm -p "${port}:8000" lerobot python webui/app.py ;;
   data) needs_docker data;      grant_display; $RUN ./scripts/robot/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
@@ -333,6 +339,7 @@ so rather than failing with "docker: command not found".
   ./robot webui                        browser control panel: home/infer/record/params
   ./robot eval --policy agent --dry-run          Inspect Robots eval, mock world (no arm)
   ./robot eval --policy agent --model openai/gpt-6-astra    LLM agent on the real arm
+  ./robot eval-openpi                           the working openpi pi0.5, same benchmark
   ./robot eval --policy lerobot --checkpoint <hub-id>       a lerobot VLA on the same task
   ./robot eval-preflight --dry-run              prove the 6-D contract lines up, no motion
                                        loads lerobot, openpi and mjlab RL (.onnx) policies

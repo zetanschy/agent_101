@@ -1,8 +1,12 @@
 """Run one Inspect Robots eval on the SO-ARM101: an LLM agent, or a lerobot VLA.
 
-    ./robot eval --policy agent   --model openai/gpt-6-astra   # the LLM agent
-    ./robot eval --policy lerobot --checkpoint zetanschy/pi05_lora_cap_tu_cup
+    ./robot eval --policy agent  --model openai/gpt-6-astra    # the LLM agent
+    ./robot eval-openpi --policy openpi                        # the working pi0.5
     ./robot eval --policy agent --dry-run                      # no motion, no arm
+
+The openpi policy runs in the OTHER image: openpi pins jax and its own lerobot, so it
+has a container of its own (docker-compose.openpi.yml), which is why it has its own
+./robot verb. The task, the rig config and this runner are shared across both.
 
 Both policies get the SAME Task object out of evals/tasks.py and the SAME embodiment
 out of evals/rig.py, which is the only reason the two scores can be put beside each
@@ -36,10 +40,12 @@ from inspect_robots import eval as robot_eval
 from inspect_robots.approver import ClampApprover
 
 from evals import rig, tasks
+from evals.openpi_policy import DEFAULT_CHECKPOINT as OPENPI_CHECKPOINT
 
-# The pi0.5 LoRA checkpoint webui/app.py already defaults to, and the model this
-# whole comparison exists to measure the LLM agent against.
-PI05_CHECKPOINT = "zetanschy/pi05_lora_cap_tu_cup"
+# The lerobot-format checkpoint webui/app.py names as its default. NOT the model the
+# comparison is against -- see --policy openpi, which loads the orbax checkpoint that
+# actually works on this bench.
+LEROBOT_CHECKPOINT = "zetanschy/pi05_lora_cap_tu_cup"
 
 
 def _grade(record, scene) -> None:
@@ -57,6 +63,12 @@ def _grade(record, scene) -> None:
 
 def build_policy(args):
   """The policy under test. Both arms of the comparison are constructed here."""
+  if args.policy == "openpi":
+    from evals.openpi_policy import OpenPiPolicy
+
+    return OpenPiPolicy(args.checkpoint or None or OPENPI_CHECKPOINT,
+                        cameras=tuple(args.cameras))
+
   if args.policy == "agent":
     from inspect_robots_agent.policy import LLMAgentPolicy
 
@@ -73,7 +85,7 @@ def build_policy(args):
 
   return LeRobotPolicy(
     LeRobotPolicyConfig(
-      pretrained_path=args.checkpoint,
+      pretrained_path=args.checkpoint or LEROBOT_CHECKPOINT,
       policy_type=args.policy_type,
       device=args.device,
       cameras=tuple(args.cameras),
@@ -85,17 +97,30 @@ def build_policy(args):
   )
 
 
+def use_degrees(args) -> bool:
+  """Joint units for this run, decided by the policy under test.
+
+  The openpi pi0.5 checkpoints on this bench are normalized (+/-100); the agent reads
+  whatever bounds the embodiment declares, so degrees is the friendlier choice there.
+  """
+  if args.policy == "openpi":
+    from evals.openpi_policy import USE_DEGREES
+
+    return USE_DEGREES
+  return True
+
+
 def build_embodiment(args):
   """The arm, or the mock world under --dry-run."""
   if args.dry_run:
-    if args.policy == "lerobot":
+    if args.policy in ("lerobot", "openpi"):
       # CubePick is a 2-D eef-delta world and the lerobot policy declares the 6-D
       # joint contract, so pairing them fails the compatibility check for a reason
       # that says nothing about this rig. The adapter ships the right tool for
       # checking that side without motion.
       raise SystemExit(
-        "--dry-run pairs the 2-D CubePick mock world, which the 6-D lerobot policy "
-        "cannot bind to. To check the lerobot path without moving the arm, run:\n"
+        f"--dry-run pairs the 2-D CubePick mock world, which the 6-D {args.policy} "
+        "policy cannot bind to. To check that path without moving the arm, run:\n"
         "    ./robot shell -c 'inspect-robots-so101-preflight --dry-run'"
       )
     from inspect_robots.mock import CubePickEmbodiment
@@ -103,18 +128,23 @@ def build_embodiment(args):
     return CubePickEmbodiment()
   from inspect_robots_so101 import SOArmEmbodiment
 
-  return SOArmEmbodiment(rig.so_arm_config(cameras=tuple(args.cameras)))
+  # The units follow the POLICY, because they are a property of what it was trained
+  # on and not a preference. Getting this wrong is silent: see evals/openpi_policy.py.
+  return SOArmEmbodiment(
+    rig.so_arm_config(cameras=tuple(args.cameras), use_degrees=use_degrees(args))
+  )
 
 
 def main(argv: list[str] | None = None) -> int:
   p = argparse.ArgumentParser(
     description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
   )
-  p.add_argument("--policy", choices=("agent", "lerobot"), default="agent")
+  p.add_argument("--policy", choices=("agent", "lerobot", "openpi"), default="agent")
   p.add_argument("--model", default=os.environ.get("INSPECT_ROBOTS_MODEL", "openai/gpt-6-astra"),
                  help="agent only: provider/model (default openai/gpt-6-astra)")
   p.add_argument("--effort", default="medium", help="agent only: reasoning effort")
-  p.add_argument("--checkpoint", default=PI05_CHECKPOINT, help="lerobot only: Hub id or path")
+  p.add_argument("--checkpoint", default=None,
+                 help="lerobot: Hub id or path; openpi: orbax checkpoint dir")
   p.add_argument("--policy-type", default="pi05", help="lerobot only: policy class")
   p.add_argument("--device", default="cuda")
   p.add_argument("--cameras", nargs="+", default=["front", "grip"])
@@ -133,12 +163,16 @@ def main(argv: list[str] | None = None) -> int:
   embodiment = build_embodiment(args)
 
   print(f"task     : {task.name}  ({len(task.scenes)} scenes x {args.epochs} epochs)")
-  print(f"policy   : {args.policy} "
-        f"({args.model if args.policy == 'agent' else args.checkpoint})")
+  shown = args.model if args.policy == "agent" else (
+    args.checkpoint or (OPENPI_CHECKPOINT if args.policy == "openpi" else LEROBOT_CHECKPOINT)
+  )
+  print(f"policy   : {args.policy} ({shown})")
+  print(f"units    : {'degrees' if use_degrees(args) else 'normalized (+/-100)'}")
   print(f"embodiment: {embodiment.info.name}"
         f"{'  [DRY RUN - mock world, arm not opened]' if args.dry_run else ''}")
   if not args.dry_run:
-    cfg = rig.so_arm_config(cameras=tuple(args.cameras), with_cameras=False)
+    cfg = rig.so_arm_config(cameras=tuple(args.cameras), with_cameras=False,
+                            use_degrees=use_degrees(args))
     print(f"port     : {cfg.port}   calibration id: {cfg.robot_id}")
     print(f"clamp    : {[round(v, 1) for v in cfg.joint_low]}")
     print(f"           {[round(v, 1) for v in cfg.joint_high]}")

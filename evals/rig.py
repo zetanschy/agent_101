@@ -75,12 +75,29 @@ def calibration_path() -> pathlib.Path:
   return ROOT / "calibration" / "robots" / robot_type / f"{robot_id}.json"
 
 
-def joint_limits() -> tuple[tuple[float, ...], tuple[float, ...]]:
-  """(low, high) in the units the embodiment commands: degrees, gripper 0-100.
+def half_spans() -> dict[str, float]:
+  """Each arm joint's calibrated half-travel, in degrees. The limit in degree mode."""
+  cal = json.loads(calibration_path().read_text())
+  return {
+    j: (cal[j]["range_max"] - cal[j]["range_min"]) / 2.0 * 360.0 / _MAX_RES
+    for j in JOINTS
+    if j != GRIPPER
+  }
 
-  Read from the calibration file rather than declared, so recalibrating the arm
-  moves the safety clamp with it instead of silently invalidating it.
+
+def joint_limits(use_degrees: bool = True) -> tuple[tuple[float, ...], tuple[float, ...]]:
+  """(low, high) in the units the embodiment commands.
+
+  Degree mode is computed from the calibration file, so recalibrating the arm moves
+  the safety clamp with it instead of silently invalidating it. NORMALIZED mode needs
+  no calibration at all: lerobot maps the calibrated range onto exactly +/-100 by
+  construction, so +/-100 IS the calibrated limit there and computing it would only
+  add a way to get it wrong.
   """
+  if not use_degrees:
+    low = tuple(-100.0 if j != GRIPPER else 0.0 for j in JOINTS)
+    high = tuple(100.0 for _ in JOINTS)
+    return low, high
   cal = json.loads(calibration_path().read_text())
   low: list[float] = []
   high: list[float] = []
@@ -99,17 +116,28 @@ def joint_limits() -> tuple[tuple[float, ...], tuple[float, ...]]:
   return tuple(low), tuple(high)
 
 
-def home_pose() -> tuple[float, ...]:
-  """config/home_pose.json in JOINTS order, pulled inside the clamp.
+def home_pose(use_degrees: bool = True) -> tuple[float, ...]:
+  """config/home_pose.json in JOINTS order and the requested units, inside the clamp.
 
   Returns the same pose `./robot home` and webui/home.py drive to, so an eval trial
   starts where every other tool in this repo starts.
+
+  THE FILE IS IN DEGREES -- webui/home.py records it from a robot built with
+  use_degrees=True, and its shoulder_lift of -104.31 could not be anything else,
+  since normalized units stop at 100. So normalized mode converts rather than
+  reading it straight: degrees and normalized are both linear in the raw count and
+  both centred on the calibrated midpoint, so the conversion is one ratio,
+  normalized = degrees / half_span * 100. The gripper is RANGE_0_100 in BOTH modes
+  and is passed through untouched.
   """
   saved = json.loads((ROOT / "config" / "home_pose.json").read_text())
-  low, high = joint_limits()
+  low, high = joint_limits(use_degrees)
+  spans = half_spans()
   pose: list[float] = []
   for joint, lo, hi in zip(JOINTS, low, high):
     value = float(saved[joint])
+    if not use_degrees and joint != GRIPPER:
+      value = value / spans[joint] * 100.0
     pose.append(min(max(value, lo + HOME_INSET), hi - HOME_INSET))
   return tuple(pose)
 
@@ -152,6 +180,7 @@ def so_arm_config(
   *,
   with_cameras: bool = True,
   settle_tolerance: float | None = 2.0,
+  use_degrees: bool = True,
 ):
   """The `SOArmConfig` for this bench.
 
@@ -166,10 +195,19 @@ def so_arm_config(
   because the first user of this rig is an LLM agent taking one deliberate action at a
   time -- planning the next move from a pose the arm has not reached is a worse failure
   than a slow step. Pass None to restore upstream cadence for a chunked VLA.
+
+  `use_degrees` MUST match what the policy was trained in, and nothing will tell you
+  if it does not: the embodiment commands policy output verbatim after the clamp, and
+  Inspect Robots compares state KEYS rather than units, so a mismatch drives the arm
+  with numbers that mean something else. The agent policy reads the declared bounds
+  and adapts, so degrees is the friendlier choice there. The openpi pi0.5 checkpoints
+  in this repo are NORMALIZED -- scripts/openpi/evaluate.py defaults --units to it
+  for them, because they were trained on datasets recorded before lerobot 0.6.1 made
+  degrees the default. evals/openpi_policy.py carries that default with it.
   """
   from inspect_robots_so101 import SOArmConfig
 
-  low, high = joint_limits()
+  low, high = joint_limits(use_degrees)
   return SOArmConfig(
     port=_env("ROBOT_PORT", "/dev/ttyACM1"),
     robot_type=_env("ROBOT_TYPE", "so101_follower"),
@@ -184,9 +222,9 @@ def so_arm_config(
     control_hz=float(_env("CAM_FPS", "30")),
     joint_low=low,
     joint_high=high,
-    home_pose=home_pose(),
+    home_pose=home_pose(use_degrees),
     max_relative_target=10.0,
-    use_degrees=True,
+    use_degrees=use_degrees,
     disable_torque_on_disconnect=True,
     settle_tolerance=settle_tolerance,
   )

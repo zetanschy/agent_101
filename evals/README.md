@@ -14,11 +14,42 @@ fine-tuned for it?**
 ./robot eval --policy agent --dry-run                        # no arm, no motion
 ./robot eval-preflight --dry-run                             # prove the contract
 ./robot eval --policy agent --model openai/gpt-6-astra       # the LLM agent
-./robot eval --policy lerobot --checkpoint zetanschy/pi05_lora_cap_tu_cup
+./robot eval-openpi                                          # the working pi0.5
 ```
 
 Both runs get the **same `Task` object** and the **same embodiment**, which is the
 only reason their scores can be put side by side.
+
+## The two policies, and why one needs its own container
+
+| | policy | checkpoint | image | units |
+|---|---|---|---|---|
+| LLM agent | `agent` | `openai/gpt-6-astra` | `lerobot` | degrees |
+| π0.5 | `openpi` | `/checkpoints/openpi_pi05_lora_cap_to_cup_200` | `openpi` | **normalized** |
+
+The working π0.5 on this bench is an **openpi orbax checkpoint** (`params/` +
+`assets/`), not a lerobot one — so `inspect-robots-so101`'s own `LeRobotPolicy` cannot
+load it, and [openpi_policy.py](openpi_policy.py) wraps openpi's JAX policy as an
+Inspect Robots `Policy` instead. It reuses `scripts/openpi/evaluate.py` by path for the
+observation layout and config discovery, exactly as `webui/openpi_worker.py` does, so
+there is one definition of an openpi observation rather than three. openpi pins jax and
+its own lerobot, so it keeps its own image and its own `./robot` verb.
+
+`--policy lerobot --checkpoint <hub-id>` still exists for lerobot-format checkpoints;
+it is not the comparison target.
+
+### The units are the dangerous part
+
+The openpi checkpoints here are **normalized ±100**, not degrees: they were trained on
+datasets recorded before lerobot 0.6.1 made degrees the default, which is why
+`scripts/openpi/evaluate.py` defaults `--units normalized`. `run.py` takes the units
+from the policy, and `rig.so_arm_config(use_degrees=...)` follows.
+
+Nothing downstream would catch a mistake here. The embodiment commands policy output
+verbatim after clamping, and Inspect Robots compares state *keys*, not units — so
+degrees fed to a normalized-trained policy is a silent joint-space error, not an
+exception. For scale, the home pose's `wrist_roll` is −87.96° and −52.18 normalized:
+a 68% error on that joint alone.
 
 ## What is measured, and by whom
 
@@ -108,9 +139,14 @@ A green preflight proves the dims and names line up. It does **not** prove the j
 values mean the same thing on both sides — confirm with a single slow jog before
 trusting a checkpoint.
 
-## Untested here
+## Verified, and not
 
-The hardware paths have not been run: there was no arm attached when this was written.
-What is verified is the rig config (limits, home-pose clamping, camera wiring), the
-task construction, and the full eval loop end-to-end on the mock world. The first real
-session should be the two dry runs above, then one layout, before a full five.
+Verified: the rig config in both unit modes (limits, home-pose clamping, the
+degrees→normalized conversion checked against the ratio), task construction, the full
+eval loop end to end on the CubePick mock world, `inspect-robots-so101-preflight`
+reporting the 6-D contract compatible in the built image, and the openpi checkpoint
+loading through the adapter and returning a 50×6 action chunk (its range, −61…+56, is
+consistent with normalized rather than degrees).
+
+NOT verified: anything that moves the arm. No eval has driven hardware. The first
+session should be the two dry runs above, then a single layout, before a full five.
