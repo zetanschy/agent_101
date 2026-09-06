@@ -25,7 +25,7 @@ only reason their scores can be put side by side.
 | | policy | checkpoint | image | units |
 |---|---|---|---|---|
 | LLM agent | `agent` | `openai/gpt-6-astra` | `lerobot` | degrees |
-| π0.5 | `openpi` | `/checkpoints/openpi_pi05_lora_cap_to_cup_200` | `openpi` | **normalized** |
+| π0.5 | `openpi` | `/checkpoints/openpi_pi05_lora_cap_to_cup_200` | `openpi` | degrees |
 
 The working π0.5 on this bench is an **openpi orbax checkpoint** (`params/` +
 `assets/`), not a lerobot one — so `inspect-robots-so101`'s own `LeRobotPolicy` cannot
@@ -38,18 +38,27 @@ its own lerobot, so it keeps its own image and its own `./robot` verb.
 `--policy lerobot --checkpoint <hub-id>` still exists for lerobot-format checkpoints;
 it is not the comparison target.
 
-### The units are the dangerous part
+### Three settings must match webui/openpi_worker.py
 
-The openpi checkpoints here are **normalized ±100**, not degrees: they were trained on
-datasets recorded before lerobot 0.6.1 made degrees the default, which is why
-`scripts/openpi/evaluate.py` defaults `--units normalized`. `run.py` takes the units
-from the policy, and `rig.so_arm_config(use_degrees=...)` follows.
+That worker is the configuration known to drive this checkpoint well here, in both rtc
+and sync. All three of these were wrong in the first version and the arm moved
+strangely for all three reasons at once:
 
-Nothing downstream would catch a mistake here. The embodiment commands policy output
-verbatim after clamping, and Inspect Robots compares state *keys*, not units — so
-degrees fed to a normalized-trained policy is a silent joint-space error, not an
-exception. For scale, the home pose's `wrist_roll` is −87.96° and −52.18 normalized:
-a 68% error on that joint alone.
+| | value | why |
+|---|---|---|
+| units | **degrees** | `openpi_worker.py` defaults `--units degrees`; `evaluate.py` defaults `normalized`. The webui default wins because it has evidence behind it. |
+| replan interval | **15 of 50** | `--actions 15`: the last 35 actions of each chunk are normally discarded and re-planned. Inspect Robots' `DefaultController` plays the *whole* chunk when `replan_interval` is `None`. |
+| settling | **off** | Waiting for the arm to arrive changes chunk-replay cadence, which this policy was tuned against. `inspect-robots-so101` ships it off for this reason. |
+
+Units and replan interval live in [openpi_policy.py](openpi_policy.py), settling in
+[run.py](run.py); all three are keyed off the selected policy so they cannot drift.
+
+None of these fail loudly. The embodiment commands policy output verbatim after
+clamping, and Inspect Robots compares state *keys*, not units — so the wrong unit is a
+silent per-joint rescaling (a factor of `half_span/100`, 1.69 on `wrist_roll`), and a
+missing replan interval is 35 stale open-loop actions per chunk.
+
+`--actions N` overrides the replan interval.
 
 ## What is measured, and by whom
 

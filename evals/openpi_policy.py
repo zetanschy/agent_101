@@ -12,19 +12,34 @@ checkpoint's TrainConfig is discovered from its assets/ directory. webui/openpi_
 imports it by path for exactly that reason and this does the same, so there is one
 definition to be wrong in rather than three.
 
-THE UNITS ARE NORMALIZED, NOT DEGREES, and this is the single most dangerous thing in
-this file. These checkpoints were trained on datasets recorded before lerobot 0.6.1
-made degrees the default, so their joint values are lerobot's normalized +/-100.
-evaluate.py defaults `--units normalized` for the same reason. Nothing downstream will
-catch a mistake here: the embodiment commands policy output verbatim after clamping,
-and Inspect Robots' compatibility check compares state KEYS, not units -- so degrees
-fed to a normalized-trained policy is a silent 4x error in joint space, not an
-exception. `USE_DEGREES = False` here and `rig.so_arm_config(use_degrees=False)` in the
-runner are one decision recorded twice; changing either alone is the bug.
+THREE SETTINGS MUST MATCH webui/openpi_worker.py, which is the configuration known to
+drive this checkpoint well on this bench in both its modes. They were all wrong in the
+first version of this file, and the arm moved strangely for all three reasons at once.
 
-A chunk is returned whole. openpi predicts an action horizon per inference and the
-framework logs it; how much of it gets executed before re-planning is the rollout's
-business, which is the same division of labour evaluate.py's `--actions` implements.
+  UNITS: DEGREES. scripts/openpi/evaluate.py defaults `--units normalized`, with a
+  comment about datasets recorded before lerobot 0.6.1 made degrees the default -- but
+  webui/openpi_worker.py defaults `--units degrees`, and that is the path that works
+  here. The webui default wins because it is the one with evidence behind it. Nothing
+  downstream would catch this: the embodiment commands policy output verbatim after
+  clamping, and Inspect Robots compares state KEYS rather than units, so the wrong
+  choice is a silent per-joint rescaling (a factor of half_span/100 -- 1.69 on
+  wrist_roll), not an exception.
+
+  REPLAN INTERVAL: 15 of the 50 predicted actions. openpi_worker and evaluate.py both
+  default `--actions 15`, so the last 35 actions of every chunk are normally discarded
+  and re-planned from a fresh observation. Inspect Robots' DefaultController plays a
+  WHOLE chunk when replan_interval is None, so leaving it unset executes 35 stale
+  actions per chunk open-loop. `PolicyConfig.replan_interval` is what eval() reads to
+  build that controller.
+
+  SETTLING: OFF. The embodiment can wait for the arm to arrive before observing, which
+  is right for an LLM agent taking one deliberate action at a time and wrong here: it
+  changes the cadence of chunk replay, which is timing this policy was tuned against.
+  inspect-robots-so101 leaves it off by default for exactly this reason. The runner
+  passes settle_tolerance=None for this policy.
+
+The first two live here, the third in evals/run.py; all three are keyed off the policy
+so they cannot drift apart.
 """
 
 from __future__ import annotations
@@ -43,8 +58,10 @@ from inspect_robots_so101.config import action_box, observation_space
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# See the module docstring. This is a property of the CHECKPOINTS, not a preference.
-USE_DEGREES = False
+# See the module docstring. Properties of the CHECKPOINT and of the loop it was tuned
+# in, not preferences -- both taken from webui/openpi_worker.py's working defaults.
+USE_DEGREES = True
+REPLAN_INTERVAL = 15
 
 # The checkpoint the web UI's dropdown shows as the working one. /checkpoints is the
 # read-only mount of ~/Downloads/hf_models (docker-compose.yml).
@@ -77,7 +94,8 @@ class OpenPiPolicy:
     cameras: tuple[str, ...] = ("front", "grip"),
     cam_height: int = 480,
     cam_width: int = 640,
-    action_horizon: int = 15,
+    action_horizon: int = 50,
+    replan_interval: int = REPLAN_INTERVAL,
   ) -> None:
     """Load the checkpoint. Slow: this builds a JAX policy and JIT-compiles it."""
     self._eval = _evaluate_module()
@@ -104,7 +122,12 @@ class OpenPiPolicy:
         cam_height, cam_width, cameras, use_degrees=USE_DEGREES
       ),
     )
-    self.config = PolicyConfig(action_horizon=action_horizon)
+    # replan_interval is the load-bearing one: eval() builds
+    # DefaultController(policy.config.replan_interval), and None there means "play the
+    # whole 50-action chunk open-loop".
+    self.config = PolicyConfig(
+      action_horizon=action_horizon, replan_interval=replan_interval
+    )
 
   def reset(self, scene: Scene) -> None:
     """Take the scene's instruction as openpi's prompt for this trial."""

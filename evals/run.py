@@ -66,8 +66,9 @@ def build_policy(args):
   if args.policy == "openpi":
     from evals.openpi_policy import OpenPiPolicy
 
-    return OpenPiPolicy(args.checkpoint or None or OPENPI_CHECKPOINT,
-                        cameras=tuple(args.cameras))
+    return OpenPiPolicy(args.checkpoint or OPENPI_CHECKPOINT,
+                        cameras=tuple(args.cameras),
+                        replan_interval=args.actions)
 
   if args.policy == "agent":
     from inspect_robots_agent.policy import LLMAgentPolicy
@@ -130,8 +131,16 @@ def build_embodiment(args):
 
   # The units follow the POLICY, because they are a property of what it was trained
   # on and not a preference. Getting this wrong is silent: see evals/openpi_policy.py.
+  # Settling waits for the arm to arrive before observing. Right for an LLM agent
+  # taking one action at a time; wrong for a chunked VLA, whose cadence it changes --
+  # which is why inspect-robots-so101 ships it off. Keyed off the policy, like units.
+  settle = None if args.policy == "openpi" else 2.0
   return SOArmEmbodiment(
-    rig.so_arm_config(cameras=tuple(args.cameras), use_degrees=use_degrees(args))
+    rig.so_arm_config(
+      cameras=tuple(args.cameras),
+      use_degrees=use_degrees(args),
+      settle_tolerance=settle,
+    )
   )
 
 
@@ -148,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument("--policy-type", default="pi05", help="lerobot only: policy class")
   p.add_argument("--device", default="cuda")
   p.add_argument("--cameras", nargs="+", default=["front", "grip"])
+  p.add_argument("--actions", type=int, default=15,
+                 help="openpi only: actions executed per chunk before re-planning "
+                      "(webui/openpi_worker.py's default, and what it was tuned with)")
   p.add_argument("--layouts", type=int, default=5)
   p.add_argument("--epochs", type=int, default=1)
   p.add_argument("--seconds", type=float, default=tasks.DEFAULT_SECONDS)
@@ -168,6 +180,8 @@ def main(argv: list[str] | None = None) -> int:
   )
   print(f"policy   : {args.policy} ({shown})")
   print(f"units    : {'degrees' if use_degrees(args) else 'normalized (+/-100)'}")
+  if args.policy == "openpi":
+    print(f"replan   : every {args.actions} actions   settling: off")
   print(f"embodiment: {embodiment.info.name}"
         f"{'  [DRY RUN - mock world, arm not opened]' if args.dry_run else ''}")
   if not args.dry_run:
