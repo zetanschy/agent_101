@@ -169,6 +169,10 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument("--epochs", type=int, default=1)
   p.add_argument("--seconds", type=float, default=tasks.DEFAULT_SECONDS)
   p.add_argument("--log-dir", default="outputs/evals")
+  p.add_argument("--no-frames", action="store_true",
+                 help="do not store camera frames (no video in the HTML report)")
+  p.add_argument("--rerun", metavar="PATH", default=None,
+                 help="also stream to a Rerun .rrd recording at PATH")
   p.add_argument("--dry-run", action="store_true",
                  help="run against the CubePick mock world; the arm is never opened")
   args = p.parse_args(argv)
@@ -198,6 +202,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"clamp    : {[round(v, 1) for v in cfg.joint_low]}")
     print(f"           {[round(v, 1) for v in cfg.joint_high]}")
 
+  # Frames are what make the HTML report visual: `inspect-robots view` turns them
+  # into a per-trial composite MP4 (one playhead across both cameras) when ffmpeg is
+  # present, which it is in both images. Without them the report is text and scores.
+  sinks = None
+  if args.rerun:
+    # Passing sinks REPLACES the default JsonLogSink rather than adding to it, so the
+    # JSON log has to be listed explicitly or the canonical record is lost.
+    from inspect_robots.logging import JsonLogSink, RerunSink
+
+    sinks = [JsonLogSink(args.log_dir), RerunSink(args.rerun)]
+
   try:
     (log,) = robot_eval(
       task,
@@ -206,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
       approver=ClampApprover(embodiment.info.action_space),
       before_scoring=_grade,
       log_dir=args.log_dir,
+      store_frames=not args.no_frames,
+      sinks=sinks,
     )
   finally:
     embodiment.close()
@@ -215,6 +232,10 @@ def main(argv: list[str] | None = None) -> int:
   for name, value in sorted(log.results.metrics.items()):
     print(f"  {name}: {value:.4g}")
   print(f"log: {args.log_dir}")
+  if not args.no_frames:
+    print("video + transcript report:  ./robot eval-view")
+  if args.rerun:
+    print(f"rerun recording: {args.rerun}")
   return 0
 
 

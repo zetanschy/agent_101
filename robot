@@ -78,6 +78,14 @@ case "$cmd" in
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   eval) needs_docker eval;      $RUN python -m evals.run "$@" ;;               # Inspect Robots benchmark: LLM agent or VLA
   eval-preflight) needs_docker eval-preflight; $RUN inspect-robots-so101-preflight "$@" ;;  # prove compat, no motion
+  eval-view)            # browse the eval logs: scores, policy transcript, and one
+             # composite MP4 per trial (needs the run to have stored frames, which
+             # evals/run.py does by default). --host 0.0.0.0 because it is serving
+             # from inside the container.
+             needs_docker eval-view
+             port="${EVAL_VIEW_PORT:-8300}"; echo "eval reports -> http://localhost:${port}"
+             $DC run --rm -p "${port}:8300" lerobot \
+               inspect-robots view outputs/evals --serve --host 0.0.0.0 --port 8300 "$@" ;;
   eval-openpi)          # the openpi (JAX) pi0.5 checkpoint on the same benchmark.
              # Its own image because openpi pins jax and its own lerobot; the task,
              # the rig config and evals/run.py are shared with ./robot eval.
@@ -342,6 +350,7 @@ so rather than failing with "docker: command not found".
   ./robot eval-openpi                           the working openpi pi0.5, same benchmark
   ./robot eval --policy lerobot --checkpoint <hub-id>       a lerobot VLA on the same task
   ./robot eval-preflight --dry-run              prove the 6-D contract lines up, no motion
+  ./robot eval-view                             browse eval logs: scores, transcript, per-trial video
                                        loads lerobot, openpi and mjlab RL (.onnx) policies
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
