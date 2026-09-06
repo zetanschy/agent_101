@@ -204,14 +204,33 @@ def so_arm_config(
   with_cameras: bool = True,
   settle_tolerance: float | None = 2.0,
   use_degrees: bool = True,
+  slew_limit: float | None = 10.0,
+  home: bool = True,
 ):
   """The `SOArmConfig` for this bench.
 
-  `max_relative_target` is lerobot's per-step slew limit in native motor units and is
-  REQUIRED once home_pose is set, because homing sends one absolute command: without
-  it the arm slams to the home pose at full speed from wherever it stopped. 10 counts
-  per step is 0.88 degrees, matching the leash scripts/robot/policy_bridge.py puts on
-  a sim-trained policy for the same reason.
+  `slew_limit` becomes lerobot's `max_relative_target`, and it is NOT free. lerobot
+  clamps against the MEASURED position:
+
+      safe_goal = present + clip(goal - present, +/- max_relative_target)
+
+  so a servo lagging under load drags the command along with it, and the arm creeps
+  instead of tracking -- the failure scripts/robot/policy_bridge.py's docstring
+  describes, and the reason that script limits against its last COMMAND instead. A
+  grasp is exactly where load peaks, which is where creep costs the task.
+
+  Neither working openpi path on this bench sets it: scripts/openpi/evaluate.py and
+  webui/openpi_worker.py both build SO101FollowerConfig with port, id, cameras and
+  use_degrees only, leaving max_relative_target None. So `slew_limit=None` is what
+  matches the configuration known to pick things up here, and the runner passes that
+  for the openpi policy. It is kept for the LLM agent, where settling is on, so
+  `present` catches up between actions and there is nothing for the clamp to drag.
+
+  `home` homes the arm on every reset, giving each trial the same start. It requires
+  a slew limit -- SOArmConfig refuses home_pose without one, because homing sends a
+  single absolute command that would otherwise slam -- so the two travel together and
+  a run with no slew limit does not home. Home by hand between trials in that case;
+  `./robot home` runs the closed-loop version this repo already uses.
 
   `settle_tolerance` makes step() wait for the arm to arrive before observing. It is
   off by default upstream to preserve closed-loop VLA cadence, and on by default here
@@ -245,8 +264,8 @@ def so_arm_config(
     control_hz=float(_env("CAM_FPS", "30")),
     joint_low=low,
     joint_high=high,
-    home_pose=home_pose(use_degrees),
-    max_relative_target=10.0,
+    home_pose=home_pose(use_degrees) if (home and slew_limit is not None) else None,
+    max_relative_target=slew_limit,
     use_degrees=use_degrees,
     disable_torque_on_disconnect=True,
     settle_tolerance=settle_tolerance,

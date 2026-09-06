@@ -38,7 +38,7 @@ its own lerobot, so it keeps its own image and its own `./robot` verb.
 `--policy lerobot --checkpoint <hub-id>` still exists for lerobot-format checkpoints;
 it is not the comparison target.
 
-### Three settings must match webui/openpi_worker.py
+### Four settings must match webui/openpi_worker.py
 
 That worker is the configuration known to drive this checkpoint well here, in both rtc
 and sync. All three of these were wrong in the first version and the arm moved
@@ -49,6 +49,12 @@ strangely for all three reasons at once:
 | units | **degrees** | `openpi_worker.py` defaults `--units degrees`; `evaluate.py` defaults `normalized`. The webui default wins because it has evidence behind it. |
 | replan interval | **15 of 50** | `--actions 15`: the last 35 actions of each chunk are normally discarded and re-planned. Inspect Robots' `DefaultController` plays the *whole* chunk when `replan_interval` is `None`. |
 | settling | **off** | Waiting for the arm to arrive changes chunk-replay cadence, which this policy was tuned against. `inspect-robots-so101` ships it off for this reason. |
+| slew limit | **none** | Neither `evaluate.py` nor `openpi_worker.py` sets `max_relative_target`. lerobot clamps against the *measured* position, so under grasping load a lagging servo drags the command with it and the arm creeps — it moves, but cannot close on the object. |
+
+Because `SOArmConfig` refuses `home_pose` without a slew limit, no slew limit also
+means **no auto-homing** on the openpi path. Run `./robot home` between trials so each
+starts from the same pose — that is the closed-loop homing this repo already uses, and
+it is what the webui workflow does anyway.
 
 Units and replan interval live in [openpi_policy.py](openpi_policy.py), settling in
 [run.py](run.py); all three are keyed off the selected policy so they cannot drift.

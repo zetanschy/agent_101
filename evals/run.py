@@ -134,12 +134,17 @@ def build_embodiment(args):
   # Settling waits for the arm to arrive before observing. Right for an LLM agent
   # taking one action at a time; wrong for a chunked VLA, whose cadence it changes --
   # which is why inspect-robots-so101 ships it off. Keyed off the policy, like units.
-  settle = None if args.policy == "openpi" else 2.0
+  # For openpi, match webui/openpi_worker.py exactly: no settling, and NO SLEW LIMIT.
+  # lerobot's max_relative_target clamps against the measured position, so under
+  # grasping load it turns a lagging servo into a creeping command -- see rig.py. No
+  # slew limit also means no homing (SOArmConfig couples them), so home by hand.
+  is_vla = args.policy == "openpi"
   return SOArmEmbodiment(
     rig.so_arm_config(
       cameras=tuple(args.cameras),
       use_degrees=use_degrees(args),
-      settle_tolerance=settle,
+      settle_tolerance=None if is_vla else 2.0,
+      slew_limit=None if is_vla else 10.0,
     )
   )
 
@@ -181,7 +186,9 @@ def main(argv: list[str] | None = None) -> int:
   print(f"policy   : {args.policy} ({shown})")
   print(f"units    : {'degrees' if use_degrees(args) else 'normalized (+/-100)'}")
   if args.policy == "openpi":
-    print(f"replan   : every {args.actions} actions   settling: off")
+    print(f"replan   : every {args.actions} actions   settling: off   slew limit: none")
+    print("NOTE: no slew limit means no auto-homing. Run `./robot home` between "
+          "trials so each starts from the same pose.")
   print(f"embodiment: {embodiment.info.name}"
         f"{'  [DRY RUN - mock world, arm not opened]' if args.dry_run else ''}")
   if not args.dry_run:
