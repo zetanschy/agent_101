@@ -104,14 +104,20 @@ case "$cmd" in
              # from inside the container.
              needs_docker eval-view
              port="${EVAL_VIEW_PORT:-8300}"; echo "eval reports -> http://localhost:${port}"
-             # --frames-budget 0 because the default is 50 MB per page and the
-             # renderer SKIPS the per-trial composite MP4 whenever that budget
-             # truncates -- silently, with only an "embedded media truncated" line in
-             # the header to show for it. Video is the point of this view; pass
-             # --frames-budget N to cap it again if a page gets unwieldy.
-             $DC run --rm -p "${port}:8300" lerobot \
-               inspect-robots view outputs/evals --serve --host 0.0.0.0 --port 8300 \
-               --frames-budget 0 "$@" ;;
+             # RENDER FIRST, THEN SERVE A STATIC DIRECTORY -- do not use `view --serve`.
+             # The renderer sets video_eligible = ... and not serve_pass, so a served
+             # pass NEVER encodes the per-trial composite MP4; it always falls back to
+             # the lightweight flipbook. A plain pass does encode it, and the result is
+             # ordinary static HTML that any server can hand out.
+             #
+             # --frames-budget 0 for the same reason from the other direction: the
+             # default is 50 MB per page and video is skipped whenever that budget
+             # truncates, silently, leaving only an "embedded media truncated" line in
+             # the header. Pass --frames-budget N to cap it again if a page gets
+             # unwieldy -- with video embedded these pages run to ~40 MB per trial.
+             $DC run --rm -p "${port}:8300" lerobot sh -c \
+               "inspect-robots view outputs/evals --frames-budget 0 $* \
+                && python -m http.server 8300 --bind 0.0.0.0 --directory outputs/evals/html" ;;
   eval-openpi)          # the openpi (JAX) pi0.5 checkpoint on the same benchmark.
              # Its own image because openpi pins jax and its own lerobot; the task,
              # the rig config and evals/run.py are shared with ./robot eval.
