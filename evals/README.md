@@ -159,6 +159,20 @@ The two misses are the later arms of a `try/except` chain whose first arm resolv
 the paths the cap was written for are not the paths taken. If a future lerobot moves
 that seam, the policy breaks loudly at import rather than silently mid-eval.
 
+### Nothing else bounds a trial in time
+
+Every other limit is a **count**: `max_steps`/`max_seconds` are step counts,
+`max_llm_calls` is decisions. That is fine at ~8 s per decision and not fine when the
+provider is degraded but not erroring — the agent's client waits 120 s per request and
+retries three times, so one decision can burn six minutes without failing.
+
+`--max-minutes` (default 10, `0` disables) wraps the policy in
+[deadline.py](deadline.py) and ends the trial the way the framework already lets a
+policy end one: an action carrying `request_stop`. It logs as
+`termination_reason: "wall_clock_timeout"` with run status `success` — a truncation,
+distinguishable at read time from an error and from your Ctrl-C. The stop action is
+the **current pose**, so the guard can never itself become a motion.
+
 ## Before a hardware session
 
 1. `./robot eval --policy agent --dry-run` — the whole chain (registry, compat check,

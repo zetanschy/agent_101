@@ -194,6 +194,11 @@ def main(argv: list[str] | None = None) -> int:
   # this rig is roughly 13 minutes and $6 a trial.
   p.add_argument("--decisions", type=int, default=40,
                  help="agent only: LLM call budget per trial (default 40, ~5 min, ~$2.5)")
+  # Nothing in Inspect Robots bounds a trial in TIME -- every other limit is a count.
+  # A degraded provider can stall a decision for 6 minutes (120 s timeout, 3 retries)
+  # without erroring, so an unattended run needs a clock. See evals/deadline.py.
+  p.add_argument("--max-minutes", type=float, default=10.0,
+                 help="wall-clock budget per trial; 0 disables (default 10)")
   p.add_argument("--log-dir", default="outputs/evals")
   p.add_argument("--no-frames", action="store_true",
                  help="do not store camera frames (no video in the HTML report)")
@@ -220,6 +225,10 @@ def main(argv: list[str] | None = None) -> int:
       layouts=args.layouts, seconds=args.seconds, epochs=args.epochs
     )
   policy = build_policy(args)
+  if args.max_minutes:
+    from evals.deadline import Deadline
+
+    policy = Deadline(policy, args.max_minutes)
   embodiment = build_embodiment(args)
 
   print(f"task     : {task.name}  ({len(task.scenes)} scenes x {args.epochs} epochs)")
@@ -235,6 +244,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"budget   : {args.decisions} decisions/trial "
           f"(~{args.decisions * 8 // 60} min, ~${args.decisions * 0.064:.2f}) "
           f"x {len(task.scenes) * args.epochs} trial(s)")
+  if args.max_minutes:
+    total = len(task.scenes) * args.epochs
+    print(f"deadline : {args.max_minutes:g} min/trial "
+          f"(worst case {args.max_minutes * total:g} min for {total} trial(s))")
   print(f"units    : {'degrees' if use_degrees(args) else 'normalized (+/-100)'}")
   if args.policy == "openpi":
     print(f"replan   : every {args.actions} actions   settling: off   slew limit: none")
