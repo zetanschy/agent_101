@@ -27,17 +27,31 @@ from inspect_robots import Scene, Task, operator_scorer
 # The pi0.5 checkpoint's own instruction. See the module docstring before editing.
 INSTRUCTION = "Put the cap into the red cup"
 
-# 20 s at 30 Hz is 600 steps. The horizon is in SECONDS rather than steps because the
-# two policies step at wildly different rates -- a chunked VLA runs at camera cadence
-# while an LLM agent waits on a frontier model for every action -- and a step budget
-# would silently hand one of them many times more wall-clock than the other.
+# SECONDS ARE NOT WALL-CLOCK SECONDS. eval() converts max_seconds to a step count
+# using the embodiment's DECLARED control_hz (30), so 120 s means 3600 steps -- true
+# for the chunked VLA, which really does run near camera cadence, and badly wrong for
+# the LLM agent, which measured 5.5 steps/s and would have taken 11 minutes to spend a
+# "120 second" budget. That mismatch cut the first Astra trial off at step 1685 of
+# 3600 and made it look like a failure rather than an interruption.
+#
+# So the horizon is chosen per policy in evals/run.py: seconds for the VLA, and for the
+# agent a step budget derived from its DECISION budget, which is the quantity that
+# actually governs both its runtime and its bill.
 DEFAULT_SECONDS = 120.0
+
+# Control steps to allow per LLM decision. Measured on the first Astra trial: 1685
+# steps over 38 calls is 44 on average, with single moves interpolated over as many as
+# 190. 60 leaves headroom without letting the step horizon become the binding limit --
+# the decision budget should be what ends a trial, because that is the one the agent is
+# told about and can plan against.
+STEPS_PER_DECISION = 60
 
 
 def pick_and_place(
   layouts: int = 5,
   *,
-  seconds: float = DEFAULT_SECONDS,
+  seconds: float | None = None,
+  steps: int | None = None,
   epochs: int = 1,
 ) -> Task:
   """Put the cap into the red cup, from several starting layouts.
@@ -50,7 +64,12 @@ def pick_and_place(
   `layouts` scenes x `epochs` trials each. Keep the product small at first: every
   trial is a physical reset and a human verdict, so 5 x 1 is a 20-minute session and
   5 x 3 is an hour.
+
+  Exactly one of `seconds` or `steps` sets the horizon, and which one you want depends
+  on the policy -- see the DEFAULT_SECONDS note.
   """
+  if (seconds is None) == (steps is None):
+    seconds = DEFAULT_SECONDS if steps is None else None
   places = (
     ("near", "cap ~15 cm in front of the base, cup to its right"),
     ("left", "cap left of centre, cup centre-right"),
@@ -71,6 +90,6 @@ def pick_and_place(
       for name, description in places[:layouts]
     ],
     scorer=operator_scorer(),
-    max_seconds=seconds,
     epochs=epochs,
+    **({"max_seconds": seconds} if seconds is not None else {"max_steps": steps}),
   )

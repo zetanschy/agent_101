@@ -79,9 +79,31 @@ answers `y/n/partial/skip` after each trial. Do not switch this to `success_at_e
 it counts only embodiment-detected `"success"` terminations and would score every
 operator-ended trial a failure.
 
-The horizon is in **seconds, not steps** (120 s default). A chunked VLA steps at camera
-cadence while an LLM agent waits on a frontier model for every action; a step budget
-would silently give one of them many times more wall-clock than the other.
+### The horizon means different things to the two policies
+
+`max_seconds` is converted to a step count using the embodiment's **declared**
+`control_hz` (30). The chunked VLA really does run near that. The LLM agent measured
+**5.5 steps/s**, so a "120 second" budget was 3600 steps ≈ 11 minutes of wall clock —
+and the first Astra trial was cut off at step 1685 of 3600, which read as a failure
+rather than an interruption.
+
+So the horizon follows the policy:
+
+| policy | horizon | why |
+|---|---|---|
+| `openpi` | `--seconds` (120) | steps at 30 Hz are real for a chunked VLA |
+| `agent` | `--decisions` (40) | the LLM call budget governs runtime *and* the bill |
+
+`--decisions` sets the plugin's `max_llm_calls`, which is enforced **and** written into
+the agent's system prompt, so the model plans against it. The step horizon is derived
+from it (60 steps per decision, measured: 1685 steps over 38 calls averaged 44, with
+single interpolated moves as long as 190) and sized so the decision budget is what
+ends a trial.
+
+Measured per decision on this rig: **~8 s** (6.0 s mean LLM latency plus the arm
+executing the move) and **$0.064**, rising through a trial as the conversation
+accumulates images — input tokens grew 1,477 → 9,641 across 38 calls. The plugin's own
+default of 100 calls would be ~13 minutes and ~$6 per trial.
 
 ## The safety clamp is computed, not typed
 

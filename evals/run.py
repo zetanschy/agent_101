@@ -75,7 +75,11 @@ def build_policy(args):
 
     # Model strings are OpenRouter-style provider/model. openai/* resolves against
     # OPENAI_API_KEY directly; anything unknown falls through to OPENROUTER_API_KEY.
-    kwargs = {"model": args.model, "effort": args.effort}
+    kwargs = {
+      "model": args.model,
+      "effort": args.effort,
+      "max_llm_calls": args.decisions,
+    }
     wire = args.wire or ("responses" if args.model.startswith("openai/") else None)
     if wire:
       kwargs["wire"] = wire
@@ -181,7 +185,15 @@ def main(argv: list[str] | None = None) -> int:
                       "(webui/openpi_worker.py's default, and what it was tuned with)")
   p.add_argument("--layouts", type=int, default=5)
   p.add_argument("--epochs", type=int, default=1)
-  p.add_argument("--seconds", type=float, default=tasks.DEFAULT_SECONDS)
+  p.add_argument("--seconds", type=float, default=tasks.DEFAULT_SECONDS,
+                 help="VLA horizon, converted to steps at the declared control_hz")
+  # The agent's real budget. max_llm_calls is enforced AND written into its system
+  # prompt, so the model plans against it; it governs runtime and the bill alike, at a
+  # measured ~8 s and ~$0.06 per decision (the per-call cost rises through a trial as
+  # the conversation accumulates images). The plugin's own default is 100, which on
+  # this rig is roughly 13 minutes and $6 a trial.
+  p.add_argument("--decisions", type=int, default=40,
+                 help="agent only: LLM call budget per trial (default 40, ~5 min, ~$2.5)")
   p.add_argument("--log-dir", default="outputs/evals")
   p.add_argument("--no-frames", action="store_true",
                  help="do not store camera frames (no video in the HTML report)")
@@ -191,9 +203,22 @@ def main(argv: list[str] | None = None) -> int:
                  help="run against the CubePick mock world; the arm is never opened")
   args = p.parse_args(argv)
 
-  task = tasks.pick_and_place(
-    layouts=args.layouts, seconds=args.seconds, epochs=args.epochs
-  )
+  # The horizon follows the policy, because "seconds" means different things to the
+  # two. eval() turns max_seconds into steps at the embodiment's declared 30 Hz, which
+  # the chunked VLA really does run at; the agent measured 5.5 steps/s, so a seconds
+  # budget silently became 2.7x the wall clock and truncated the first trial. For the
+  # agent the horizon is derived from its decision budget instead, sized so the
+  # DECISION limit is what ends the trial -- that is the one it is told about.
+  if args.policy == "agent":
+    task = tasks.pick_and_place(
+      layouts=args.layouts,
+      steps=args.decisions * tasks.STEPS_PER_DECISION,
+      epochs=args.epochs,
+    )
+  else:
+    task = tasks.pick_and_place(
+      layouts=args.layouts, seconds=args.seconds, epochs=args.epochs
+    )
   policy = build_policy(args)
   embodiment = build_embodiment(args)
 
@@ -205,6 +230,11 @@ def main(argv: list[str] | None = None) -> int:
   if args.policy == "agent":
     wire = args.wire or ("responses" if args.model.startswith("openai/") else "default")
     print(f"wire     : {wire}   effort: {args.effort}")
+    # Measured on the first Astra trial: 6.0 s mean LLM latency plus the arm executing
+    # each move, ~8 s per decision, $0.064 per decision and rising within a trial.
+    print(f"budget   : {args.decisions} decisions/trial "
+          f"(~{args.decisions * 8 // 60} min, ~${args.decisions * 0.064:.2f}) "
+          f"x {len(task.scenes) * args.epochs} trial(s)")
   print(f"units    : {'degrees' if use_degrees(args) else 'normalized (+/-100)'}")
   if args.policy == "openpi":
     print(f"replan   : every {args.actions} actions   settling: off   slew limit: none")
