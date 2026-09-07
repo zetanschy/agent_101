@@ -75,7 +75,11 @@ def build_policy(args):
 
     # Model strings are OpenRouter-style provider/model. openai/* resolves against
     # OPENAI_API_KEY directly; anything unknown falls through to OPENROUTER_API_KEY.
-    return LLMAgentPolicy(model=args.model, effort=args.effort)
+    kwargs = {"model": args.model, "effort": args.effort}
+    wire = args.wire or ("responses" if args.model.startswith("openai/") else None)
+    if wire:
+      kwargs["wire"] = wire
+    return LLMAgentPolicy(**kwargs)
 
     # NOTE: the agent's whole tool surface is built from the embodiment's declared
     # spaces at bind time, and EmbodimentInfo.docs goes into its system prompt
@@ -157,6 +161,16 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument("--model", default=os.environ.get("INSPECT_ROBOTS_MODEL", "openai/gpt-6-astra"),
                  help="agent only: provider/model (default openai/gpt-6-astra)")
   p.add_argument("--effort", default="medium", help="agent only: reasoning effort")
+  # Recent OpenAI reasoning models REJECT function tools on the Chat Completions wire
+  # ("Function tools with reasoning_effort are not supported ... use /v1/responses or
+  # set reasoning_effort to 'none'"). This policy is nothing but function tools, so
+  # openai/* defaults to the Responses wire rather than to the plugin's `chat`, which
+  # keeps reasoning on. It needs a direct OpenAI endpoint, i.e. OPENAI_API_KEY -- a
+  # model routed through OpenRouter should be given --wire chat and --effort none.
+  p.add_argument("--wire", default=None,
+                 help="agent only: chat | responses | messages | interactions | "
+                      "gemini-live (default: responses for openai/*, else the "
+                      "plugin's own default)")
   p.add_argument("--checkpoint", default=None,
                  help="lerobot: Hub id or path; openpi: orbax checkpoint dir")
   p.add_argument("--policy-type", default="pi05", help="lerobot only: policy class")
@@ -188,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
     args.checkpoint or (OPENPI_CHECKPOINT if args.policy == "openpi" else LEROBOT_CHECKPOINT)
   )
   print(f"policy   : {args.policy} ({shown})")
+  if args.policy == "agent":
+    wire = args.wire or ("responses" if args.model.startswith("openai/") else "default")
+    print(f"wire     : {wire}   effort: {args.effort}")
   print(f"units    : {'degrees' if use_degrees(args) else 'normalized (+/-100)'}")
   if args.policy == "openpi":
     print(f"replan   : every {args.actions} actions   settling: off   slew limit: none")
