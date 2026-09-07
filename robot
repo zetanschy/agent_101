@@ -104,8 +104,14 @@ case "$cmd" in
              # from inside the container.
              needs_docker eval-view
              port="${EVAL_VIEW_PORT:-8300}"; echo "eval reports -> http://localhost:${port}"
+             # --frames-budget 0 because the default is 50 MB per page and the
+             # renderer SKIPS the per-trial composite MP4 whenever that budget
+             # truncates -- silently, with only an "embedded media truncated" line in
+             # the header to show for it. Video is the point of this view; pass
+             # --frames-budget N to cap it again if a page gets unwieldy.
              $DC run --rm -p "${port}:8300" lerobot \
-               inspect-robots view outputs/evals --serve --host 0.0.0.0 --port 8300 "$@" ;;
+               inspect-robots view outputs/evals --serve --host 0.0.0.0 --port 8300 \
+               --frames-budget 0 "$@" ;;
   eval-openpi)          # the openpi (JAX) pi0.5 checkpoint on the same benchmark.
              # Its own image because openpi pins jax and its own lerobot; the task,
              # the rig config and evals/run.py are shared with ./robot eval.

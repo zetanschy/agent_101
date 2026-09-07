@@ -21,9 +21,11 @@ a single clean run would be the wrong artefact to build a policy comparison on. 
     the reason. The stamp lives on the trial rather than the eval spec because the log
     schema is strict -- EvalLog.from_dict builds EvalSpec(**data["eval"]) and
     SceneResult(**sample), so an invented key in either makes the log unreadable.
-  * A grafted trial keeps its true `status`. A trial that was cancelled still reads
-    `cancelled`; the operator verdict says the OUTCOME was a failure. Those are two
-    different facts and flattening them would be the dishonest part.
+  * A grafted trial keeps its true `status` unless `--status` says otherwise. Process
+    and outcome are two different facts: a trial can be `cancelled` (the operator hit
+    Ctrl-C) and a failure (the arm never grasped). Relabelling is allowed because the
+    listing reads better, but the ORIGINAL status is always kept in the provenance
+    stamp, so the substitution is visible rather than lost.
   * Scene ids must stay unique (`--as`), because the framework keys a trial's frames,
     actions and transcript off `<scene_id>-e<epoch>`. Two trials sharing an id would
     silently collide.
@@ -93,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument("--note", default=None, help="grader note for it")
   p.add_argument("--reason", default="trial interrupted before the verdict prompt",
                  help="why it is being grafted; stored in the log")
+  p.add_argument("--status", default=None,
+                 help="override the grafted trial's status (e.g. success); the original "
+                      "is preserved in the provenance stamp")
   p.add_argument("-o", "--out", default=None)
   a = p.parse_args(argv)
 
@@ -116,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
 
   original_status = sample.get("status")
   original_scene = sample.get("scene_id")
+  if a.status:
+    sample["status"] = a.status
   sample["scene_id"] = a.new_id
   sample["operator_judgements"] = [a.judgement]
   sample["operator_notes"] = [a.note if a.note is not None else ""]
@@ -138,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     "source_log": os.path.basename(a.graft_log),
     "source_scene_id": original_scene,
     "source_status": original_status,
+    "status_shown": sample.get("status"),
     "verdict_applied": a.judgement,
     "note_applied": a.note,
     "reason": a.reason,
