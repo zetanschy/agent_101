@@ -50,17 +50,21 @@ class Deadline:
     self._budget_s = minutes * 60.0
     self._started = time.monotonic()
     self._fired = False
-    # Mirrored, not forwarded: eval() reads these before the first act(), and the
-    # compatibility check compares them against the embodiment.
-    self.info = inner.info
-    self.config = inner.config
 
   def __getattr__(self, name: str) -> Any:
-    """Forward the optional hooks (bind, transcript, on_trial_*) to the inner policy.
+    """Forward everything this class does not define to the wrapped policy.
 
-    Only called for attributes this class does not define, so it cannot shadow info,
-    config, reset or act. hasattr() probes therefore see the inner policy's surface,
-    which is what the framework's optional-hook detection needs.
+    That includes `info` and `config`, and they must NOT be copied in __init__.
+    An embodiment-adaptive policy rebuilds its spaces in bind(), which eval() calls
+    AFTER construction and BEFORE the compatibility check: the LLM agent declares a
+    1-D placeholder until bind() gives it the embodiment's 6-D joint space. A snapshot
+    taken here therefore fails the compat check with "policy emits 1-D actions but
+    embodiment expects 6-D" -- which is exactly what an earlier version of this file
+    did. Forwarding keeps them live.
+
+    __getattr__ fires only for attributes this class does not define, so it cannot
+    shadow reset or act, and hasattr() probes see the inner policy's surface, which is
+    how the framework detects the optional hooks (bind, transcript, on_trial_*).
     """
     return getattr(self._inner, name)
 
