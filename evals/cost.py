@@ -46,6 +46,36 @@ def _pick(usage: dict, keys: tuple[str, ...]) -> int:
   return 0
 
 
+def _wire_usage(log_dir: pathlib.Path, wire_rel: str) -> dict[str, int]:
+  """Sum token counts out of a trial's raw wire capture.
+
+  The Responses wire records only `llm_calls` into `llm_usage` -- the token counters
+  live in each captured response instead -- so a run on that wire prices at zero
+  without this. The capture is the provider's own accounting, so it is the better
+  source anyway; `llm_usage` is preferred only because it is cheaper to read.
+  """
+  path = log_dir / wire_rel
+  if not path.is_file():
+    return {}
+  totals = {"input_tokens": 0, "output_tokens": 0, "cached_tokens": 0}
+  for line in path.read_text().splitlines():
+    if not line.strip():
+      continue
+    try:
+      record = json.loads(line)
+    except json.JSONDecodeError:
+      continue
+    usage = (record.get("response") or {}).get("usage") or {}
+    if not isinstance(usage, dict):
+      continue
+    totals["input_tokens"] += int(usage.get("input_tokens", 0) or 0)
+    totals["output_tokens"] += int(usage.get("output_tokens", 0) or 0)
+    details = usage.get("input_tokens_details") or {}
+    if isinstance(details, dict):
+      totals["cached_tokens"] += int(details.get("cached_tokens", 0) or 0)
+  return totals
+
+
 def newest_log(log_dir: str) -> str:
   logs = glob.glob(os.path.join(log_dir, "*.json"))
   if not logs:
@@ -85,6 +115,11 @@ def main(argv: list[str] | None = None) -> int:
       tin = _pick(usage, _IN_KEYS)
       tout = _pick(usage, _OUT_KEYS)
       tcached = _pick(usage, _CACHED_KEYS)
+      if calls and not (tin or tout) and (meta or {}).get("wire_capture"):
+        wire = _wire_usage(pathlib.Path(path).parent, meta["wire_capture"])
+        tin = wire.get("input_tokens", 0)
+        tout = wire.get("output_tokens", 0)
+        tcached = wire.get("cached_tokens", 0)
       # Providers report cached reads inside the input total; charging both would
       # double-count the cheap half of the bill.
       billed_in = max(tin - tcached, 0)
