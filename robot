@@ -78,6 +78,10 @@ case "$cmd" in
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   eval) needs_docker eval;      $RUN python -m evals.run "$@" ;;               # Inspect Robots benchmark: LLM agent or VLA
   eval-preflight) needs_docker eval-preflight; $RUN inspect-robots-so101-preflight "$@" ;;  # prove compat, no motion
+  eval-cost)            # LLM tokens and dollars per trial, read from an eval log.
+             # Only the agent policy has a token bill; openpi/lerobot run locally.
+             needs_docker eval-cost
+             $RUN python -m evals.cost "$@" ;;
   eval-video)           # encode per-trial, per-camera MP4s from a run's stored frames.
              # Separate from eval-view: `view` renders the report (which reads frames
              # via the policy transcript), `video` reads the frames directory directly.
@@ -363,6 +367,7 @@ so rather than failing with "docker: command not found".
   ./robot eval-preflight --dry-run              prove the 6-D contract lines up, no motion
   ./robot eval-view                             browse eval logs: scores, transcript, camera frames
   ./robot eval-video [LOG]                      encode per-trial MP4s (newest log by default)
+  ./robot eval-cost [LOG]                       LLM tokens + $ per trial (newest log by default)
                                        loads lerobot, openpi and mjlab RL (.onnx) policies
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
