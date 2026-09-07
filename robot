@@ -78,6 +78,11 @@ case "$cmd" in
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   eval) needs_docker eval;      $RUN python -m evals.run "$@" ;;               # Inspect Robots benchmark: LLM agent or VLA
   eval-preflight) needs_docker eval-preflight; $RUN inspect-robots-so101-preflight "$@" ;;  # prove compat, no motion
+  eval-amend)           # correct a mis-recorded operator verdict into a NEW log.
+             # Never edits the original: the amended copy carries provenance in the
+             # trial's metadata (source log, verdict before/after, reason).
+             needs_docker eval-amend
+             $RUN python -m evals.amend "$@" ;;
   eval-cost)            # LLM tokens and dollars per trial, read from an eval log.
              # Only the agent policy has a token bill; openpi/lerobot run locally.
              needs_docker eval-cost
@@ -368,6 +373,7 @@ so rather than failing with "docker: command not found".
   ./robot eval-view                             browse eval logs: scores, transcript, camera frames
   ./robot eval-video [LOG]                      encode per-trial MP4s (newest log by default)
   ./robot eval-cost [LOG]                       LLM tokens + $ per trial (newest log by default)
+  ./robot eval-amend --scene S --judgement n --note "..."   correct a verdict into a new log
                                        loads lerobot, openpi and mjlab RL (.onnx) policies
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
