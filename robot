@@ -78,6 +78,17 @@ case "$cmd" in
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   eval) needs_docker eval;      $RUN python -m evals.run "$@" ;;               # Inspect Robots benchmark: LLM agent or VLA
   eval-preflight) needs_docker eval-preflight; $RUN inspect-robots-so101-preflight "$@" ;;  # prove compat, no motion
+  eval-video)           # encode per-trial, per-camera MP4s from a run's stored frames.
+             # Separate from eval-view: `view` renders the report (which reads frames
+             # via the policy transcript), `video` reads the frames directory directly.
+             needs_docker eval-video
+             log="${1:-}"; shift || true
+             if [ -z "$log" ]; then
+               log=$(ls -1t outputs/evals/*.json 2>/dev/null | head -1)
+               [ -n "$log" ] || { echo "no eval logs in outputs/evals" >&2; exit 1; }
+               echo "newest log: $log"
+             fi
+             $RUN inspect-robots video "$log" "$@" ;;
   eval-view)            # browse the eval logs: scores, policy transcript, and one
              # composite MP4 per trial (needs the run to have stored frames, which
              # evals/run.py does by default). --host 0.0.0.0 because it is serving
@@ -350,7 +361,8 @@ so rather than failing with "docker: command not found".
   ./robot eval-openpi                           the working openpi pi0.5, same benchmark
   ./robot eval --policy lerobot --checkpoint <hub-id>       a lerobot VLA on the same task
   ./robot eval-preflight --dry-run              prove the 6-D contract lines up, no motion
-  ./robot eval-view                             browse eval logs: scores, transcript, per-trial video
+  ./robot eval-view                             browse eval logs: scores, transcript, camera frames
+  ./robot eval-video [LOG]                      encode per-trial MP4s (newest log by default)
                                        loads lerobot, openpi and mjlab RL (.onnx) policies
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets

@@ -128,10 +128,15 @@ class OpenPiPolicy:
     self.config = PolicyConfig(
       action_horizon=action_horizon, replan_interval=replan_interval
     )
+    self._replan = replan_interval
+    self._step = 0
+    self._messages: list[dict[str, Any]] = []
 
   def reset(self, scene: Scene) -> None:
-    """Take the scene's instruction as openpi's prompt for this trial."""
+    """Take the scene's instruction as openpi's prompt, and start a fresh transcript."""
     self._prompt = scene.instruction
+    self._step = 0
+    self._messages = []
 
   def act(self, observation: Observation) -> ActionChunk:
     """One inference: pack the observation openpi's way, return the whole chunk."""
@@ -157,8 +162,56 @@ class OpenPiPolicy:
       raise ValueError(
         f"expected a (horizon, >={state.shape[0]}) action chunk, got {actions.shape}"
       )
+    self._record(state, actions, latency)
     return ActionChunk(
       actions=[Action(data=a[: state.shape[0]]) for a in actions],
       inference_latency_s=latency,
       meta={"checkpoint": self._checkpoint, "config": self._config_name},
     )
+
+  # The HTML report's camera player is built from the POLICY TRANSCRIPT, not from the
+  # frames directory: _frame_references() walks the transcript looking for a text part
+  # matching "camera '<name>' (step N):" immediately followed by the placeholder below,
+  # and resolves each to <frames_dir>/<trial_prefix>_<name>_<step:06d>.npy. A policy
+  # that reports nothing therefore renders an empty flipbook however many frames the
+  # embodiment stored -- which is exactly what this policy did until now.
+  _PLACEHOLDER = "[image omitted: streamed camera frame]"
+
+  def _record(self, state: np.ndarray, actions: np.ndarray, latency: float) -> None:
+    """Append one inference to the transcript, in the shape the report parses.
+
+    The step counter advances by the REPLAN INTERVAL rather than by the chunk length,
+    because that is how many of the predicted actions the controller actually executes
+    before calling act() again. Frames are stored every step, so every referenced step
+    exists; referencing chunk-length steps instead would point past the trial's end.
+
+    Images are named, never embedded -- the frame sidecars already hold the pixels, and
+    the transcript hook is explicitly required not to duplicate them.
+    """
+    parts: list[dict[str, Any]] = []
+    for camera in self._cameras:
+      parts.append({"type": "text", "text": f"camera '{camera}' (step {self._step}):"})
+      parts.append({"type": "text", "text": self._PLACEHOLDER})
+    parts.append(
+      {"type": "text", "text": "joint_pos: " + np.array2string(state, precision=2)}
+    )
+    self._messages.append({"role": "user", "content": parts})
+    self._messages.append(
+      {
+        "role": "assistant",
+        "content": (
+          f"predicted {len(actions)} actions, executing {self._replan}; "
+          f"first target {np.array2string(actions[0][: state.shape[0]], precision=2)}; "
+          f"{latency * 1000:.0f} ms"
+        ),
+      }
+    )
+    self._step += self._replan
+
+  def transcript(self) -> list[dict[str, Any]]:
+    """This trial's inferences, for the log and the report's camera player.
+
+    Called once per trial at trial end. Must be idempotent, must not mutate policy
+    state, and must not alias it -- hence the copy.
+    """
+    return [dict(message) for message in self._messages]

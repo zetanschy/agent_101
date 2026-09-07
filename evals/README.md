@@ -156,6 +156,23 @@ trusting a checkpoint.
 
 ## Verified, and not
 
+### Why the report needs the policy to talk
+
+The HTML report's camera player is built from the **policy transcript**, not from the
+frames directory: it looks for a text part `camera '<name>' (step N):` followed by
+`[image omitted: streamed camera frame]`, and resolves each to
+`<frames_dir>/<trial_prefix>_<name>_<step:06d>.npy`. A policy that reports nothing
+renders an *empty* flipbook however many frames the embodiment stored — which is what
+the first openpi runs did. `OpenPiPolicy.transcript()` now emits one turn per
+inference, naming both camera frames and the state, so π0.5's trials show imagery on
+the same footing as the LLM agent's.
+
+MP4s are a separate path that ignores transcripts entirely:
+
+```bash
+./robot eval-video          # writes <camera>.mp4 per trial into the frames dir
+```
+
 Verified: the rig config in both unit modes (limits, home-pose clamping, the
 degrees→normalized conversion checked against the ratio), task construction, the full
 eval loop end to end on the CubePick mock world, `inspect-robots-so101-preflight`
