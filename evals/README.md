@@ -15,6 +15,8 @@ fine-tuned for it?**
 ./robot eval-preflight --dry-run                             # prove the contract
 ./robot eval --policy agent --model openai/gpt-6-astra       # the LLM agent
 ./robot eval-openpi                                          # the working pi0.5
+./robot eval-openpi --task cap-quadrants                     # pi0.5, quadrant + random cup
+./robot eval-openpi --mode sync                              # the pre-RTC code path
 ```
 
 Both runs get the **same `Task` object** and the **same embodiment**, which is the
@@ -38,11 +40,12 @@ its own lerobot, so it keeps its own image and its own `./robot` verb.
 `--policy lerobot --checkpoint <hub-id>` still exists for lerobot-format checkpoints;
 it is not the comparison target.
 
-### Four settings must match webui/openpi_worker.py
+### Five settings must match webui/openpi_worker.py
 
-That worker is the configuration known to drive this checkpoint well here, in both rtc
-and sync. All three of these were wrong in the first version and the arm moved
-strangely for all three reasons at once:
+That worker is the configuration known to drive this checkpoint well here. Four of
+these were wrong in the first version and the arm moved strangely for all four reasons
+at once; the fifth — the execution mode — was wrong for longer, and is what
+[rtc.py](rtc.py) fixes:
 
 | | value | why |
 |---|---|---|
@@ -50,6 +53,7 @@ strangely for all three reasons at once:
 | replan interval | **15 of 50** | `--actions 15`: the last 35 actions of each chunk are normally discarded and re-planned. Inspect Robots' `DefaultController` plays the *whole* chunk when `replan_interval` is `None`. |
 | settling | **off** | Waiting for the arm to arrive changes chunk-replay cadence, which this policy was tuned against. `inspect-robots-so101` ships it off for this reason. |
 | slew limit | **none** | Neither `evaluate.py` nor `openpi_worker.py` sets `max_relative_target`. lerobot clamps against the *measured* position, so under grasping load a lagging servo drags the command with it and the arm creeps — it moves, but cannot close on the object. |
+| execution mode | **rtc** | `openpi_worker.py` overlaps inference with execution (`--mode async`, or `rtc` with the seam pinned). `DefaultController` cannot: it calls `act()`, waits, *then* plays the chunk. See below. |
 
 Because `SOArmConfig` refuses `home_pose` without a slew limit, no slew limit also
 means **no auto-homing** on the openpi path. Run `./robot home` between trials so each
@@ -58,6 +62,144 @@ it is what the webui workflow does anyway.
 
 Units and replan interval live in [openpi_policy.py](openpi_policy.py), settling in
 [run.py](run.py); all three are keyed off the selected policy so they cannot drift.
+
+## Real-time chunking, and where the loop lives
+
+Until now this bench ran the π0.5 checkpoint **synchronously**, and nothing said so.
+`DefaultController` calls `act()`, waits for the chunk, then plays 15 actions of it —
+and `SOArmEmbodiment` is *self-paced*, sleeping to `control_hz` measured from the end
+of the previous step. So an inference did not just cost time, it cost **motion**: the
+arm held its last commanded position for the whole inference, once every 15 actions.
+The webui worker has never done that.
+
+`--mode` picks the loop:
+
+| `--mode` | inference | the seam between chunks | who runs it |
+|---|---|---|---|
+| `rtc` (default) | overlapped | **pinned**: the new chunk is sampled under a constraint reproducing the actions committed while it was being sampled | [rtc.py](rtc.py) |
+| `async` | overlapped | spliced cold — the arm jumps | [rtc.py](rtc.py) |
+| `sync` | blocking | no seam; the arm holds still and restarts from the chunk's head | the framework's `DefaultController` |
+
+`sync` is kept, and kept the same — same controller, same `act()`, same blocking
+inference — because every eval log recorded before this change was produced that way,
+and those scores have to stay comparable to new ones. One thing did change for it: the
+JIT compile is now paid at load (see the warmup below) instead of inside the first
+trial, which moves wall clock around without changing an action.
+
+### The one number that has to be right
+
+RTC's soft constraint is only as good as `d`, the count of actions the arm will have
+executed by the time the new chunk takes over. A loop that swaps chunks **on arrival**
+cannot know it and has to predict its own latency, typically from a rolling maximum of
+measured delays. This loop retires each chunk at a **fixed index**, so `d` is exact and known at
+submit time. If the inference overruns, the loop stalls *at* that index and still sends
+no more than promised: a slow inference costs motion, not correctness.
+
+Nothing downstream can catch a wrong `d`. It produces smooth, plausible motion pinned
+to the wrong instant — so the arithmetic is defined once, in
+[../scripts/openpi/chunk_loop.py](../scripts/openpi/chunk_loop.py), and **shared with
+the web UI**: `webui/openpi_worker.py` drives the same `ChunkSchedule` with its own
+thread and its own 30 Hz pacing. One definition of `d`, the same way there is one
+definition of an openpi observation.
+
+```bash
+python3 scripts/openpi/chunk_loop_test.py    # the arithmetic: no deps, no GPU, no arm
+python -m evals.rtc_test                     # the framework seam, on the mock world
+```
+
+The algorithm itself is pinned to LeRobot's, numerically, by a third suite that runs
+the reference implementation rather than a transcription of it:
+
+```bash
+./robot rtc-parity                           # dumps le101's RTCProcessor, checks openpi's
+```
+
+Last run: **56/56** prefix-weight cases (four schedules x a (d, s, H) grid including the
+degenerate ones) and **7/7** guided denoise steps match — every one of them via
+`jacobian=identity`, which is itself the evidence that the reference's autograd
+correction reduces to the identity.
+
+Both loop suites pass too. The first counts the actions a simulated loop actually sends and
+asserts it equals the `d` that was promised, including when the inference takes 40
+ticks in a 15-tick window. The second runs the real `eval()` over the CubePick mock
+world and checks that each trial opens with its own blocking, unguided inference —
+i.e. that no chunk survives a trial boundary.
+
+### How wide the seam is, and why it is not `--actions`
+
+`s` — the index where prefix influence reaches zero — defaults to **the whole overlap
+with the chunk being retired**, and that is a correction. It used to be
+`d + --actions`, which at H=50 and a 15-action window is 29 of 50 rather than 35, so
+the constraint released six steps early and blended over less of the trajectory than
+the method intends. PI's own kinetix eval computes it as `action_chunk_size −
+execute_horizon`, which is the identity
+
+```
+s == action_horizon − replan_interval == len(previous chunk's leftover)
+```
+
+i.e. every step for which a previous plan exists to agree with. It follows `--actions`
+on its own, so nothing has to be told the replan interval — a literal is only ever
+right for one (LeRobot's `RTCConfig` default of 10 is one such literal, and the
+`d + --actions` we had was another). `--rtc-horizon N` still releases it early on
+purpose, and either way it is clipped to the real leftover.
+
+Credit where due: this is the one place another JAX implementation of RTC reads the
+paper more carefully than we did — its config documents the identity above and defaults
+the horizon to "the whole leftover" for the same reason.
+
+Two defaults we did **not** adopt from it, deliberately:
+
+| | ours | theirs | why ours stays |
+|---|---|---|---|
+| Jacobian | `identity` | true VJP | `identity` is what LeRobot's `denoise_step` actually computes (its `requires_grad_` lands after the denoiser call), it is what `rtc_parity.py` pins us to, and the VJP roughly doubles per-step cost — on this rig that eats the window RTC exists to hide. `--rtc-jacobian full` to measure it. |
+| `beta_max` | 5.0 | 10.0 | 5.0 is PI's kinetix eval value; 10.0 is LeRobot's config default. `--rtc-max-guidance` to A/B. |
+
+Both are now flags rather than constants, so a session can test one against the other
+without editing code. Which is better on this arm is a measurement nobody has taken.
+
+### Three parts, three files
+
+| | |
+|---|---|
+| `openpi.models.rtc` | the algorithm: prefix weights, guidance weight, guided velocity in the flow sampler |
+| `openpi.policies.rtc` | `RealTimeChunker`: which previous actions to hand it, and the clipping of `d` and `s` |
+| `chunk_loop.py` + [rtc.py](rtc.py) + [openpi_policy.py](openpi_policy.py) | the loop: when to ask, what `d` is, and who owns the in-flight request |
+
+The policy owns the inference thread rather than the controller, for one reason:
+`reset()` has to **drain before it resets the chunker**. A trial's last inference is
+usually still in flight when the horizon or the operator ends the trial, and if it
+lands after the reset, `RealTimeChunker` keeps *its* chunk as the prefix — so the next
+trial's first guided sample is pinned to actions from the previous trial, on a table
+that has been rearranged in between.
+
+### Two things that would otherwise bite mid-trial
+
+**The guided sampler is a second JAX trace.** Passing a prefix changes the argument
+tree, so it compiles separately. Without a warmup the first guided call is the first
+replan of the first trial — mid-motion, arm holding its last command, for as long as
+the compile takes — tens of seconds, on the torch equivalent of this path, which is
+long enough to end an episode. `OpenPiPolicy` now warms up **both** traces at load, on synthetic
+pixels shaped from the declared observation space, with no action sent.
+
+**Delta actions would need re-anchoring.** openpi's `extra_delta_transform` encodes
+actions as deltas from the first state of each chunk, so a prefix from a chunk anchored
+at an older state is not comparable to the one being sampled. `--mode rtc` **refuses**
+such a checkpoint rather than guiding on an offset trajectory;
+`pi05_soarm101_lora_cap_to_cup` sets it `False`, so this bench's checkpoint is fine.
+
+### What a run now records
+
+Per inference, in the policy transcript the report renders: `d`, `s`, the index the
+prefix was taken from, and the chunk's **normalized `absmax`** — RTC's guidance is
+additive and can push values past the ±1 the model was trained in, which the arm would
+only show as a joint sitting on its clamp.
+
+Per trial, in the log's `trial_metadata.openpi`: mode, inference count, how many were
+guided, mean/max latency, `late_seams`, `stall_s`, and the worst `absmax`. `late_seams`
+is the one to read first — a run whose seams are late is a run whose effective control
+rate dropped below the 30 Hz the checkpoint was tuned at, and the fix is a longer
+window (`--actions`), not a different mode.
 
 None of these fail loudly. The embodiment commands policy output verbatim after
 clamping, and Inspect Robots compares state *keys*, not units — so the wrong unit is a
@@ -72,6 +214,43 @@ missing replan interval is 35 stale open-loop actions per chunk.
 red cup"* — worded verbatim from the π0.5 checkpoint's fine-tuning task, because a VLA
 is only obliged to follow the instruction it was trained on. Rewording it would hand
 the comparison to the LLM by default.
+
+### Two benchmarks, one instruction
+
+`--task` selects one; both carry the *same* instruction and the same operator scorer,
+so their scores stay comparable and neither one favours a policy by wording.
+
+| `--task` | scenes × epochs | what moves between trials | asks |
+|---|---|---|---|
+| `cap-to-cup` (default) | 5 × 1 | nothing — both objects pinned per scene | does the skill work at all? |
+| `cap-quadrants` | 2 × 5 = **10** | the **cup**, re-drawn at random every trial | does it work wherever the cup is? |
+
+`cap-quadrants` pins the cap to one **lower table quadrant** — near-right for
+`quadrant-lower-right`, near-left for `quadrant-lower-left`, in the *operator's* frame
+(standing behind the arm, which is also the `front` camera's view) — and the operator
+re-places the **red cup at a fresh random spot before every trial**. So a scene's five
+epochs are five genuinely different scenes to the policy, and its score is a success
+*rate* over cup positions rather than a verdict on one arrangement. The two quadrants
+then split that rate by where the reach started, which is where this arm is least
+symmetric.
+
+Drawing the cup well is part of the method, not a detail:
+
+* anywhere in the reachable area, **> 10 cm from the cap** — closer than that and the
+  two objects are one blob in the front camera, so a policy can succeed without ever
+  having localised the cup;
+* **never the previous spot** — physically move it, do not nudge it;
+* vary **distance** as much as side. Ten cup spots all landed mid-table means one cup
+  position measured five times per quadrant.
+
+`--layouts`/`--epochs` default to whatever the selected task declares, so
+`./robot eval-openpi --task cap-quadrants` is the full 10-trial session; pass
+`--layouts 1 --epochs 1` for a single trial first. Both benchmarks print their
+per-scene setup before the arm moves, because the framework has no pre-trial hook —
+the verdict prompt only echoes the setup once the trial is already over.
+
+Budget it like a physical session: 10 trials × (120 s horizon + reset + `./robot home`
++ a verdict) is roughly 40 minutes at the arm.
 
 Scoring is **by operator**. Nothing on this rig can tell whether a cap landed in a cup:
 the arm reports joint positions and two camera streams, and that is all. A person
@@ -92,6 +271,10 @@ So the horizon follows the policy:
 | policy | horizon | why |
 |---|---|---|
 | `openpi` | `--seconds` (120) | steps at 30 Hz are real for a chunked VLA |
+
+One caveat that only `--mode rtc`/`async` removes: under `sync` those 3600 steps took
+*longer* than 120 s of wall clock, because the embodiment absorbs each inference into
+the control period. Overlapped, a 120 s budget is about 120 s at the arm.
 | `agent` | `--decisions` (40) | the LLM call budget governs runtime *and* the bill |
 
 `--decisions` sets the plugin's `max_llm_calls`, which is enforced **and** written into
@@ -216,5 +399,13 @@ reporting the 6-D contract compatible in the built image, and the openpi checkpo
 loading through the adapter and returning a 50×6 action chunk (its range, −61…+56, is
 consistent with normalized rather than degrees).
 
-NOT verified: anything that moves the arm. No eval has driven hardware. The first
-session should be the two dry runs above, then a single layout, before a full five.
+Also verified, for the chunk loop: both suites above, plus the shared `ChunkSchedule`
+loading and producing the same `d` inside `webui/openpi_worker.py`'s own loader.
+
+NOT verified: **`--mode rtc` and `--mode async` have never driven the arm.** Every
+hardware run in `outputs/evals` predates them and was recorded on the synchronous path
+— which matters for reading those numbers, since a synchronous run stalls the arm at
+every seam. The first RTC session should be `--layouts 1 --epochs 1`, watched, before a
+full ten; there is no dry run for this path (`--dry-run` refuses the 6-D openpi policy
+against the 2-D mock world), so `./robot eval-preflight --dry-run` and the two test
+suites are what stand in for one.

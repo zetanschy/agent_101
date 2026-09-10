@@ -164,7 +164,6 @@ def main() -> int:
 
         chunker = RealTimeChunker(
             policy,
-            execution_horizon=args.actions,
             prefix_attention_schedule=args.rtc_schedule,
             max_guidance_weight=args.rtc_max_guidance,
             jacobian=args.rtc_jacobian,

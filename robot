@@ -118,7 +118,8 @@ case "$cmd" in
              $DC run --rm -p "${port}:8300" lerobot sh -c \
                "inspect-robots view outputs/evals --frames-budget 0 $* \
                 && python -m http.server 8300 --bind 0.0.0.0 --directory outputs/evals/html" ;;
-  eval-openpi)          # the openpi (JAX) pi0.5 checkpoint on the same benchmark.
+  eval-openpi)          # the openpi (JAX) pi0.5 checkpoint on the same benchmark, with
+                        # inference overlapped and the chunk seam pinned (--mode rtc).
              # Its own image because openpi pins jax and its own lerobot; the task,
              # the rig config and evals/run.py are shared with ./robot eval.
              needs_docker eval-openpi
@@ -380,6 +381,10 @@ so rather than failing with "docker: command not found".
   ./robot eval --policy agent --dry-run          Inspect Robots eval, mock world (no arm)
   ./robot eval --policy agent --model openai/gpt-6-astra    LLM agent on the real arm
   ./robot eval-openpi                           the working openpi pi0.5, same benchmark
+  ./robot eval-openpi --task cap-quadrants      cap in a lower table quadrant, cup re-drawn
+                                                at random each trial (2 scenes x 5 = 10)
+  ./robot eval-openpi --mode sync|async|rtc     how chunks are executed: rtc (default) overlaps
+                                                inference and pins the seam; sync is the old path
   ./robot eval --policy lerobot --checkpoint <hub-id>       a lerobot VLA on the same task
   ./robot eval-preflight --dry-run              prove the 6-D contract lines up, no motion
   ./robot eval-view                             browse eval logs: scores, transcript, camera frames

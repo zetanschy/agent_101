@@ -14,6 +14,12 @@ image. This one runs from agent101/openpi; infer_worker.py runs from agent101/le
 The policy/camera/observation logic is imported from scripts/openpi/evaluate.py so
 there is exactly one definition of how a frame becomes an openpi observation — that
 script stays the standalone/headless entry point.
+
+The chunk bookkeeping — when to ask for the next chunk, which action to send, and what
+`inference_delay` actually is — comes from scripts/openpi/chunk_loop.py for the same
+reason, and it is shared with the eval loop (evals/rtc.py). RTC only works if `d` means
+the same thing in every loop that drives this checkpoint, so it is defined once and
+tested without a GPU in scripts/openpi/chunk_loop_test.py.
 """
 
 import argparse
@@ -37,6 +43,21 @@ def _load_eval_module():
     spec = importlib.util.spec_from_file_location(
         "openpi_evaluate", ROOT / "scripts" / "openpi" / "evaluate.py")
     mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_chunk_loop():
+    """Import scripts/openpi/chunk_loop.py, the loop shared with evals/rtc.py.
+
+    Registered in sys.modules BEFORE execution, unlike the loader above: @dataclass
+    resolves its own module out of sys.modules, so a by-path import that skips this
+    step dies on the first dataclass with an unrecognisable AttributeError.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "openpi_chunk_loop", ROOT / "scripts" / "openpi" / "chunk_loop.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -108,6 +129,7 @@ def main() -> int:
     args = p.parse_args()
 
     ev = _load_eval_module()
+    chunk_loop = _load_chunk_loop()
     from openpi.policies import policy_config
     from openpi.training import config as pi0_config
 
@@ -140,9 +162,12 @@ def main() -> int:
     if args.mode == "rtc":
         from openpi.policies.rtc import RealTimeChunker
 
+        # No prefix_attention_horizon: it defaults to the whole leftover of the
+        # chunk being retired, which is PI's value (action_horizon - actions) and
+        # follows a retuned window on its own — so `actions <n>` from the UI needs
+        # no second knob, and cannot narrow the attention window by accident.
         chunker = RealTimeChunker(
             policy,
-            execution_horizon=args.actions,
             prefix_attention_schedule=args.rtc_schedule,
             max_guidance_weight=args.rtc_max_guidance,
             jacobian=args.rtc_jacobian,
@@ -181,11 +206,17 @@ def main() -> int:
         from lerobot.utils.robot_utils import precise_sleep
 
         print("RUN_START", flush=True)
-        # `end` is the index at which this chunk is retired. With rtc the next chunk
-        # does not start at 0: the first `delay` of its actions were already executed
-        # off the previous chunk, and the sampler was told as much.
-        chunk, idx, start, end = None, 0, 0, 0
-        delay = 0
+        # The cursor, the retirement index and `d` all live in the schedule, which the
+        # eval loop drives too — see scripts/openpi/chunk_loop.py. With rtc a new chunk
+        # does not start at 0: the first `d` of its actions were already executed off
+        # the previous chunk, and the sampler was told as much.
+        sched = chunk_loop.ChunkSchedule(
+            state["actions"],
+            overlap=args.mode in ("async", "rtc"),
+            rtc=chunker is not None,
+        )
+        chunk = None
+        promised = 0
         latencies: list[float] = []
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         pending: concurrent.futures.Future | None = None
@@ -210,8 +241,7 @@ def main() -> int:
             if chunker is None:
                 out = policy.infer(obs)
             else:
-                out = chunker.infer(obs, prefix_start=prefix_start, inference_delay=inference_delay,
-                                    execution_horizon=state["actions"])
+                out = chunker.infer(obs, prefix_start=prefix_start, inference_delay=inference_delay)
             return out["actions"], time.perf_counter() - t
 
         def predict(prefix_start: int, inference_delay: int):
@@ -226,55 +256,44 @@ def main() -> int:
         try:
             while not shutdown.is_set():
                 tick = time.perf_counter()
-                if chunk is not None and pending is None:
-                    # The window stays live-tunable from the UI, but only until an
-                    # inference is in flight: moving `end` after that would falsify
-                    # the delay the sampler was given.
-                    end = min(start + state["actions"], len(chunk))
+                # The window stays live-tunable from the UI, but the schedule refuses
+                # the change while an inference is in flight: moving the retirement
+                # index after a submit would falsify the delay the sampler was given.
+                sched.set_horizon(state["actions"], in_flight=pending is not None)
 
-                if chunk is None:
-                    # First chunk has to block; the jit cost was already paid at load.
-                    # Nothing has executed yet, so there is no prefix to honour.
-                    chunk, dt = predict(0, 0)
-                    idx = start = 0
-                    end = min(start + state["actions"], len(chunk))
-                    record(dt, len(chunk), end - idx)
-                elif idx >= end:
-                    if pending is not None:
-                        chunk, dt = pending.result()   # normally already finished
-                        pending = None
-                        # `delay` actions of this chunk are already behind us — that
-                        # is precisely what the sampler was told to reproduce.
-                        idx = delay
-                    else:
-                        # sync: the arm holds still, so nothing gets executed while we
-                        # think and the new chunk starts at 0 with no frozen prefix.
-                        chunk, dt = predict(end, 0)
-                        idx = 0
-                    start = idx
-                    end = min(start + state["actions"], len(chunk))
-                    record(dt, len(chunk), end - idx)
+                plan = sched.plan(in_flight=pending is not None)
+                if plan.action == "infer":
+                    # Blocking, and only two things ask for that: the run's first chunk
+                    # (nothing is executing yet, so there is no prefix to honour) and
+                    # sync mode, where the arm holds still while we think. The jit cost
+                    # was already paid at load.
+                    chunk, dt = predict(plan.request.prefix_start, plan.request.inference_delay)
+                    sched.adopt(len(chunk), delay=plan.request.inference_delay)
+                    record(dt, len(chunk), sched.end - sched.start)
+                elif plan.action == "collect":
+                    chunk, dt = pending.result()   # normally already finished
+                    pending = None
+                    # `promised` actions of this chunk are already behind us — that is
+                    # precisely what the sampler was told to reproduce. Reusing the
+                    # number the request carried, rather than recomputing it, is what
+                    # keeps the two ends of the promise identical.
+                    sched.adopt(len(chunk), delay=promised)
+                    record(dt, len(chunk), sched.end - sched.start)
                 else:
-                    # Kick the next inference early in the window so it has most of
-                    # the window to finish — at 30fps and window 15 that is ~470ms of
-                    # cover, more than an inference typically needs. In rtc mode a new
-                    # chunk starts at idx = delay, so this fires on its first tick and
-                    # the cover is the whole window.
-                    if args.mode in ("async", "rtc") and pending is None and idx >= 1:
-                        # The chunk is retired at a fixed index, not on arrival, so the
-                        # number of actions executed between this observation and the
-                        # swap is exactly end - idx — known now, and still exact if the
-                        # inference overruns (the loop just stalls at `end`). That is
-                        # the one number RTC cannot afford to guess.
-                        delay = min(end - idx, len(chunk) - 1) if chunker is not None else 0
+                    # The schedule kicks the next inference on the window's first tick
+                    # so it has the whole window to finish — at 30fps and window 15
+                    # that is ~470ms of cover, more than an inference typically needs.
+                    if plan.request is not None:
+                        promised = plan.request.inference_delay
                         # Observation read HERE on the main thread; only the model call
                         # is offloaded, so nothing else touches the serial bus.
-                        pending = pool.submit(infer_only, grab_obs(), idx, delay)
-                    action = chunk[idx]
+                        pending = pool.submit(
+                            infer_only, grab_obs(), plan.request.prefix_start, promised
+                        )
+                    action = chunk[sched.take()]
                     robot.send_action(
                         {n: float(action[i]) for i, n in enumerate(robot.action_features) if i < len(action)}
                     )
-                    idx += 1
                 precise_sleep(max(1.0 / fps - (time.perf_counter() - tick), 0.0))
         except Exception as e:  # noqa: BLE001 - keep the worker alive for another run
             print(f"RUN_ERROR: {e}", flush=True)

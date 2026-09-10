@@ -2,7 +2,17 @@
 
     ./robot eval --policy agent  --model openai/gpt-6-astra    # the LLM agent
     ./robot eval-openpi --policy openpi                        # the working pi0.5
+    ./robot eval-openpi --task cap-quadrants                   # quadrant cap, random cup
+    ./robot eval-openpi --mode sync                            # the pre-RTC code path
     ./robot eval --policy agent --dry-run                      # no motion, no arm
+
+--task picks the benchmark out of evals/tasks.py; --layouts/--epochs default to
+whatever that benchmark declares (cap-to-cup 5 x 1, cap-quadrants 2 x 5).
+
+--mode is how the openpi chunks are executed, and it defaults to `rtc` because that is
+the configuration webui/openpi_worker.py drives this checkpoint with. `sync` is the
+code path every eval log before this change was recorded in -- same controller, same
+act(), same blocking inference -- so those scores stay comparable. See evals/rtc.py.
 
 The openpi policy runs in the OTHER image: openpi pins jax and its own lerobot, so it
 has a container of its own (docker-compose.openpi.yml), which is why it has its own
@@ -41,6 +51,7 @@ from inspect_robots.approver import ClampApprover
 
 from evals import rig, tasks
 from evals.openpi_policy import DEFAULT_CHECKPOINT as OPENPI_CHECKPOINT
+from evals.openpi_policy import RTC_JACOBIAN, RTC_MAX_GUIDANCE, RTC_SCHEDULE
 
 # The lerobot-format checkpoint webui/app.py names as its default. NOT the model the
 # comparison is against -- see --policy openpi, which loads the orbax checkpoint that
@@ -66,9 +77,18 @@ def build_policy(args):
   if args.policy == "openpi":
     from evals.openpi_policy import OpenPiPolicy
 
+    # rtc=True only builds the chunker; whether inference OVERLAPS execution is the
+    # controller's call (build_controller). Both come off --mode so they cannot
+    # disagree -- a chunker with no overlap would promise a delay of zero, and an
+    # overlap with no chunker is the cold splice --mode async exists to show.
     return OpenPiPolicy(args.checkpoint or OPENPI_CHECKPOINT,
                         cameras=tuple(args.cameras),
-                        replan_interval=args.actions)
+                        replan_interval=args.actions,
+                        rtc=args.mode == "rtc",
+                        rtc_schedule=args.rtc_schedule,
+                        rtc_max_guidance=args.rtc_max_guidance,
+                        rtc_jacobian=args.rtc_jacobian,
+                        rtc_horizon=args.rtc_horizon)
 
   if args.policy == "agent":
     from inspect_robots_agent.policy import LLMAgentPolicy
@@ -104,6 +124,20 @@ def build_policy(args):
       use_degrees=True,
     )
   )
+
+
+def build_controller(args):
+  """The execution loop, or None to let eval() build its own.
+
+  None means DefaultController(policy.config.replan_interval): infer, wait, play the
+  window, repeat. That is `--mode sync`, and it is returned unwrapped rather than
+  reimplemented so the synchronous path stays the one the earlier logs used.
+  """
+  if args.policy != "openpi" or args.mode == "sync":
+    return None
+  from evals.rtc import AsyncChunkController
+
+  return AsyncChunkController(args.actions, rtc=args.mode == "rtc")
 
 
 def use_degrees(args) -> bool:
@@ -183,8 +217,42 @@ def main(argv: list[str] | None = None) -> int:
   p.add_argument("--actions", type=int, default=15,
                  help="openpi only: actions executed per chunk before re-planning "
                       "(webui/openpi_worker.py's default, and what it was tuned with)")
-  p.add_argument("--layouts", type=int, default=5)
-  p.add_argument("--epochs", type=int, default=1)
+  p.add_argument("--mode", choices=("rtc", "async", "sync"), default="rtc",
+                 help="openpi only: rtc = overlap inference with execution and pin "
+                      "each new chunk to the actions committed while it was sampled "
+                      "(default, matches webui/openpi_worker.py --mode rtc); async = "
+                      "overlap without the pin, which jumps at every seam; sync = the "
+                      "arm holds still through every inference (the pre-RTC path)")
+  p.add_argument("--task", choices=tuple(tasks.TASKS), default="cap-to-cup",
+                 help="cap-to-cup: 5 hand-set layouts, both objects pinned. "
+                      "cap-quadrants: cap in one lower table quadrant, cup re-drawn "
+                      "at random before every trial (default 2 x 5 = 10 trials)")
+  # Unset means "whatever this task declares", which is not the same number for the
+  # two of them -- cap-to-cup is 5 x 1, cap-quadrants 2 x 5. Only what the operator
+  # actually typed is forwarded to the builder.
+  # RTC tuning. The defaults are openpi's own (schedule exp, beta_max 5.0 -- PI's
+  # kinetix eval value -- and the identity Jacobian, which is what the LeRobot
+  # reference computes and what scripts/openpi/rtc_parity.py pins us to). They are
+  # flags rather than constants so a hardware session can A/B them: the other openpi
+  # RTC implementation in the wild defaults to beta_max 10.0 (LeRobot's) and the true
+  # VJP, and which is better on THIS arm is a measurement nobody has taken.
+  p.add_argument("--rtc-schedule", choices=("exp", "linear", "ones", "zeros"),
+                 default=RTC_SCHEDULE,
+                 help="rtc only: how the prefix constraint decays past the frozen actions")
+  p.add_argument("--rtc-max-guidance", type=float, default=RTC_MAX_GUIDANCE,
+                 help="rtc only: beta_max, the clamp on the guidance weight")
+  p.add_argument("--rtc-jacobian", choices=("identity", "full"),
+                 default=RTC_JACOBIAN,
+                 help="rtc only: identity is free and matches the LeRobot reference; "
+                      "full is the true VJP through the action expert, ~2x per step")
+  p.add_argument("--rtc-horizon", type=int, default=None,
+                 help="rtc only: release the prefix constraint EARLY, at this index. "
+                      "Default is the whole overlap with the retiring chunk, which is "
+                      "PI's own value (action_horizon - actions) and tracks --actions")
+  p.add_argument("--layouts", type=int, default=None,
+                 help="scenes to run (default: all the task declares)")
+  p.add_argument("--epochs", type=int, default=None,
+                 help="trials per scene (default: the task's own)")
   p.add_argument("--seconds", type=float, default=tasks.DEFAULT_SECONDS,
                  help="VLA horizon, converted to steps at the declared control_hz")
   # The agent's real budget. max_llm_calls is enforced AND written into its system
@@ -214,24 +282,34 @@ def main(argv: list[str] | None = None) -> int:
   # budget silently became 2.7x the wall clock and truncated the first trial. For the
   # agent the horizon is derived from its decision budget instead, sized so the
   # DECISION limit is what ends the trial -- that is the one it is told about.
-  if args.policy == "agent":
-    task = tasks.pick_and_place(
-      layouts=args.layouts,
-      steps=args.decisions * tasks.STEPS_PER_DECISION,
-      epochs=args.epochs,
-    )
-  else:
-    task = tasks.pick_and_place(
-      layouts=args.layouts, seconds=args.seconds, epochs=args.epochs
-    )
+  horizon = (
+    {"steps": args.decisions * tasks.STEPS_PER_DECISION}
+    if args.policy == "agent"
+    else {"seconds": args.seconds}
+  )
+  requested = {
+    key: value
+    for key, value in (("layouts", args.layouts), ("epochs", args.epochs))
+    if value is not None
+  }
+  task = tasks.TASKS[args.task](**requested, **horizon)
+  epochs = task.epoch_spec.count
   policy = build_policy(args)
+  controller = build_controller(args)
   if args.max_minutes:
     from evals.deadline import Deadline
 
     policy = Deadline(policy, args.max_minutes)
   embodiment = build_embodiment(args)
 
-  print(f"task     : {task.name}  ({len(task.scenes)} scenes x {args.epochs} epochs)")
+  trials = len(task.scenes) * epochs
+  print(f"task     : {task.name}  ({len(task.scenes)} scenes x {epochs} epochs "
+        f"= {trials} trial(s))")
+  # The operator sets every scene up by hand and the framework has no pre-trial hook,
+  # so the setups are listed HERE, before the arm moves, rather than only echoed at
+  # the verdict prompt once the trial is already over.
+  for scene in task.scenes:
+    print(f"  {scene.id}: {(scene.metadata or {}).get('operator_setup', '')}")
   shown = args.model if args.policy == "agent" else (
     args.checkpoint or (OPENPI_CHECKPOINT if args.policy == "openpi" else LEROBOT_CHECKPOINT)
   )
@@ -243,13 +321,18 @@ def main(argv: list[str] | None = None) -> int:
     # each move, ~8 s per decision, $0.064 per decision and rising within a trial.
     print(f"budget   : {args.decisions} decisions/trial "
           f"(~{args.decisions * 8 // 60} min, ~${args.decisions * 0.064:.2f}) "
-          f"x {len(task.scenes) * args.epochs} trial(s)")
+          f"x {trials} trial(s)")
   if args.max_minutes:
-    total = len(task.scenes) * args.epochs
     print(f"deadline : {args.max_minutes:g} min/trial "
-          f"(worst case {args.max_minutes * total:g} min for {total} trial(s))")
+          f"(worst case {args.max_minutes * trials:g} min for {trials} trial(s))")
   print(f"units    : {'degrees' if use_degrees(args) else 'normalized (+/-100)'}")
   if args.policy == "openpi":
+    modes = {
+      "rtc": "overlapped, seam pinned to the committed actions (arXiv:2506.07339)",
+      "async": "overlapped, seam spliced cold",
+      "sync": "arm holds still through every inference",
+    }
+    print(f"mode     : {args.mode} -- {modes[args.mode]}")
     print(f"replan   : every {args.actions} actions   settling: off   slew limit: none")
     print("NOTE: no slew limit means no auto-homing. Run `./robot home` between "
           "trials so each starts from the same pose.")
@@ -279,6 +362,7 @@ def main(argv: list[str] | None = None) -> int:
       policy,
       embodiment,
       approver=ClampApprover(embodiment.info.action_space),
+      controller=controller,
       before_scoring=_grade,
       log_dir=args.log_dir,
       store_frames=not args.no_frames,
@@ -286,6 +370,11 @@ def main(argv: list[str] | None = None) -> int:
     )
   finally:
     embodiment.close()
+    # The openpi policy owns an inference thread; a Ctrl-C between trials would
+    # otherwise leave it holding a chunk nobody will collect.
+    close = getattr(policy, "close", None)
+    if callable(close):
+      close()
 
   print(f"\nstatus: {log.status}   scenes: {log.results.total_scenes}   "
         f"trials: {log.results.total_trials}")

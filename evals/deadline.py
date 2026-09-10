@@ -25,6 +25,11 @@ Everything else is forwarded to the wrapped policy, including the optional hooks
 framework probes with hasattr -- bind(), transcript(), on_trial_start/end -- because a
 wrapper that hid transcript() would empty the report's camera player, which is a
 failure this repo has already had once.
+
+THE GUARD SITS ON THREE METHODS, not one. In --mode async/rtc the controller
+(evals/rtc.py) never calls act(): it calls submit() and collect() instead. A deadline
+that only guarded act() would therefore never fire on the openpi path -- the path whose
+trials are 3600 steps long and whose inference runs on another thread.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ class Deadline:
     self._budget_s = minutes * 60.0
     self._started = time.monotonic()
     self._fired = False
+    self._stop_chunk: ActionChunk | None = None
 
   def __getattr__(self, name: str) -> Any:
     """Forward everything this class does not define to the wrapped policy.
@@ -72,11 +78,32 @@ class Deadline:
     """Start the inner policy's trial, and this trial's clock."""
     self._started = time.monotonic()
     self._fired = False
+    self._stop_chunk = None
     self._inner.reset(scene)
 
   def elapsed(self) -> float:
     """Seconds since this trial's reset."""
     return time.monotonic() - self._started
+
+  def expired(self) -> bool:
+    """Whether this trial's budget is spent."""
+    return self.elapsed() >= self._budget_s
+
+  def _stop(self, observation: Observation) -> ActionChunk:
+    """A one-action chunk holding the current pose, flagged to end the trial."""
+    if not self._fired:
+      print(
+        f"[deadline] {self.elapsed() / 60:.1f} min elapsed, budget "
+        f"{self._budget_s / 60:.1f} min: stopping the trial (arm holds position)",
+        flush=True,
+      )
+      self._fired = True
+    hold = np.asarray(observation.state["joint_pos"], dtype=np.float64)
+    return ActionChunk(
+      actions=[
+        Action(data=hold, meta={"request_stop": True, "stop_reason": STOP_REASON})
+      ]
+    )
 
   def act(self, observation: Observation) -> ActionChunk:
     """The inner policy's chunk, or a hold-still stop once the budget is spent.
@@ -85,18 +112,37 @@ class Deadline:
     inference, and with the agent that call is both the slow part and the expensive
     part.
     """
-    if self.elapsed() >= self._budget_s:
-      if not self._fired:
-        print(
-          f"[deadline] {self.elapsed() / 60:.1f} min elapsed, budget "
-          f"{self._budget_s / 60:.1f} min: stopping the trial (arm holds position)",
-          flush=True,
-        )
-        self._fired = True
-      hold = np.asarray(observation.state["joint_pos"], dtype=np.float64)
-      return ActionChunk(
-        actions=[
-          Action(data=hold, meta={"request_stop": True, "stop_reason": STOP_REASON})
-        ]
-      )
+    if self.expired():
+      return self._stop(observation)
     return self._inner.act(observation)
+
+  # --- the overlapped path (evals/rtc.py) --------------------------------------
+
+  @property
+  def busy(self) -> bool:
+    """True while an inference is in flight, or a stop is waiting to be collected."""
+    return self._stop_chunk is not None or bool(self._inner.busy)
+
+  def submit(self, observation: Observation, **kwargs: Any) -> None:
+    """Start the inner policy's inference, or arm the stop in its place.
+
+    The stop is built from THIS observation, so the hold-still pose is where the arm
+    actually is at the moment the guard fires rather than wherever it was when the
+    controller last asked.
+
+    A deadline that expires while an inference is already in flight cannot preempt it:
+    the controller submits only when nothing is pending, so the stop arms one window
+    later (half a second at 15 actions and 30 Hz). The alternative -- discarding a
+    chunk that is already paid for -- would leave the arm mid-motion for longer.
+    """
+    if self.expired():
+      self._stop_chunk = self._stop(observation)
+      return
+    self._inner.submit(observation, **kwargs)
+
+  def collect(self, *, block: bool = True) -> ActionChunk | None:
+    """The armed stop if there is one, else the inner policy's chunk."""
+    if self._stop_chunk is not None:
+      chunk, self._stop_chunk = self._stop_chunk, None
+      return chunk
+    return self._inner.collect(block=block)
