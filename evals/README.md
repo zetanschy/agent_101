@@ -392,6 +392,37 @@ MP4s are a separate path that ignores transcripts entirely:
 ./robot eval-video          # writes <camera>.mp4 per trial into the frames dir
 ```
 
+### Stored frames cost 3.1 GiB per minute of arm time
+
+`store_frames` writes one **uncompressed** `.npy` per camera per control step —
+640×480×3 uint8 is 0.88 MiB, twice a step, thirty steps a second, so **55 MB/s**. A
+ten-trial session is 20–40 GB, and this bench has filled its disk on one.
+
+The report never shows those pixels: `_html.py` sets `_FRAME_MAX_SIDE = 448` and
+decimates anything larger with `array[::stride, ::stride]` on every render, so a
+640×480 frame is displayed at **320×240** whether it was stored that way or not.
+Storing what gets displayed is therefore free:
+
+```bash
+./robot eval-shrink --dry-run     # what it would save, touching nothing
+./robot eval-shrink               # newest log: encode MP4s, then decimate 4x
+./robot eval-shrink --stride 4    # 16x, at a flipbook coarser than the report's own
+./robot eval-shrink --watch       # alongside a live session, as each trial finishes
+```
+
+Stride 2 is byte-identical in the report — same decimation, done once on disk instead
+of on every render — and keeps every frame, so the flipbook and the transcript images
+are unchanged. MP4s are encoded **first** by default, because the encoder reads the
+same files and a run shrunk before encoding yields a smaller video forever.
+
+What it does not fix is **peak** usage: the eval writes full-size frames while it runs,
+so a session still needs its 20–40 GB at the moment it needs it. `--no-frames` avoids
+that entirely; `--watch` is the middle ground, since a trial's frames stop changing
+when the next trial starts, bounding the peak at roughly one trial.
+
+`evals/shrink_test.py` pins the claim that makes this safe: a shrunk frame equals what
+`_load_frame` would have rendered from the original, pixel for pixel.
+
 Verified: the rig config in both unit modes (limits, home-pose clamping, the
 degrees→normalized conversion checked against the ratio), task construction, the full
 eval loop end to end on the CubePick mock world, `inspect-robots-so101-preflight`
@@ -402,10 +433,35 @@ consistent with normalized rather than degrees).
 Also verified, for the chunk loop: both suites above, plus the shared `ChunkSchedule`
 loading and producing the same `d` inside `webui/openpi_worker.py`'s own loader.
 
-NOT verified: **`--mode rtc` and `--mode async` have never driven the arm.** Every
-hardware run in `outputs/evals` predates them and was recorded on the synchronous path
-— which matters for reading those numbers, since a synchronous run stalls the arm at
-every seam. The first RTC session should be `--layouts 1 --epochs 1`, watched, before a
-full ten; there is no dry run for this path (`--dry-run` refuses the 6-D openpi policy
-against the 2-D mock world), so `./robot eval-preflight --dry-run` and the two test
-suites are what stand in for one.
+### `--mode rtc` on hardware, first session
+
+`so101-cap-to-cup`, 5 layouts × 2 epochs, 2026-09-10
+(`so101-cap-to-cup_e648db86.json` against `so101-cap-to-cup_f750e49a.json`):
+
+| | sync | rtc |
+|---|---|---|
+| operator | 0.8 | **0.9** |
+| session | 841 s | **342 s** |
+| arm-time (steps ÷ 30 Hz) | 309 s | **144 s** |
+| time frozen at seams | ~270 s (618 × 0.43 s) | **0.0 s** |
+| late seams | n/a | **0**, every trial |
+| mean inference | 433 ms | 374 ms |
+| guided | — | 28/29, 25/26, … (all but each trial's first) |
+| normalized absmax | — | 1.02–1.14 |
+
+One verdict apart is not a score difference worth defending at n=10 — near went
+`[y,n] → [y,y]` and close-pair `[n,y] → [y,n]`. The process numbers are the result:
+**no seam ever had to wait**, and the same ten trials took less than half the arm-time,
+which is what removing a 430 ms freeze from every fifteenth action buys. `guided` being
+one short of `inferences` in every trial is the design showing through — a trial's first
+chunk has no prefix to honour.
+
+The 374 ms against sync's 433 ms is mostly the warmup: the JIT compile used to land on
+the first inference of the run and inflate its mean.
+
+Guidance does push past the trained range, mildly — absmax 1.02–1.14 where 1.0 is the
+edge. Worth watching per checkpoint, and the reason it is reported per trial.
+
+NOT verified: `--mode async` has never driven the arm (it exists to isolate what the
+guidance is worth, not to be run), and no RTC session has yet run `cap-quadrants`, whose
+only hardware result is the 0.2 recorded on the synchronous path.

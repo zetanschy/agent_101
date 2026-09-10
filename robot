@@ -98,6 +98,17 @@ case "$cmd" in
                echo "newest log: $log"
              fi
              $RUN inspect-robots video "$log" "$@" ;;
+  eval-shrink)          # decimate a run's stored frames to the size the report renders.
+             # 640x480 costs 55 MB/s of arm time and the report shows it at 320x240
+             # (inspect_robots/_html.py::_FRAME_MAX_SIDE = 448, decimated by striding),
+             # so this stores what would be displayed: 4x smaller, byte-identical
+             # output, flipbook and transcript frames both intact. MP4s are encoded
+             # first by default, since the encoder reads the frames this shrinks.
+             #
+             # IN A CONTAINER because the frames are root-owned: the eval writes them
+             # as root, so a host-side sweep gets EACCES on every file.
+             needs_docker eval-shrink
+             $RUN python -m evals.shrink "$@" ;;
   eval-view)            # browse the eval logs: scores, policy transcript, and one
              # composite MP4 per trial (needs the run to have stored frames, which
              # evals/run.py does by default). --host 0.0.0.0 because it is serving
@@ -389,6 +400,8 @@ so rather than failing with "docker: command not found".
   ./robot eval-preflight --dry-run              prove the 6-D contract lines up, no motion
   ./robot eval-view                             browse eval logs: scores, transcript, camera frames
   ./robot eval-video [LOG]                      encode per-trial MP4s (newest log by default)
+  ./robot eval-shrink [LOG] [--dry-run]         shrink stored frames to what the report renders
+                                                (4x, identical output); --watch during a session
   ./robot eval-cost [LOG]                       LLM tokens + $ per trial (newest log by default)
   ./robot eval-amend --scene S --judgement n --note "..."   correct a verdict into a new log
                                        loads lerobot, openpi and mjlab RL (.onnx) policies
