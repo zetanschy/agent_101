@@ -5,8 +5,8 @@
     ./robot dagger --dataset ... --corrections-only      # only your windows, one per episode
     ./robot dagger --dataset ... --mode sync             # no overlap, no RTC
 
-    space  pause / resume the policy       c  take over / hand back
-    enter  task complete: save the episode and pause for the reset
+    space  pause / resume the policy       tab  take over / hand back
+    n      task complete: save the episode and pause for the reset
     esc    end the session
 
     The protocol, from le101's HIL guide: watch, pause when failure is imminent, take
@@ -166,9 +166,19 @@ TRANSITIONS: dict[tuple[Phase, str], Phase] = {
     (Phase.CORRECTING, "correction"): Phase.PAUSED,
 }
 
-# Which key raises which event. le101 binds these per device (keyboard or pedal); this
-# is the keyboard half, with its defaults.
-EVENTS = {"space": "pause_resume", "c": "correction"}
+# Which key raises which event, copied from le101's DAggerKeyboardConfig defaults --
+# `space` and `tab`, not the "c" its docstring happens to use as a format example.
+# dagger_test.py parses those defaults out of the submodule and compares, so a rebind
+# upstream shows up as a failing test rather than as a key that does nothing.
+EVENTS = {"space": "pause_resume", "tab": "correction"}
+
+# Saving an episode on purpose has NO binding upstream: their corrections-only mode
+# saves when a correction stops, and their continuous mode rotates episodes by video
+# file size. The documented protocol calls for ending an episode when the TASK is done
+# (its step 5), so that needs a key, and it cannot be `enter` -- upstream that is
+# `upload`, and quietly giving one of their keys a second meaning is worse than adding
+# one of my own.
+SAVE_KEY = "n"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -312,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         if key == "esc":
             state["stop"] = True
             return
-        if key == "enter":
+        if key == SAVE_KEY:
             state["cut"] = True
             return
         event = EVENTS.get(key)
@@ -322,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
         nxt = TRANSITIONS.get((phase, event))
         if nxt is None:
             print(f"\n{event} does not apply while {phase.value}"
-                  + ("  (stop the correction with c first)"
+                  + ("  (hand back with tab first)"
                      if phase is Phase.CORRECTING else "  (pause with space first)"),
                   flush=True)
             return
@@ -330,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n-> {nxt.value}", flush=True)
 
     listener = create_key_listener(
-        dispatch, controls_help="space=pause/resume, c=correct, enter=cut episode, esc=quit"
+        dispatch, controls_help="space=pause/resume, tab=take over, n=save episode, esc=quit"
     )
     if listener is None:
         robot.disconnect()
@@ -388,7 +398,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"episode saved ({reason}): {frames} frames total, {interventions} corrections",
               flush=True)
 
-    print("\nready. space=pause/resume, c=correct (from paused), enter=cut, esc=quit\n", flush=True)
+    print("\nready. space=pause/resume, tab=take over (from paused), "
+          f"{SAVE_KEY}=save episode, esc=quit\n", flush=True)
     last_action: dict | None = None
     previous = state["phase"]
     try:

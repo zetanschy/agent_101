@@ -56,8 +56,8 @@ copy or tweak it.
 
 ```bash
 ./robot dagger --dataset zetanschy/rollout_cap_to_cup_dagger
-#   space  pause / resume the policy     c  take over / hand back
-#   enter  task complete: save the episode and pause for the reset
+#   space  pause / resume the policy     tab  take over / hand back
+#   n      task complete: save the episode and pause for the reset
 #   esc    end the session
 ```
 

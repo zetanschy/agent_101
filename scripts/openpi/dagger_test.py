@@ -86,16 +86,42 @@ def test_the_intervention_feature_matches_theirs():
   assert mine["names"] is None and "None" in theirs
 
 
-def test_the_keys_are_the_documented_ones():
-  """le101 binds these per input device; this is the keyboard half of its defaults."""
+def _their_keys() -> dict[str, str]:
+  """event -> key, out of le101's DAggerKeyboardConfig field defaults."""
+  source = (LEROBOT / "rollout/configs.py").read_text()
+  block = re.search(r"class DAggerKeyboardConfig.*?(?=\n@|\nclass )", source, re.S)
+  assert block, "DAggerKeyboardConfig is gone; the parity check needs rewriting"
+  return dict(re.findall(r'(\w+):\s*str\s*=\s*"(\w+)"', block.group(0)))
+
+
+def test_the_keys_are_theirs_not_mine():
+  """Compare KEYS, not event names.
+
+  An earlier version of this test only checked that "pause_resume" and "correction"
+  appeared somewhere in their config, which passed happily while this file bound
+  correction to `c` -- a key their docstring uses as a FORMAT EXAMPLE and never binds.
+  Their default is `tab`.
+  """
   dagger = _dagger()
-  assert dagger.EVENTS == {"space": "pause_resume", "c": "correction"}
-  keyboard = (LEROBOT / "rollout/configs.py").read_text()
-  block = re.search(r"class DAggerKeyboardConfig.*?(?=\n@|\nclass )", keyboard, re.S)
-  assert block, "DAggerKeyboardConfig is gone"
-  # Their defaults are declared as fields; check the events line up with ours by name.
-  for event in dagger.EVENTS.values():
-    assert event in block.group(0), f"{event} is not a DAgger keyboard binding in le101"
+  theirs = _their_keys()
+  mine = {event: key for key, event in dagger.EVENTS.items()}
+  for event, key in mine.items():
+    assert theirs.get(event) == key, (
+      f"{event}: this file binds {key!r}, le101 binds {theirs.get(event)!r}"
+    )
+
+
+def test_the_save_key_does_not_steal_one_of_theirs():
+  """Saving an episode has no upstream binding, so it must not reuse one.
+
+  `enter` is their `upload`. Giving one of their keys a second meaning here would make
+  the same finger do different things in the two tools, which is worse than a new key.
+  """
+  dagger = _dagger()
+  assert dagger.SAVE_KEY not in dagger.EVENTS
+  assert dagger.SAVE_KEY not in _their_keys().values(), (
+    f"{dagger.SAVE_KEY!r} is bound to {[e for e, k in _their_keys().items() if k == dagger.SAVE_KEY]} upstream"
+  )
 
 
 def main() -> int:
