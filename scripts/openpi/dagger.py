@@ -267,6 +267,13 @@ def main(argv: list[str] | None = None) -> int:
         dataset = LeRobotDataset.create(
             args.dataset, fps=fps, features=features, root=args.root,
             robot_type=robot.name, use_videos=True,
+            # ASYNC IMAGE WRITING IS NOT OPTIONAL AT 30 Hz. With both of these left at
+            # 0, LeRobotDataset starts no writer and add_frame() encodes the PNGs on
+            # the calling thread -- which here is the control loop, whose whole budget
+            # is 33 ms. lerobot's own record passes threads_per_camera * cameras, and
+            # its default per camera is 4.
+            image_writer_processes=0,
+            image_writer_threads=4 * max(len(robot.cameras), 1),
         )
     print(f"dataset  : {args.dataset} ({len(features)} features, incl. intervention)", flush=True)
 
