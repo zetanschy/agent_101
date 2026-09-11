@@ -66,6 +66,7 @@ import os
 import pathlib
 import statistics
 import sys
+import threading
 import time
 
 import numpy as np
@@ -432,12 +433,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"episode saved ({reason}): {frames} frames total, {interventions} corrections",
               flush=True)
 
-    if args.display_data:
+    display = args.display_data
+    if display:
         # Same session name lerobot uses, so a viewer already open on it just works.
         init_visualization(args.display_mode, session_name="lerobot_control_loop",
                            ip=args.display_ip, port=args.display_port)
-        where = f"{args.display_ip}:{args.display_port}" if args.display_ip else "spawned viewer"
-        print(f"display  : {args.display_mode} -> {where}", flush=True)
+        if args.display_ip:
+            print(f"display  : {args.display_mode} -> {args.display_ip}:{args.display_port}",
+                  flush=True)
+        else:
+            # rerun spawns the viewer INSIDE the container here, which it warns is
+            # unsupported -- and a viewer that dies on startup took a whole session
+            # with it once: the log calls kept going to a sink with nobody behind it
+            # and shutdown_rerun() hung the exit. Guarded below, but say so.
+            print(f"display  : {args.display_mode} -> viewer spawned in the container "
+                  "(rerun calls this unsupported; --display_ip streams to one on the "
+                  "host instead)", flush=True)
 
     print("\nready. space=pause/resume, tab=take over (from paused), "
           f"{SAVE_KEY}=save episode, esc=quit\n", flush=True)
@@ -536,15 +547,24 @@ def main(argv: list[str] | None = None) -> int:
                     if not args.corrections_only:
                         record(raw, act, intervention=False)
 
-            if args.display_data:
+            if display:
                 # `raw` is the observation this tick acted on, and last_action is what
                 # was sent for it -- during a pause nothing new was, hence the None.
-                log_visualization_data(
-                    args.display_mode,
-                    observation=raw,
-                    action=None if phase is Phase.PAUSED else last_action,
-                    compress_images=args.display_compressed,
-                )
+                #
+                # A VIEW IS NEVER WORTH THE SESSION. If logging fails, the view is
+                # switched off and the arm keeps going: the data being collected is the
+                # point, and a dead viewer is not a reason to lose an episode.
+                try:
+                    log_visualization_data(
+                        args.display_mode,
+                        observation=raw,
+                        action=None if phase is Phase.PAUSED else last_action,
+                        compress_images=args.display_compressed,
+                    )
+                except Exception as exc:  # noqa: BLE001 - any backend failure, same answer
+                    display = False
+                    print(f"\ndisplay off: {type(exc).__name__}: {exc} "
+                          "(the session continues without it)", flush=True)
 
             precise_sleep(max(1.0 / fps - (time.perf_counter() - tick), 0.0))
     except KeyboardInterrupt:
@@ -555,7 +575,17 @@ def main(argv: list[str] | None = None) -> int:
         pool.shutdown(wait=False)
         listener.stop()
         if args.display_data:
-            shutdown_visualization(args.display_mode)
+            # IN A THREAD, WITH A DEADLINE. shutdown_rerun() flushes, and flushing to a
+            # viewer that died takes forever -- which is how a Ctrl-C once left the
+            # process alive, holding 8 GB of VRAM, until it was killed by hand. The
+            # arms matter more than a clean flush, so this gets three seconds.
+            closer = threading.Thread(
+                target=lambda: shutdown_visualization(args.display_mode), daemon=True
+            )
+            closer.start()
+            closer.join(timeout=3.0)
+            if closer.is_alive():
+                print("display: shutdown did not return in 3 s, leaving it", flush=True)
         robot.disconnect()
         teleop.disconnect()
 
