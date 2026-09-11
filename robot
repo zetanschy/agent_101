@@ -109,6 +109,14 @@ case "$cmd" in
              needs_docker dagger
              $DC -f docker-compose.openpi.yml run --rm openpi-dagger \
                python scripts/openpi/dagger.py "$@" ;;
+  dagger-video)         # render a DAgger episode to MP4 with the handovers drawn on it:
+                        # green while the policy drove, amber while you did, and a
+                        # timeline of every intervention. The `intervention` column is
+                        # the one thing the raw video cannot show -- a correction looks
+                        # exactly like autonomous execution.
+             needs_docker dagger-video
+             $DC -f docker-compose.openpi.yml run --rm openpi \
+               python scripts/openpi/dagger_video.py "$@" ;;
   eval-shrink)          # decimate a run's stored frames to the size the report renders.
              # 640x480 costs 55 MB/s of arm time and the report shows it at 320x240
              # (inspect_robots/_html.py::_FRAME_MAX_SIDE = 448, decimated by striding),
@@ -414,6 +422,8 @@ so rather than failing with "docker: command not found".
   ./robot eval-video [LOG]                      encode per-trial MP4s (newest log by default)
   ./robot eval-shrink [LOG] [--dry-run]         shrink stored frames to what the report renders
                                                 (4x, identical output); --watch during a session
+  ./robot dagger-video --dataset you/rollout_NAME   render its episodes to MP4, with the
+                                                handovers burnt in (green policy / amber you)
   ./robot dagger --dataset you/rollout_NAME     DAgger: the policy drives, you take over with the
                                                 leader; both segments recorded, yours tagged
                                                 intervention=True. space=pause, tab=take over,

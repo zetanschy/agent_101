@@ -232,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     ev = _load("openpi_evaluate", "scripts/openpi/evaluate.py")
     chunk_loop = _load("openpi_chunk_loop", "scripts/openpi/chunk_loop.py")
 
+    from lerobot.datasets import VideoEncodingManager
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
     from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
@@ -457,140 +458,148 @@ def main(argv: list[str] | None = None) -> int:
           f"{SAVE_KEY}=save episode, esc=quit\n", flush=True)
     last_action: dict | None = None
     previous = state["phase"]
-    try:
-        while not state["stop"]:
-            tick = time.perf_counter()
-            phase = state["phase"]
-            raw = robot.get_observation()
+    # WITHOUT THIS THE SESSION WRITES AN UNREADABLE DATASET. VideoEncodingManager's
+    # __exit__ calls dataset.finalize(), which flushes pending videos and writes the
+    # parquet and the metadata -- le101's DAgger wraps both of its recording loops in
+    # it for the same reason. It also cleans a half-written episode when the body
+    # raises, which on a session ended by Ctrl-C is the normal case. Verified the hard
+    # way: a dataset recorded without it cannot be read back at all; LeRobotDataset
+    # falls through to the Hub looking for what should have been on disk.
+    with VideoEncodingManager(dataset):
+        try:
+            while not state["stop"]:
+                tick = time.perf_counter()
+                phase = state["phase"]
+                raw = robot.get_observation()
 
-            # --- transitions, resolved before acting on the new phase --------------
-            if phase is not previous:
-                # The transition table, and the torque with it, is le101's
-                # DAggerStrategy._handle_phase_change translated to this engine. The
-                # torque dance is not decoration: teleop_smooth_move_to LEAVES THE
-                # LEADER POWERED (it enables torque to drive it), so a correction that
-                # began without releasing it would have you fighting its own motors.
-                if phase is Phase.PAUSED and previous is Phase.AUTONOMOUS:
-                    drop_pending()
-                    # The follower's MEASURED pose, not the last command. The one
-                    # deliberate departure from le101, which drives the leader to
-                    # `prev_action`: under gravity a loaded arm sits below where it was
-                    # told to be, and the leader should meet the arm, not the command.
-                    last_action = pose(raw)
-                    if actuated:
-                        teleop_smooth_move_to(teleop, last_action, fps=fps)  # enables torque
-                elif phase is Phase.CORRECTING:
-                    if actuated:
-                        # Let go of the leader so a human can actually move it.
-                        teleop.disable_torque()
-                    else:
-                        follower_smooth_move_to(robot, pose(raw), teleop.get_action(), fps=fps)
-                elif phase is Phase.PAUSED and previous is Phase.CORRECTING:
-                    if actuated:
-                        # Re-lock it, so it holds where you left it instead of sagging.
-                        teleop.enable_torque()
-                elif phase is Phase.AUTONOMOUS:
-                    # The arm moved under a human hand: the plan and its prefix both
-                    # describe a trajectory nobody is executing. Start clean -- this is
-                    # their `engine.reset(); interpolator.reset()` on resume, and for
-                    # RTC it is load-bearing rather than hygiene.
-                    drop_pending()
-                    chunk = None
-                    schedule.reset()
-                    if chunker is not None:
-                        chunker.reset()
-                    if actuated:
-                        # Release the leader before the policy drives, as they do.
-                        teleop.disable_torque()
-                    if args.corrections_only:
-                        close_episode("correction ended")
+                # --- transitions, resolved before acting on the new phase --------------
+                if phase is not previous:
+                    # The transition table, and the torque with it, is le101's
+                    # DAggerStrategy._handle_phase_change translated to this engine. The
+                    # torque dance is not decoration: teleop_smooth_move_to LEAVES THE
+                    # LEADER POWERED (it enables torque to drive it), so a correction that
+                    # began without releasing it would have you fighting its own motors.
+                    if phase is Phase.PAUSED and previous is Phase.AUTONOMOUS:
+                        drop_pending()
+                        # The follower's MEASURED pose, not the last command. The one
+                        # deliberate departure from le101, which drives the leader to
+                        # `prev_action`: under gravity a loaded arm sits below where it was
+                        # told to be, and the leader should meet the arm, not the command.
+                        last_action = pose(raw)
+                        if actuated:
+                            teleop_smooth_move_to(teleop, last_action, fps=fps)  # enables torque
+                    elif phase is Phase.CORRECTING:
+                        if actuated:
+                            # Let go of the leader so a human can actually move it.
+                            teleop.disable_torque()
+                        else:
+                            follower_smooth_move_to(robot, pose(raw), teleop.get_action(), fps=fps)
+                    elif phase is Phase.PAUSED and previous is Phase.CORRECTING:
+                        if actuated:
+                            # Re-lock it, so it holds where you left it instead of sagging.
+                            teleop.enable_torque()
+                    elif phase is Phase.AUTONOMOUS:
+                        # The arm moved under a human hand: the plan and its prefix both
+                        # describe a trajectory nobody is executing. Start clean -- this is
+                        # their `engine.reset(); interpolator.reset()` on resume, and for
+                        # RTC it is load-bearing rather than hygiene.
+                        drop_pending()
+                        chunk = None
+                        schedule.reset()
+                        if chunker is not None:
+                            chunker.reset()
+                        if actuated:
+                            # Release the leader before the policy drives, as they do.
+                            teleop.disable_torque()
+                        if args.corrections_only:
+                            close_episode("correction ended")
+                    if phase is Phase.CORRECTING:
+                        print("recording your correction (c to stop)", flush=True)
+                    previous = phase
+
+                if state["cut"]:
+                    state["cut"] = False
+                    close_episode("task complete")
+                    # Step 6 of their protocol: the episode ends PAUSED, with the leader
+                    # aligned, so you can reposition the arm for the next attempt.
+                    state["phase"] = Phase.PAUSED
+
+                # --- act ---------------------------------------------------------------
                 if phase is Phase.CORRECTING:
-                    print("recording your correction (c to stop)", flush=True)
-                previous = phase
-
-            if state["cut"]:
-                state["cut"] = False
-                close_episode("task complete")
-                # Step 6 of their protocol: the episode ends PAUSED, with the leader
-                # aligned, so you can reposition the arm for the next attempt.
-                state["phase"] = Phase.PAUSED
-
-            # --- act ---------------------------------------------------------------
-            if phase is Phase.CORRECTING:
-                act = teleop.get_action()
-                robot.send_action(act)
-                last_action = act
-                record(raw, act, intervention=True)
-
-            elif phase is Phase.PAUSED:
-                if last_action is not None:
-                    robot.send_action(last_action)
-
-            else:  # AUTONOMOUS
-                plan = schedule.plan(in_flight=pending is not None)
-                if plan.action == "infer":
-                    obs = ev.build_observation(robot, raw, args.task)
-                    chunk, dt = infer(obs, plan.request.prefix_start, plan.request.inference_delay)
-                    schedule.adopt(len(chunk), delay=plan.request.inference_delay)
-                    latencies.append(dt)
-                elif plan.action == "collect":
-                    chunk, dt = pending.result()
-                    pending = None
-                    schedule.adopt(len(chunk), delay=promised)
-                    latencies.append(dt)
-                else:
-                    if plan.request is not None:
-                        promised = plan.request.inference_delay
-                        # Observation read on THIS thread; only the model call is offloaded.
-                        obs = ev.build_observation(robot, raw, args.task)
-                        pending = pool.submit(infer, obs, plan.request.prefix_start, promised)
-                    act = to_action(chunk[schedule.take()])
+                    act = teleop.get_action()
                     robot.send_action(act)
                     last_action = act
-                    if not args.corrections_only:
-                        record(raw, act, intervention=False)
+                    record(raw, act, intervention=True)
 
-            if display:
-                # `raw` is the observation this tick acted on, and last_action is what
-                # was sent for it -- during a pause nothing new was, hence the None.
-                #
-                # A VIEW IS NEVER WORTH THE SESSION. If logging fails, the view is
-                # switched off and the arm keeps going: the data being collected is the
-                # point, and a dead viewer is not a reason to lose an episode.
-                try:
-                    log_visualization_data(
-                        args.display_mode,
-                        observation=raw,
-                        action=None if phase is Phase.PAUSED else last_action,
-                        compress_images=args.display_compressed,
-                    )
-                except Exception as exc:  # noqa: BLE001 - any backend failure, same answer
-                    display = False
-                    print(f"\ndisplay off: {type(exc).__name__}: {exc} "
-                          "(the session continues without it)", flush=True)
+                elif phase is Phase.PAUSED:
+                    if last_action is not None:
+                        robot.send_action(last_action)
 
-            precise_sleep(max(1.0 / fps - (time.perf_counter() - tick), 0.0))
-    except KeyboardInterrupt:
-        print("\ninterrupted", flush=True)
-    finally:
-        close_episode("session ended")
-        drop_pending()
-        pool.shutdown(wait=False)
-        listener.stop()
-        if args.display_data:
-            # IN A THREAD, WITH A DEADLINE. shutdown_rerun() flushes, and flushing to a
-            # viewer that died takes forever -- which is how a Ctrl-C once left the
-            # process alive, holding 8 GB of VRAM, until it was killed by hand. The
-            # arms matter more than a clean flush, so this gets three seconds.
-            closer = threading.Thread(
-                target=lambda: shutdown_visualization(args.display_mode), daemon=True
-            )
-            closer.start()
-            closer.join(timeout=3.0)
-            if closer.is_alive():
-                print("display: shutdown did not return in 3 s, leaving it", flush=True)
-        robot.disconnect()
-        teleop.disconnect()
+                else:  # AUTONOMOUS
+                    plan = schedule.plan(in_flight=pending is not None)
+                    if plan.action == "infer":
+                        obs = ev.build_observation(robot, raw, args.task)
+                        chunk, dt = infer(obs, plan.request.prefix_start, plan.request.inference_delay)
+                        schedule.adopt(len(chunk), delay=plan.request.inference_delay)
+                        latencies.append(dt)
+                    elif plan.action == "collect":
+                        chunk, dt = pending.result()
+                        pending = None
+                        schedule.adopt(len(chunk), delay=promised)
+                        latencies.append(dt)
+                    else:
+                        if plan.request is not None:
+                            promised = plan.request.inference_delay
+                            # Observation read on THIS thread; only the model call is offloaded.
+                            obs = ev.build_observation(robot, raw, args.task)
+                            pending = pool.submit(infer, obs, plan.request.prefix_start, promised)
+                        act = to_action(chunk[schedule.take()])
+                        robot.send_action(act)
+                        last_action = act
+                        if not args.corrections_only:
+                            record(raw, act, intervention=False)
+
+                if display:
+                    # `raw` is the observation this tick acted on, and last_action is what
+                    # was sent for it -- during a pause nothing new was, hence the None.
+                    #
+                    # A VIEW IS NEVER WORTH THE SESSION. If logging fails, the view is
+                    # switched off and the arm keeps going: the data being collected is the
+                    # point, and a dead viewer is not a reason to lose an episode.
+                    try:
+                        log_visualization_data(
+                            args.display_mode,
+                            observation=raw,
+                            action=None if phase is Phase.PAUSED else last_action,
+                            compress_images=args.display_compressed,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - any backend failure, same answer
+                        display = False
+                        print(f"\ndisplay off: {type(exc).__name__}: {exc} "
+                              "(the session continues without it)", flush=True)
+
+                precise_sleep(max(1.0 / fps - (time.perf_counter() - tick), 0.0))
+        except KeyboardInterrupt:
+            print("\ninterrupted", flush=True)
+        finally:
+            close_episode("session ended")
+            drop_pending()
+            pool.shutdown(wait=False)
+            listener.stop()
+            if args.display_data:
+                # IN A THREAD, WITH A DEADLINE. shutdown_rerun() flushes, and flushing to a
+                # viewer that died takes forever -- which is how a Ctrl-C once left the
+                # process alive, holding 8 GB of VRAM, until it was killed by hand. The
+                # arms matter more than a clean flush, so this gets three seconds.
+                closer = threading.Thread(
+                    target=lambda: shutdown_visualization(args.display_mode), daemon=True
+                )
+                closer.start()
+                closer.join(timeout=3.0)
+                if closer.is_alive():
+                    print("display: shutdown did not return in 3 s, leaving it", flush=True)
+            robot.disconnect()
+            teleop.disconnect()
 
     if latencies:
         print(f"\ninference: {statistics.mean(latencies) * 1000:.0f} ms mean over "
