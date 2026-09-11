@@ -31,7 +31,15 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION:-0.75}
+      # MEASURED, not guessed: this checkpoint holds 6752 MiB resident and peaks at
+      # 6939 MiB, guided RTC pass included (jax memory_stats with preallocation off).
+      # The old 0.75 asks for 9216 MiB of a 12 GB card, which does NOT fit beside a
+      # desktop session -- 9168 MiB were free, so it failed by 48 MiB and the run died
+      # of OOM after loading. 0.65 is 7373 MiB: ~430 above the real peak, and it leaves
+      # 1.1 GB of card for everything else. Raise it per-run with XLA_MEM_FRACTION_INFER
+      # if this box ever has the GPU to itself; XLA_PYTHON_CLIENT_PREALLOCATE=false is
+      # the escape hatch when something else is already holding VRAM.
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION_INFER:-0.65}
     devices:
       # Follower arm only — the eval loop drives the follower, no leader needed.
       - /dev/ttyACM1:/dev/ttyACM1

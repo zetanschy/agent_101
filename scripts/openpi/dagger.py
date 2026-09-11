@@ -71,7 +71,10 @@ import time
 
 import numpy as np
 
-os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
+# Only applies to a bare `python scripts/openpi/dagger.py`; compose sets it. 0.65 of a
+# 12 GB card is 7373 MiB against a measured 6939 MiB peak -- 0.75 does not fit beside a
+# desktop session and the run OOMs after the checkpoint is already loaded.
+os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.65")
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
