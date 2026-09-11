@@ -65,6 +65,18 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix
     environment:
       - DISPLAY=${DISPLAY}
+      # The rerun viewer renders through Mesa's software Vulkan (lavapipe), which is
+      # what docker-compose.yml settled on for the lerobot service: reliable over X11
+      # without NVIDIA Vulkan passthrough, and it leaves the GPU to JAX -- which here
+      # matters more than there, since the policy is holding most of the VRAM.
+      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+      - WGPU_BACKEND=vulkan
+      - XDG_RUNTIME_DIR=/tmp/runtime-root
+    # So --display_ip host.docker.internal reaches a viewer running on the HOST, which
+    # is rerun's own recommendation (it warns that the viewer inside a container is
+    # unsupported) and needs no rebuild.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     devices:
       - /dev/ttyACM1:/dev/ttyACM1
       # leader — the arm you take over with.

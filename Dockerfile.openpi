@@ -109,5 +109,19 @@ print('inspect-robots stack importable in the openpi image')"
 # below it and turn a one-wheel rebuild into a multi-gigabyte one.
 RUN pip install --no-cache-dir "rerun-sdk==0.33.1"
 
+# ... and what the VIEWER needs to open a window, which the SDK does not pull in: the
+# X11/XCB client libraries plus Mesa's software Vulkan (lavapipe). Exactly the set
+# Dockerfile (the lerobot image) installs for `./robot record --display_data`, because
+# that is the configuration known to work over X11 on this machine. Without
+# libxkbcommon-x11-0 the spawned viewer panics in winit before the first frame:
+#   thread 'main' panicked: Library libxkbcommon-x11.so could not be loaded.
+# Also last, and apt-only, so the rebuild is one layer and leaves jax alone.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libvulkan1 mesa-vulkan-drivers \
+        libx11-6 libxext6 libxrender1 libxkbcommon0 \
+        libxcb1 libxcb-render0 libxcb-shape0 libxcb-xfixes0 libxcb-cursor0 \
+        libxkbcommon-x11-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 CMD ["bash"]
