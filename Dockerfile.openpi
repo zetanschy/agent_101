@@ -41,6 +41,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 COPY thirdparty/le101 /opt/le101
 RUN pip install --no-cache-dir -e "/opt/le101[feetech,dataset]"
 
+
 # JAX on GPU + exactly what the openpi inference path imports. The set was derived
 # by walking every module `openpi.training.config` and `policy_config` reach:
 #   - pytest: openpi imports it at module level in models_pytorch/gemma_pytorch.py,
@@ -97,6 +98,16 @@ RUN pip install --no-cache-dir \
         "inspect-robots-so101 @ git+https://github.com/robocurve/inspect-robots-so101" \
     && python -c "import inspect_robots, inspect_robots_so101; \
 print('inspect-robots stack importable in the openpi image')"
+
+# The live view for ./robot dagger --display_data. le101's init_rerun()
+# require_package()s rerun-sdk, so without this the viewer fails at startup (dagger.py
+# checks for it before loading the checkpoint, so it fails in seconds rather than after
+# the JIT compile). Pinned to what the lerobot image carries, so both stacks log to the
+# same viewer version.
+#
+# LAST ON PURPOSE: earlier in the file this would invalidate the jax[cuda12] layer
+# below it and turn a one-wheel rebuild into a multi-gigabyte one.
+RUN pip install --no-cache-dir "rerun-sdk==0.33.1"
 
 WORKDIR /workspace
 CMD ["bash"]

@@ -400,6 +400,7 @@ so rather than failing with "docker: command not found".
   ./robot calib-solve           solve where both cameras are, in the base frame
                                 to measure where both cameras really are (extrinsics)
   ./robot webui                        browser control panel: home/infer/record/params
+                                       loads lerobot, openpi and mjlab RL (.onnx) policies
   ./robot eval --policy agent --dry-run          Inspect Robots eval, mock world (no arm)
   ./robot eval --policy agent --model openai/gpt-6-astra    LLM agent on the real arm
   ./robot eval-openpi                           the working openpi pi0.5, same benchmark
@@ -413,11 +414,13 @@ so rather than failing with "docker: command not found".
   ./robot eval-video [LOG]                      encode per-trial MP4s (newest log by default)
   ./robot eval-shrink [LOG] [--dry-run]         shrink stored frames to what the report renders
                                                 (4x, identical output); --watch during a session
-  ./robot dagger --dataset you/rollout_NAME     DAgger: policy drives, you correct with the leader,
-                                                corrections recorded with intervention=True
+  ./robot dagger --dataset you/rollout_NAME     DAgger: the policy drives, you take over with the
+                                                leader; both segments recorded, yours tagged
+                                                intervention=True. space=pause, tab=take over,
+                                                n=save episode, esc=quit. --display_data for the
+                                                live rerun view, --corrections-only for just yours
   ./robot eval-cost [LOG]                       LLM tokens + $ per trial (newest log by default)
   ./robot eval-amend --scene S --judgement n --note "..."   correct a verdict into a new log
-                                       loads lerobot, openpi and mjlab RL (.onnx) policies
   ./robot home                         move follower to calibrated-zero pose
   ./robot data list                    list recorded datasets
   ./robot data viz --name N [--episode 0]      visualize an episode (scrubbable)

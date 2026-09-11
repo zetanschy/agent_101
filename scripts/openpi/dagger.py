@@ -2,6 +2,7 @@
 """DAgger for the openpi (JAX) checkpoint: run the policy, take over by hand, record it.
 
     ./robot dagger --dataset zetanschy/rollout_cap_to_cup_dagger
+    ./robot dagger --dataset ... --display_data          # the live rerun view, as in record
     ./robot dagger --dataset ... --corrections-only      # only your windows, one per episode
     ./robot dagger --dataset ... --mode sync             # no overlap, no RTC
 
@@ -206,6 +207,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--actions", type=int, default=15, help="actions executed per chunk")
     p.add_argument("--units", choices=("degrees", "normalized"), default="degrees")
     p.add_argument("--fps", type=int, default=None, help="control rate (default CAM_FPS)")
+    # The same live view `./robot record` gets, through le101's own helpers, so the
+    # panel layout is the one you already read during teleop.
+    p.add_argument("--display_data", action="store_true",
+                   help="live rerun view of both cameras, the state and the action")
+    p.add_argument("--display_mode", choices=("rerun", "foxglove"), default="rerun")
+    p.add_argument("--display_ip", default=None,
+                   help="stream to a viewer running elsewhere instead of spawning one "
+                        "(rerun: its host; needed when the container has no X11)")
+    p.add_argument("--display_port", type=int, default=None)
+    p.add_argument("--display_compressed", action="store_true",
+                   help="compress images before logging: less bandwidth, more CPU on the "
+                        "control thread")
     p.add_argument("--push", action="store_true", help="push the dataset to the hub at the end")
     return p
 
@@ -225,6 +238,27 @@ def main(argv: list[str] | None = None) -> int:
 
     from openpi.policies import policy_config
     from openpi.training import config as pi0_config
+
+    if args.display_data:
+        from lerobot.utils.visualization_utils import (
+            init_visualization,
+            log_visualization_data,
+            shutdown_visualization,
+        )
+
+        # CHECKED BEFORE THE CHECKPOINT LOADS. le101 defers this to init_rerun's
+        # require_package, which here would fire after a minute of JIT compile with the
+        # arms already connected. The openpi image did not ship rerun-sdk until the
+        # Dockerfile gained it, so an older image needs a rebuild.
+        backend = {"rerun": "rerun", "foxglove": "foxglove_websocket"}[args.display_mode]
+        try:
+            importlib.import_module(backend)
+        except ImportError:
+            raise SystemExit(
+                f"--display_data needs {backend} inside the openpi image, and this one "
+                "does not have it. Rebuild with `./robot openpi-build`, or drop "
+                "--display_data (the session runs fine without a viewer)."
+            ) from None
 
     fps = args.fps or int(ev.env("CAM_FPS", "30"))
     config_name = args.config or ev.infer_config(args.policy)
@@ -398,6 +432,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"episode saved ({reason}): {frames} frames total, {interventions} corrections",
               flush=True)
 
+    if args.display_data:
+        # Same session name lerobot uses, so a viewer already open on it just works.
+        init_visualization(args.display_mode, session_name="lerobot_control_loop",
+                           ip=args.display_ip, port=args.display_port)
+        where = f"{args.display_ip}:{args.display_port}" if args.display_ip else "spawned viewer"
+        print(f"display  : {args.display_mode} -> {where}", flush=True)
+
     print("\nready. space=pause/resume, tab=take over (from paused), "
           f"{SAVE_KEY}=save episode, esc=quit\n", flush=True)
     last_action: dict | None = None
@@ -495,6 +536,16 @@ def main(argv: list[str] | None = None) -> int:
                     if not args.corrections_only:
                         record(raw, act, intervention=False)
 
+            if args.display_data:
+                # `raw` is the observation this tick acted on, and last_action is what
+                # was sent for it -- during a pause nothing new was, hence the None.
+                log_visualization_data(
+                    args.display_mode,
+                    observation=raw,
+                    action=None if phase is Phase.PAUSED else last_action,
+                    compress_images=args.display_compressed,
+                )
+
             precise_sleep(max(1.0 / fps - (time.perf_counter() - tick), 0.0))
     except KeyboardInterrupt:
         print("\ninterrupted", flush=True)
@@ -503,6 +554,8 @@ def main(argv: list[str] | None = None) -> int:
         drop_pending()
         pool.shutdown(wait=False)
         listener.stop()
+        if args.display_data:
+            shutdown_visualization(args.display_mode)
         robot.disconnect()
         teleop.disconnect()
 
