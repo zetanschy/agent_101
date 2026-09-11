@@ -56,19 +56,22 @@ copy or tweak it.
 
 ```bash
 ./robot dagger --dataset zetanschy/rollout_cap_to_cup_dagger
-#   space  pause / resume the policy     c  start / stop a correction
-#   enter  cut the episode               esc  end the session
+#   space  pause / resume the policy     c  take over / hand back
+#   enter  task complete: save the episode and pause for the reset
+#   esc    end the session
 ```
 
-The openpi checkpoint drives; when it goes wrong you pause, take the **leader** arm and
-show it the right thing. Your frames are recorded as a LeRobotDataset with an
-`intervention` column, the same one `lerobot-rollout --strategy.type=dagger` writes — so
-the dataset trains like any other, and a training run can weight your corrections
-differently from the policy's own frames.
+The openpi checkpoint drives; when failure looks imminent you pause, take the **leader**
+arm, recover the arm to a state the policy knows, correct, and hand it back — as often
+as you like within one episode. The trajectory stays continuous and the episode ends
+when the *task* is done, which is the protocol in
+[le101's HIL guide](thirdparty/le101/docs/source/hil_data_collection.mdx). Frames are
+written as a LeRobotDataset with an `intervention` column, the same one
+`lerobot-rollout --strategy.type=dagger` writes, so it trains like any other dataset.
 
-Only corrections are recorded by default. An autonomous frame carries the *policy's*
-action, so training on it is self-distillation rather than DAgger; `--record-autonomous`
-keeps them anyway, tagged `intervention=False`.
+Both segments are recorded by default, as that guide describes; `--corrections-only`
+records just your windows, one episode each, which is what lerobot's *code* defaults to.
+The two readings differ and `intervention` is what lets a training run take either.
 
 le101 ships that strategy already, and if your checkpoint is in **lerobot** format you
 should use it directly (`lerobot-rollout --strategy.type=dagger`, with a leader teleop).

@@ -2,11 +2,17 @@
 """DAgger for the openpi (JAX) checkpoint: run the policy, take over by hand, record it.
 
     ./robot dagger --dataset zetanschy/rollout_cap_to_cup_dagger
-    ./robot dagger --dataset ... --record-autonomous     # keep the policy's frames too
+    ./robot dagger --dataset ... --corrections-only      # only your windows, one per episode
     ./robot dagger --dataset ... --mode sync             # no overlap, no RTC
 
-    space  pause / resume the policy       c  start / stop a correction
-    enter  cut the episode                 esc  end the session
+    space  pause / resume the policy       c  take over / hand back
+    enter  task complete: save the episode and pause for the reset
+    esc    end the session
+
+    The protocol, from le101's HIL guide: watch, pause when failure is imminent, take
+    over, recover the arm to an in-distribution state, correct, hand back, repeat --
+    then `enter` when the task is done. Intervene as often as you like within one
+    episode; the trajectory stays continuous.
 
 WHY THIS EXISTS when le101 already ships one. `lerobot-rollout --strategy.type=dagger`
 is the same idea and better integrated -- but it loads the policy through lerobot's
@@ -16,13 +22,22 @@ this is lerobot's strategy reimplemented around openpi's JAX policy: the same th
 phases, the same keys, and above all the same `intervention` column, so the dataset it
 writes trains exactly like one recorded by `lerobot-rollout`.
 
-CORRECTIONS ONLY BY DEFAULT, and that is not a space optimisation. DAgger's training
-signal is (a state the POLICY visited, the action the EXPERT would take there). An
-autonomous frame carries the policy's own action, so training on it is
-self-distillation -- it teaches the model what it already believes. `--record-autonomous`
-records them anyway, tagged `intervention=False`, because they are worth having for
-analysis and for RaC-style methods that use both; just do not pour them into an
-imitation loss unweighted.
+WHAT GETS RECORDED, where le101's docs and its code disagree. Its HIL data-collection
+guide describes one episode per ATTEMPT, both segments recorded, the episode continuing
+across every handoff ("no reset required just because intervention happened"), ending
+when the task is done -- and then fine-tuning on the combined dataset. Its
+DAggerStrategyConfig defaults to the opposite: `record_autonomous=False`, only the
+correction windows, each its own episode.
+
+This follows the DOCUMENTED protocol, because the continuous trajectory is the point:
+the autonomous segment is the state the policy actually reached, and the human's
+recovery from it is only informative attached to it. `--corrections-only` gives you the
+code's default instead, which is the stricter DAgger reading -- an autonomous frame
+carries the POLICY's own action, so those frames teach the model what it already
+believes. Nothing here weights the two; `intervention` is recorded so a training run
+can, if you decide it should.
+
+NO FRAMES DURING A PAUSE, also from the protocol: pausing is for aiming, not for data.
 
 WHAT REAL-TIME CHUNKING ADDS TO THE PROBLEM. The policy does not emit one action, it
 emits a 50-action plan, and RTC pins each new plan to the actions the arm has already
@@ -140,6 +155,22 @@ class Phase(enum.Enum):
     CORRECTING = "correcting"  # you are driving, and it is being recorded
 
 
+# Valid (phase, event) -> phase, copied from le101's _DAGGER_TRANSITIONS. Note what is
+# ABSENT: (CORRECTING, "pause_resume"). You cannot hand the arm back to the policy while
+# your hand is still on the leader -- stop the correction first. An earlier version of
+# this file allowed it, which would have resumed the policy mid-motion.
+TRANSITIONS: dict[tuple[Phase, str], Phase] = {
+    (Phase.AUTONOMOUS, "pause_resume"): Phase.PAUSED,
+    (Phase.PAUSED, "pause_resume"): Phase.AUTONOMOUS,
+    (Phase.PAUSED, "correction"): Phase.CORRECTING,
+    (Phase.CORRECTING, "correction"): Phase.PAUSED,
+}
+
+# Which key raises which event. le101 binds these per device (keyboard or pedal); this
+# is the keyboard half, with its defaults.
+EVENTS = {"space": "pause_resume", "c": "correction"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -156,9 +187,10 @@ def build_parser() -> argparse.ArgumentParser:
                         "rollout convention prefixes the name with rollout_)")
     p.add_argument("--root", default=None, help="write the dataset here instead of the HF cache")
     p.add_argument("--resume", action="store_true", help="append to an existing dataset")
-    p.add_argument("--record-autonomous", action="store_true",
-                   help="also record the policy's own frames (intervention=False); read the "
-                        "module docstring before training on them")
+    p.add_argument("--corrections-only", action="store_true",
+                   help="record ONLY your correction windows, each as its own episode "
+                        "(le101's code default). The default here is the protocol its HIL "
+                        "docs describe: one episode per attempt, both segments recorded")
     p.add_argument("--mode", choices=("rtc", "async", "sync"), default="rtc",
                    help="how chunks are executed while autonomous (default rtc)")
     p.add_argument("--actions", type=int, default=15, help="actions executed per chunk")
@@ -264,27 +296,31 @@ def main(argv: list[str] | None = None) -> int:
     frames = interventions = 0
 
     def dispatch(key: str) -> None:
-        """Keyboard events, on the listener thread: only flags are set here."""
-        phase = state["phase"]
+        """Keyboard events, on the listener thread: only flags are set here.
+
+        Transitions go through TRANSITIONS, so an event the table does not define is
+        ignored with a hint rather than forced -- the same refusal le101 gets from
+        looking its own table up.
+        """
         if key == "esc":
             state["stop"] = True
-        elif key == "space":
-            state["phase"] = Phase.PAUSED if phase is Phase.AUTONOMOUS else Phase.AUTONOMOUS
-        elif key == "c":
-            if phase is Phase.CORRECTING:
-                state["phase"] = Phase.PAUSED
-            elif phase is Phase.PAUSED:
-                state["phase"] = Phase.CORRECTING
-            else:
-                print("\npause first (space), then c to correct", flush=True)
-                return
-        elif key == "enter":
+            return
+        if key == "enter":
             state["cut"] = True
             return
-        else:
+        event = EVENTS.get(key)
+        if event is None:
             return
-        if key in ("space", "c"):
-            print(f"\n-> {state['phase'].value}", flush=True)
+        phase = state["phase"]
+        nxt = TRANSITIONS.get((phase, event))
+        if nxt is None:
+            print(f"\n{event} does not apply while {phase.value}"
+                  + ("  (stop the correction with c first)"
+                     if phase is Phase.CORRECTING else "  (pause with space first)"),
+                  flush=True)
+            return
+        state["phase"] = nxt
+        print(f"\n-> {nxt.value}", flush=True)
 
     listener = create_key_listener(
         dispatch, controls_help="space=pause/resume, c=correct, enter=cut episode, esc=quit"
@@ -356,23 +392,44 @@ def main(argv: list[str] | None = None) -> int:
 
             # --- transitions, resolved before acting on the new phase --------------
             if phase is not previous:
+                # The transition table, and the torque with it, is le101's
+                # DAggerStrategy._handle_phase_change translated to this engine. The
+                # torque dance is not decoration: teleop_smooth_move_to LEAVES THE
+                # LEADER POWERED (it enables torque to drive it), so a correction that
+                # began without releasing it would have you fighting its own motors.
                 if phase is Phase.PAUSED and previous is Phase.AUTONOMOUS:
                     drop_pending()
+                    # The follower's MEASURED pose, not the last command. The one
+                    # deliberate departure from le101, which drives the leader to
+                    # `prev_action`: under gravity a loaded arm sits below where it was
+                    # told to be, and the leader should meet the arm, not the command.
                     last_action = pose(raw)
-                    # Bring your hand to the arm, not the arm to your hand.
                     if actuated:
-                        teleop_smooth_move_to(teleop, last_action, fps=fps)
-                elif phase is Phase.CORRECTING and not actuated:
-                    follower_smooth_move_to(robot, pose(raw), teleop.get_action(), fps=fps)
+                        teleop_smooth_move_to(teleop, last_action, fps=fps)  # enables torque
+                elif phase is Phase.CORRECTING:
+                    if actuated:
+                        # Let go of the leader so a human can actually move it.
+                        teleop.disable_torque()
+                    else:
+                        follower_smooth_move_to(robot, pose(raw), teleop.get_action(), fps=fps)
+                elif phase is Phase.PAUSED and previous is Phase.CORRECTING:
+                    if actuated:
+                        # Re-lock it, so it holds where you left it instead of sagging.
+                        teleop.enable_torque()
                 elif phase is Phase.AUTONOMOUS:
                     # The arm moved under a human hand: the plan and its prefix both
-                    # describe a trajectory nobody is executing. Start clean.
+                    # describe a trajectory nobody is executing. Start clean -- this is
+                    # their `engine.reset(); interpolator.reset()` on resume, and for
+                    # RTC it is load-bearing rather than hygiene.
                     drop_pending()
                     chunk = None
                     schedule.reset()
                     if chunker is not None:
                         chunker.reset()
-                    if not args.record_autonomous:
+                    if actuated:
+                        # Release the leader before the policy drives, as they do.
+                        teleop.disable_torque()
+                    if args.corrections_only:
                         close_episode("correction ended")
                 if phase is Phase.CORRECTING:
                     print("recording your correction (c to stop)", flush=True)
@@ -380,7 +437,10 @@ def main(argv: list[str] | None = None) -> int:
 
             if state["cut"]:
                 state["cut"] = False
-                close_episode("cut")
+                close_episode("task complete")
+                # Step 6 of their protocol: the episode ends PAUSED, with the leader
+                # aligned, so you can reposition the arm for the next attempt.
+                state["phase"] = Phase.PAUSED
 
             # --- act ---------------------------------------------------------------
             if phase is Phase.CORRECTING:
@@ -414,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
                     act = to_action(chunk[schedule.take()])
                     robot.send_action(act)
                     last_action = act
-                    if args.record_autonomous:
+                    if not args.corrections_only:
                         record(raw, act, intervention=False)
 
             precise_sleep(max(1.0 / fps - (time.perf_counter() - tick), 0.0))
