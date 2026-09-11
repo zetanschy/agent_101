@@ -50,6 +50,21 @@ services:
     stdin_open: true
     tty: true
 
+  # DAgger (scripts/openpi/dagger.py): the same image and mounts as `openpi`, plus the
+  # LEADER arm, because a human correction is driven from it. Deliberately a separate
+  # service rather than a device added to `openpi`: compose refuses to start a service
+  # whose device is missing, so mapping the leader there would break `./robot
+  # eval-openpi` on any box where only the follower is plugged in.
+  openpi-dagger:
+    extends:
+      service: openpi
+    devices:
+      - /dev/ttyACM1:/dev/ttyACM1
+      # leader — the arm you take over with.
+      - /dev/ttyACM0:/dev/ttyACM0
+      - /dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_01010650-video-index0:/dev/video4
+      - /dev/v4l/by-id/usb-USB_2.0_Camera_USB_2.0_Camera_SN0001-video-index0:/dev/video6
+
   # Training / norm-stats: same image, GPU only — no serial or camera devices, so it
   # runs on a box with no arm attached. openpi writes ./checkpoints/<config>/<exp>/
   # and ./assets/<config>/ relative to the working dir, both gitignored.

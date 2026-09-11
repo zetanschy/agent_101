@@ -52,6 +52,30 @@ swap servos.
 Every wrapper prints the exact command it runs before executing, so you can
 copy or tweak it.
 
+## Correcting a policy by hand (DAgger)
+
+```bash
+./robot dagger --dataset zetanschy/rollout_cap_to_cup_dagger
+#   space  pause / resume the policy     c  start / stop a correction
+#   enter  cut the episode               esc  end the session
+```
+
+The openpi checkpoint drives; when it goes wrong you pause, take the **leader** arm and
+show it the right thing. Your frames are recorded as a LeRobotDataset with an
+`intervention` column, the same one `lerobot-rollout --strategy.type=dagger` writes — so
+the dataset trains like any other, and a training run can weight your corrections
+differently from the policy's own frames.
+
+Only corrections are recorded by default. An autonomous frame carries the *policy's*
+action, so training on it is self-distillation rather than DAgger; `--record-autonomous`
+keeps them anyway, tagged `intervention=False`.
+
+le101 ships that strategy already, and if your checkpoint is in **lerobot** format you
+should use it directly (`lerobot-rollout --strategy.type=dagger`, with a leader teleop).
+This wrapper exists because the checkpoint that works on this arm is an openpi **orbax**
+directory, which lerobot's policy factory cannot load — see
+[scripts/openpi/dagger.py](scripts/openpi/dagger.py).
+
 ## Training
 
 ```bash

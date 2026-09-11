@@ -98,6 +98,17 @@ case "$cmd" in
                echo "newest log: $log"
              fi
              $RUN inspect-robots video "$log" "$@" ;;
+  dagger)               # DAgger on the openpi checkpoint: the policy drives, you take
+                        # over with the leader, and your corrections are recorded as a
+                        # LeRobotDataset with an `intervention` column.
+             # le101 ships `lerobot-rollout --strategy.type=dagger`, which is the same
+             # idea — but it loads the policy through lerobot's factory and this
+             # checkpoint is an openpi orbax directory. Same strategy, openpi's policy.
+             #
+             # Its own compose service: this one needs the LEADER arm as well.
+             needs_docker dagger
+             $DC -f docker-compose.openpi.yml run --rm openpi-dagger \
+               python scripts/openpi/dagger.py "$@" ;;
   eval-shrink)          # decimate a run's stored frames to the size the report renders.
              # 640x480 costs 55 MB/s of arm time and the report shows it at 320x240
              # (inspect_robots/_html.py::_FRAME_MAX_SIDE = 448, decimated by striding),
@@ -402,6 +413,8 @@ so rather than failing with "docker: command not found".
   ./robot eval-video [LOG]                      encode per-trial MP4s (newest log by default)
   ./robot eval-shrink [LOG] [--dry-run]         shrink stored frames to what the report renders
                                                 (4x, identical output); --watch during a session
+  ./robot dagger --dataset you/rollout_NAME     DAgger: policy drives, you correct with the leader,
+                                                corrections recorded with intervention=True
   ./robot eval-cost [LOG]                       LLM tokens + $ per trial (newest log by default)
   ./robot eval-amend --scene S --judgement n --note "..."   correct a verdict into a new log
                                        loads lerobot, openpi and mjlab RL (.onnx) policies
