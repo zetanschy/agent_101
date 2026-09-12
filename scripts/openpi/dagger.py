@@ -111,6 +111,26 @@ def _load(name: str, relative: str):
 # on a transformers mismatch. Transcribed rather than imported, same semantics.
 
 
+# A feetech write can come back garbled -- "Incorrect status packet!" -- and lerobot's
+# SOLeader.enable_torque() calls the bus with num_retry=0, so one bad packet raises. It
+# happened on the first real session, during the handover, and took the whole run with
+# it. The bus itself accepts retries; this is how they get asked for.
+TORQUE_RETRIES = 3
+
+
+def set_leader_torque(teleop, enabled: bool) -> bool:
+    """Enable or disable the leader's torque, retrying a garbled bus. False if it failed."""
+    try:
+        if enabled:
+            teleop.bus.enable_torque(num_retry=TORQUE_RETRIES)
+        else:
+            teleop.bus.disable_torque(num_retry=TORQUE_RETRIES)
+        return True
+    except Exception as exc:  # noqa: BLE001 - a bus that will not answer, whatever it raises
+        print(f"\nleader torque {'on' if enabled else 'off'} failed: {exc}", flush=True)
+        return False
+
+
 def teleop_supports_feedback(teleop) -> bool:
     """True when the teleop can be DRIVEN, i.e. it is actuated (the SO-101 leader is)."""
     return (
@@ -127,7 +147,7 @@ def teleop_smooth_move_to(teleop, target: dict, duration_s: float = 2.0, fps: in
     the follower already is, instead of the follower snapping to wherever you left the
     leader. On an arm running without a slew limit that difference is not cosmetic.
     """
-    teleop.enable_torque()
+    set_leader_torque(teleop, True)
     current = teleop.get_action()
     steps = max(int(duration_s * fps), 1)
     for step in range(steps + 1):
@@ -433,19 +453,6 @@ def main(argv: list[str] | None = None) -> int:
         ep_frames += 1
         ep_interventions += int(intervention)
 
-    def close_episode(reason: str) -> None:
-        """Keep what has been recorded so far as one episode."""
-        nonlocal recording, frames, interventions, ep_frames, ep_interventions
-        if not recording:
-            return
-        dataset.save_episode()
-        frames += ep_frames
-        interventions += ep_interventions
-        print(f"episode {dataset.num_episodes - 1} saved ({reason}): {ep_frames} frames, "
-              f"{ep_interventions} of them corrections", flush=True)
-        recording = False
-        ep_frames = ep_interventions = 0
-
     def discard_episode() -> None:
         """Throw the current episode away, the way left-arrow does in lerobot-record.
 
@@ -460,6 +467,29 @@ def main(argv: list[str] | None = None) -> int:
         dataset.clear_episode_buffer()
         print(f"\nepisode discarded: {ep_frames} frames dropped "
               f"({ep_interventions} corrections). Reset the scene and go again.", flush=True)
+        recording = False
+        ep_frames = ep_interventions = 0
+
+    # Half a second. Below this an "episode" is an artefact of where a keypress landed,
+    # not an attempt: the first real session ended with a 1-frame episode saved on the
+    # way out, which is 33 ms of video and a row of noise in the parquet.
+    min_frames = max(int(fps * 0.5), 2)
+
+    def close_episode(reason: str) -> None:
+        """Keep what has been recorded so far as one episode, if there is one."""
+        nonlocal recording, frames, interventions, ep_frames, ep_interventions
+        if not recording:
+            return
+        if ep_frames < min_frames:
+            print(f"\nepisode dropped ({reason}): {ep_frames} frames is under "
+                  f"{min_frames}, too short to be an attempt", flush=True)
+            discard_episode()
+            return
+        dataset.save_episode()
+        frames += ep_frames
+        interventions += ep_interventions
+        print(f"episode {dataset.num_episodes - 1} saved ({reason}): {ep_frames} frames, "
+              f"{ep_interventions} of them corrections", flush=True)
         recording = False
         ep_frames = ep_interventions = 0
 
@@ -513,17 +543,28 @@ def main(argv: list[str] | None = None) -> int:
                         # told to be, and the leader should meet the arm, not the command.
                         last_action = pose(raw)
                         if actuated:
-                            teleop_smooth_move_to(teleop, last_action, fps=fps)  # enables torque
+                            # THE HANDOVER MAY FAIL AND THE SESSION MUST NOT. A garbled
+                            # feetech reply here used to raise out of the loop and end a
+                            # run; now it leaves you paused with the arm holding, and you
+                            # can press space to try again or just move the leader by hand
+                            # (the follower is not driven from it until you press tab).
+                            try:
+                                teleop_smooth_move_to(teleop, last_action, fps=fps)
+                            except Exception as exc:  # noqa: BLE001 - bus, not logic
+                                print(f"\nhandover failed: {exc}\n"
+                                      "the arm is holding and you are still PAUSED. Check the "
+                                      "leader's power and its bus, then space to retry.",
+                                      flush=True)
                     elif phase is Phase.CORRECTING:
                         if actuated:
                             # Let go of the leader so a human can actually move it.
-                            teleop.disable_torque()
+                            set_leader_torque(teleop, False)
                         else:
                             follower_smooth_move_to(robot, pose(raw), teleop.get_action(), fps=fps)
                     elif phase is Phase.PAUSED and previous is Phase.CORRECTING:
                         if actuated:
                             # Re-lock it, so it holds where you left it instead of sagging.
-                            teleop.enable_torque()
+                            set_leader_torque(teleop, True)
                     elif phase is Phase.AUTONOMOUS:
                         # The arm moved under a human hand: the plan and its prefix both
                         # describe a trajectory nobody is executing. Start clean -- this is
@@ -536,7 +577,7 @@ def main(argv: list[str] | None = None) -> int:
                             chunker.reset()
                         if actuated:
                             # Release the leader before the policy drives, as they do.
-                            teleop.disable_torque()
+                            set_leader_torque(teleop, False)
                         if args.corrections_only:
                             close_episode("correction ended")
                     if phase is Phase.CORRECTING:
@@ -552,6 +593,11 @@ def main(argv: list[str] | None = None) -> int:
                     # Step 6 of their protocol: the episode ends PAUSED, with the leader
                     # aligned, so you can reposition the arm for the next attempt.
                     state["phase"] = Phase.PAUSED
+                    # RE-READ IT. `phase` was taken at the top of the tick, so without
+                    # this the act() below still runs the OLD phase and records one more
+                    # autonomous frame into the episode that was just discarded -- which
+                    # is exactly the stray 1-frame episode the first session ended with.
+                    phase = state["phase"]
 
                 # --- act ---------------------------------------------------------------
                 if phase is Phase.CORRECTING:
