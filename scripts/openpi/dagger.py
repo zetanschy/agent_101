@@ -6,8 +6,8 @@
     ./robot dagger --dataset ... --corrections-only      # only your windows, one per episode
     ./robot dagger --dataset ... --mode sync             # no overlap, no RTC
 
-    space  pause / resume the policy       tab  take over / hand back
-    n      task complete: save the episode and pause for the reset
+    space  pause / resume the policy       tab    take over / hand back
+    right  task complete: save the episode  left   the attempt failed: throw it away
     esc    end the session
 
     The protocol, from le101's HIL guide: watch, pause when failure is imminent, take
@@ -177,13 +177,16 @@ TRANSITIONS: dict[tuple[Phase, str], Phase] = {
 # upstream shows up as a failing test rather than as a key that does nothing.
 EVENTS = {"space": "pause_resume", "tab": "correction"}
 
-# Saving an episode on purpose has NO binding upstream: their corrections-only mode
-# saves when a correction stops, and their continuous mode rotates episodes by video
-# file size. The documented protocol calls for ending an episode when the TASK is done
-# (its step 5), so that needs a key, and it cannot be `enter` -- upstream that is
-# `upload`, and quietly giving one of their keys a second meaning is worse than adding
-# one of my own.
-SAVE_KEY = "n"
+# Episode control, and these ARE lerobot's: apply_recording_control in
+# lerobot/utils/keyboard_input.py maps right -> exit_early (end and keep), left ->
+# rerecord_episode (throw it away and do it again), esc -> stop_recording. Every
+# `./robot record` session already uses them, and a failed attempt on this rig is the
+# same gesture as a failed attempt there.
+#
+# DAgger's own keys (space, tab) come from DAggerKeyboardConfig above; these three come
+# from the recording loop. Two sources, because the two things are separate: one is
+# about who drives, the other about what is kept.
+RECORDING_KEYS = {"right": "save", "left": "discard", "esc": "stop"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -347,9 +350,10 @@ def main(argv: list[str] | None = None) -> int:
     promised = 0
     latencies: list[float] = []
 
-    state = {"phase": Phase.PAUSED, "stop": False, "cut": False}
+    state = {"phase": Phase.PAUSED, "stop": False, "save": False, "discard": False}
     recording = False
-    frames = interventions = 0
+    frames = interventions = 0        # kept, i.e. saved episodes only
+    ep_frames = ep_interventions = 0  # the episode being recorded right now
 
     def dispatch(key: str) -> None:
         """Keyboard events, on the listener thread: only flags are set here.
@@ -358,11 +362,12 @@ def main(argv: list[str] | None = None) -> int:
         ignored with a hint rather than forced -- the same refusal le101 gets from
         looking its own table up.
         """
-        if key == "esc":
+        control = RECORDING_KEYS.get(key)
+        if control == "stop":
             state["stop"] = True
             return
-        if key == SAVE_KEY:
-            state["cut"] = True
+        if control in ("save", "discard"):
+            state[control] = True
             return
         event = EVENTS.get(key)
         if event is None:
@@ -379,7 +384,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\n-> {nxt.value}", flush=True)
 
     listener = create_key_listener(
-        dispatch, controls_help="space=pause/resume, tab=take over, n=save episode, esc=quit"
+        dispatch, controls_help="space=pause/resume, tab=take over, right=save episode, left=discard it, esc=quit"
     )
     if listener is None:
         robot.disconnect()
@@ -417,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         pending = None
 
     def record(raw: dict, act: dict, intervention: bool) -> None:
-        nonlocal frames, interventions, recording
+        nonlocal ep_frames, ep_interventions, recording
         dataset.add_frame({
             **build_dataset_frame(features, raw, prefix=OBS_STR),
             **build_dataset_frame(features, act, prefix=ACTION),
@@ -425,17 +430,38 @@ def main(argv: list[str] | None = None) -> int:
             "intervention": np.array([intervention], dtype=bool),
         })
         recording = True
-        frames += 1
-        interventions += int(intervention)
+        ep_frames += 1
+        ep_interventions += int(intervention)
 
     def close_episode(reason: str) -> None:
-        nonlocal recording
+        """Keep what has been recorded so far as one episode."""
+        nonlocal recording, frames, interventions, ep_frames, ep_interventions
         if not recording:
             return
         dataset.save_episode()
+        frames += ep_frames
+        interventions += ep_interventions
+        print(f"episode {dataset.num_episodes - 1} saved ({reason}): {ep_frames} frames, "
+              f"{ep_interventions} of them corrections", flush=True)
         recording = False
-        print(f"episode saved ({reason}): {frames} frames total, {interventions} corrections",
-              flush=True)
+        ep_frames = ep_interventions = 0
+
+    def discard_episode() -> None:
+        """Throw the current episode away, the way left-arrow does in lerobot-record.
+
+        A failed attempt is worse than no attempt: it teaches the policy a trajectory
+        that did not work. clear_episode_buffer() drops the buffered frames and their
+        images, so nothing of it reaches the parquet.
+        """
+        nonlocal recording, ep_frames, ep_interventions
+        if not recording:
+            print("\nnothing recorded yet, nothing to discard", flush=True)
+            return
+        dataset.clear_episode_buffer()
+        print(f"\nepisode discarded: {ep_frames} frames dropped "
+              f"({ep_interventions} corrections). Reset the scene and go again.", flush=True)
+        recording = False
+        ep_frames = ep_interventions = 0
 
     display = args.display_data
     if display:
@@ -455,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
                   "host instead)", flush=True)
 
     print("\nready. space=pause/resume, tab=take over (from paused), "
-          f"{SAVE_KEY}=save episode, esc=quit\n", flush=True)
+          "right=save episode, left=discard it, esc=quit\n", flush=True)
     last_action: dict | None = None
     previous = state["phase"]
     # WITHOUT THIS THE SESSION WRITES AN UNREADABLE DATASET. VideoEncodingManager's
@@ -517,9 +543,12 @@ def main(argv: list[str] | None = None) -> int:
                         print("recording your correction (c to stop)", flush=True)
                     previous = phase
 
-                if state["cut"]:
-                    state["cut"] = False
-                    close_episode("task complete")
+                if state["save"] or state["discard"]:
+                    if state["save"]:
+                        close_episode("task complete")
+                    else:
+                        discard_episode()
+                    state["save"] = state["discard"] = False
                     # Step 6 of their protocol: the episode ends PAUSED, with the leader
                     # aligned, so you can reposition the arm for the next attempt.
                     state["phase"] = Phase.PAUSED

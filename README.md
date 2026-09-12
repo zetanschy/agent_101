@@ -56,8 +56,8 @@ copy or tweak it.
 
 ```bash
 ./robot dagger --dataset zetanschy/rollout_cap_to_cup_dagger
-#   space  pause / resume the policy     tab  take over / hand back
-#   n      task complete: save the episode and pause for the reset
+#   space  pause / resume the policy     tab    take over / hand back
+#   right  task complete: save it          left   the attempt failed: discard it
 #   esc    end the session
 ```
 
@@ -72,6 +72,12 @@ written as a LeRobotDataset with an `intervention` column, the same one
 Both segments are recorded by default, as that guide describes; `--corrections-only`
 records just your windows, one episode each, which is what lerobot's *code* defaults to.
 The two readings differ and `intervention` is what lets a training run take either.
+
+Episode control is lerobot's, keys included: **→** ends the attempt and keeps it, **←**
+throws it away (`clear_episode_buffer()`, the same call `lerobot-record` makes for a
+re-record), **esc** ends the session. A failed attempt is worse than no attempt — it
+teaches a trajectory that did not work — so discarding is one keypress, and
+`./robot dagger-save-test` proves it leaves nothing behind.
 
 le101 ships that strategy already, and if your checkpoint is in **lerobot** format you
 should use it directly (`lerobot-rollout --strategy.type=dagger`, with a leader teleop).

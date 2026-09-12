@@ -109,6 +109,13 @@ case "$cmd" in
              needs_docker dagger
              $DC -f docker-compose.openpi.yml run --rm openpi-dagger \
                python scripts/openpi/dagger.py "$@" ;;
+  dagger-save-test)     # prove a recorded session survives being written: create,
+                        # record, discard one episode, finalize, reopen, read it back.
+                        # No arm, no policy, no GPU -- it is the dataset plumbing only,
+                        # and it is what caught dagger.py writing an unreadable dataset.
+             needs_docker dagger-save-test
+             $DC -f docker-compose.openpi.yml run --rm openpi \
+               python scripts/openpi/dagger_save_test.py "$@" ;;
   dagger-video)         # render a DAgger episode to MP4 with the handovers drawn on it:
                         # green while the policy drove, amber while you did, and a
                         # timeline of every intervention. The `intervention` column is
@@ -427,8 +434,9 @@ so rather than failing with "docker: command not found".
   ./robot dagger --dataset you/rollout_NAME     DAgger: the policy drives, you take over with the
                                                 leader; both segments recorded, yours tagged
                                                 intervention=True. space=pause, tab=take over,
-                                                n=save episode, esc=quit. --display_data for the
-                                                live rerun view, --corrections-only for just yours
+                                                right=save episode, left=discard a failed one,
+                                                esc=quit (lerobot's own recording keys).
+                                                --display_data for the live rerun view
   ./robot eval-cost [LOG]                       LLM tokens + $ per trial (newest log by default)
   ./robot eval-amend --scene S --judgement n --note "..."   correct a verdict into a new log
   ./robot home                         move follower to calibrated-zero pose

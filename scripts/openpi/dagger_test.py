@@ -111,16 +111,64 @@ def test_the_keys_are_theirs_not_mine():
     )
 
 
-def test_the_save_key_does_not_steal_one_of_theirs():
-  """Saving an episode has no upstream binding, so it must not reuse one.
+def test_the_two_key_namespaces_do_not_collide():
+  """Phase keys come from DAggerKeyboardConfig, episode keys from the recording loop.
 
-  `enter` is their `upload`. Giving one of their keys a second meaning here would make
-  the same finger do different things in the two tools, which is worse than a new key.
+  Two upstream sources, so nothing guarantees on its own that they stay disjoint -- and
+  a key that both paused the policy and saved an episode would be the worst kind of
+  surprise mid-session. An earlier version of this file invented `n` for saving
+  precisely to avoid stealing `enter` (their `upload`); using lerobot's own recording
+  keys removes the invention, and this is what keeps the two sets apart.
   """
   dagger = _dagger()
-  assert dagger.SAVE_KEY not in dagger.EVENTS
-  assert dagger.SAVE_KEY not in _their_keys().values(), (
-    f"{dagger.SAVE_KEY!r} is bound to {[e for e, k in _their_keys().items() if k == dagger.SAVE_KEY]} upstream"
+  overlap = set(dagger.EVENTS) & set(dagger.RECORDING_KEYS)
+  assert not overlap, f"the same key means two things: {sorted(overlap)}"
+  # `enter` is their upload and this file does not use it; leaving it unbound is
+  # deliberate, so a finger that reaches for it does nothing rather than something else.
+  assert "enter" not in dagger.EVENTS and "enter" not in dagger.RECORDING_KEYS
+
+
+def _their_recording_controls() -> dict[str, str]:
+  """key -> lerobot event, out of apply_recording_control's own branches."""
+  source = (LEROBOT / "utils/keyboard_input.py").read_text()
+  block = re.search(r"def apply_recording_control.*?(?=\ndef |\n@)", source, re.S)
+  assert block, "apply_recording_control is gone; the parity check needs rewriting"
+  body = block.group(0)
+  controls = {}
+  for key in re.findall(r'control == "(\w+)"', body):
+    after = body.split(f'control == "{key}"', 1)[1].split("elif")[0]
+    events = re.findall(r'events\["(\w+)"\]\s*=\s*True', after)
+    controls[key] = [e for e in events if e != "exit_early"] or events
+  return {k: v[0] for k, v in controls.items() if v}
+
+
+def test_the_recording_keys_are_lerobots():
+  """right saves, left discards, esc stops -- the keys every ./robot record uses.
+
+  Episode control is not DAgger's invention: lerobot's apply_recording_control already
+  binds these, and an operator who has recorded a dataset on this bench has the gesture
+  in their fingers. Checked against their branches so a rebind upstream fails here.
+  """
+  dagger = _dagger()
+  theirs = _their_recording_controls()
+  assert set(dagger.RECORDING_KEYS) == set(theirs), (
+    f"mine {sorted(dagger.RECORDING_KEYS)} vs lerobot {sorted(theirs)}"
+  )
+  # Their event names, and what each means here.
+  meaning = {"exit_early": "save", "rerecord_episode": "discard", "stop_recording": "stop"}
+  for key, event in theirs.items():
+    assert dagger.RECORDING_KEYS[key] == meaning[event], (
+      f"{key}: lerobot raises {event}, this file calls it {dagger.RECORDING_KEYS[key]!r}"
+    )
+
+
+def test_discarding_is_what_lerobot_calls_it():
+  """A discard must clear the episode buffer, which is the API record uses for a
+  re-record; anything else would leave the failed attempt in the parquet."""
+  source = (LEROBOT / "scripts/lerobot_record.py").read_text()
+  assert "clear_episode_buffer()" in source
+  assert "clear_episode_buffer()" in (HERE / "dagger.py").read_text(), (
+    "dagger.py discards an episode without clearing the buffer"
   )
 
 
