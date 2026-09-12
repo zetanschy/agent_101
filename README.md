@@ -73,6 +73,14 @@ Both segments are recorded by default, as that guide describes; `--corrections-o
 records just your windows, one episode each, which is what lerobot's *code* defaults to.
 The two readings differ and `intervention` is what lets a training run take either.
 
+If **your own correction** goes wrong, keep correcting: recovering the arm from a mess
+you made is the same data as recovering it from one the policy made. Only drop the
+episode when the attempt itself is spoiled. There is deliberately no "undo the last
+correction" — the episode would jump from the frame before it to wherever the arm now
+is, and a trajectory with a teleport in it is worse than no trajectory. Afterwards,
+`lerobot-edit-dataset --operation.type delete_episodes` removes whole episodes, which is
+the same granularity for the same reason.
+
 Episode control is lerobot's, keys included: **→** ends the attempt and keeps it, **←**
 throws it away (`clear_episode_buffer()`, the same call `lerobot-record` makes for a
 re-record), **esc** ends the session. A failed attempt is worse than no attempt — it

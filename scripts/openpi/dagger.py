@@ -40,6 +40,20 @@ can, if you decide it should.
 
 NO FRAMES DURING A PAUSE, also from the protocol: pausing is for aiming, not for data.
 
+WHEN YOUR OWN CORRECTION GOES WRONG. Keep correcting. Recovering the arm from a mess
+you made is the same data as recovering it from one the policy made -- the protocol's
+step 3 is "teleoperate the robot back to a good state", and it does not care whose fault
+the state is. Only when the attempt is spoiled outright (the cap on the floor, the cup
+knocked over) does the episode stop being worth keeping, and then `left` drops the whole
+thing.
+
+Deliberately NOT offered: undoing just the last correction. The buffer could be
+truncated -- it is a dict of lists -- but the episode would then jump from the frame
+before your correction to wherever the arm physically is now, and a trajectory with a
+teleport in it is worse than no trajectory. An episode is continuous or it is nothing,
+which is why lerobot's own tools drop whole episodes too (lerobot-edit-dataset's
+delete_episodes) and never a segment.
+
 WHAT REAL-TIME CHUNKING ADDS TO THE PROBLEM. The policy does not emit one action, it
 emits a 50-action plan, and RTC pins each new plan to the actions the arm has already
 committed (scripts/openpi/chunk_loop.py). A human takeover invalidates both halves of
