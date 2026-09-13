@@ -170,6 +170,11 @@ case "$cmd" in
                         # touching calibration -- a crash moves metal, not encoders.
              needs_docker joint-check
              $RUN python scripts/robot/joint_check.py "$@" ;;
+  joint-hold)           # hold ONE joint at a known reading while you bolt its link back
+                        # on. Torque stays ON when it exits, on purpose: mid-assembly an
+                        # arm that goes limp is how the next thing breaks.
+             needs_docker joint-hold
+             $RUN python scripts/robot/joint_hold.py "$@" ;;
   joint-offset)         # re-align ONE joint's zero after its horn slipped, by shifting
                         # its homing_offset. NOT a recalibration: the frame every
                         # checkpoint was trained in is preserved. Dry run unless --apply.
@@ -378,6 +383,8 @@ so rather than failing with "docker: command not found".
                                 natively when there is no Docker (add --openpi)
   ./robot build                 same thing (alias)
   ./robot joint-check [--watch] read both arms and show where they disagree (no motion)
+  ./robot joint-hold --joint J --degrees 0      hold one joint at a known angle while you
+                                bolt its link back on (--free to release it instead)
   ./robot joint-offset --joint J --degrees D [--apply]
                                 re-align one joint after a slipped horn, keeping the
                                 frame your trained models depend on

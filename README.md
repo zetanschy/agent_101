@@ -113,10 +113,20 @@ physical pose  ->  reported degrees
 
 Restoring *that* is the job. Two fixes do it and keep every trained model:
 
-1. **Reseat the horn** (preferred). Power the joint so it holds, loosen the horn screw,
-   rotate the link back to where it belongs for that reading, retighten. The arm ends up
-   matching both the old frame *and* the URDF, which the sim2real work and the computed
-   safety clamp both assume.
+1. **Reseat the horn, then finish in software** (preferred). Do not try to land the
+   angle by trial and error: the coupling between a servo and its link is *discrete* — a
+   splined horn indexes in whole teeth, a bolted one in whole holes — so you always end
+   up within half a step of the truth no matter how many times you unbolt it. One
+   assembly, one measurement, one patch:
+
+   ```bash
+   ./robot joint-hold --joint wrist_flex --degrees 0     # the servo holds 0.00; bolt it on
+   ./robot joint-check --sweep wrist_flex                # midpoint = what is left over
+   ./robot joint-offset --joint wrist_flex --degrees <midpoint> --apply
+   ```
+
+   This ends up matching both the old frame *and* the URDF, which the sim2real work and
+   the computed safety clamp both assume.
 2. **Shift that one joint's `homing_offset`** by the measured delta:
 
    ```bash
