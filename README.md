@@ -117,10 +117,19 @@ Restoring *that* is the job. Two fixes do it and keep every trained model:
    rotate the link back to where it belongs for that reading, retighten. The arm ends up
    matching both the old frame *and* the URDF, which the sim2real work and the computed
    safety clamp both assume.
-2. **Shift that one joint's `homing_offset`** in
-   `calibration/robots/so101_follower/zetans_follower.json` by the measured delta, and
-   commit it. Same mapping restored, in software. Note it also moves the eval clamp,
-   which `evals/rig.py` derives from this file.
+2. **Shift that one joint's `homing_offset`** by the measured delta:
+
+   ```bash
+   ./robot joint-offset --joint wrist_flex --degrees 12.5          # dry run
+   ./robot joint-offset --joint wrist_flex --degrees 12.5 --apply
+   ```
+
+   Same mapping restored, in software, and the safety clamp is **not** affected:
+   `range_min`/`range_max` are recorded from `Present_Position`, i.e. *after* the
+   offset, so they shift with it and the span `evals/rig.py` derives the clamp from
+   never changes. What this does not fix is the arm's geometry, which still disagrees
+   with the URDF by the slip — so sim2real and solved camera extrinsics stay off until
+   the horn is reseated.
 
 And one fix that looks right and is not:
 

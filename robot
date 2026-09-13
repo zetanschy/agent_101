@@ -170,6 +170,11 @@ case "$cmd" in
                         # touching calibration -- a crash moves metal, not encoders.
              needs_docker joint-check
              $RUN python scripts/robot/joint_check.py "$@" ;;
+  joint-offset)         # re-align ONE joint's zero after its horn slipped, by shifting
+                        # its homing_offset. NOT a recalibration: the frame every
+                        # checkpoint was trained in is preserved. Dry run unless --apply.
+             needs_docker joint-offset
+             $RUN python scripts/robot/joint_offset.py "$@" ;;
   calibrate) needs_docker calibrate; $RUN ./scripts/robot/calibrate.sh "$@" ;;
   login)     bash ./scripts/setup/login.sh "$@" ;;  # HF + wandb tokens -> .env.local (host-side)
   train)     native_or train_run bash scripts/robot/train.sh "$@" ;;    # LoRA fine-tune on the GPU
@@ -373,6 +378,9 @@ so rather than failing with "docker: command not found".
                                 natively when there is no Docker (add --openpi)
   ./robot build                 same thing (alias)
   ./robot joint-check [--watch] read both arms and show where they disagree (no motion)
+  ./robot joint-offset --joint J --degrees D [--apply]
+                                re-align one joint after a slipped horn, keeping the
+                                frame your trained models depend on
   ./robot calibrate follower    calibrate an arm (follower|leader)
                                 WARNING: redefines the joint frame -> every checkpoint
                                 trained on absolute targets is then in a different one
