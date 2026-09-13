@@ -43,11 +43,18 @@ def test_no_sweep_at_all_gives_no_verdict():
   assert "joint-offset" not in out, "offered a fix from a measurement that did not happen"
 
 
-def test_a_half_sweep_gives_no_verdict_either():
-  """One stop reached, not the other: the midpoint looks plausible and is not."""
+def test_a_half_sweep_uses_the_stop_it_reached_and_never_the_midpoint():
+  """One stop reached, not the other.
+
+  This used to assert NOT MEASURED, because the midpoint of half a sweep is meaningless
+  -- which is still true, and it is still never printed. But the end that DID land on a
+  stored limit is a real measurement, and throwing it away sent an operator back to a
+  sweep that a gripper-to-forearm collision makes impossible.
+  """
   out = _text(-104.0, 0.0)
-  assert "NOT MEASURED" in out
-  assert "MIDPOINT" not in out
+  assert "MIDPOINT" not in out, "the midpoint of half a sweep is not a number"
+  assert "ONE STOP ONLY" in out
+  assert "PROVISIONAL SLIP +0.09" in out
 
 
 def test_a_full_sweep_that_centres_says_so():
@@ -77,6 +84,42 @@ def test_without_a_stored_span_it_still_reports_rather_than_guesses():
   out = "\n".join(_mod().verdict("wrist_flex", -10.0, 10.0, None))
   assert "MIDPOINT" in out
   assert "NOT MEASURED" not in out
+
+
+def test_one_real_stop_and_one_obstruction_gives_a_provisional_number():
+  """The session that prompted it: low end on its stop, high end 25 deg short.
+
+  Both stops move together with a slipped horn, so the one you reached carries the
+  answer -- but it is provisional, because nothing in the reading distinguishes a stop
+  you leaned on from a stop you merely touched.
+  """
+  out = _text(-102.15, 79.38)
+  assert "ONE STOP ONLY" in out
+  assert "PROVISIONAL SLIP +1.94" in out
+  assert "--degrees 1.94" in out
+  assert "something in the way, not a stop" in out
+  assert "NOT MEASURED" not in out, "a usable single-stop reading was thrown away"
+
+
+def test_the_same_holds_from_the_other_end():
+  out = _text(-60.0, 106.0)  # high end on its stop (+1.91), low end nowhere near
+  assert "ONE STOP ONLY" in out
+  assert "PROVISIONAL SLIP +1.91" in out
+
+
+def test_neither_end_on_a_stop_is_still_not_measured():
+  """Short AND nowhere near either limit: nothing to estimate from."""
+  out = _text(-40.0, 40.0)
+  assert "NOT MEASURED" in out
+  assert "PROVISIONAL" not in out
+  assert "joint-offset" not in out
+
+
+def test_a_provisional_number_is_never_called_a_verdict():
+  """It must not read like the full-sweep conclusion."""
+  out = _text(-102.15, 79.38)
+  assert "Nothing to patch" not in out
+  assert "MIDPOINT" not in out
 
 
 def main() -> int:

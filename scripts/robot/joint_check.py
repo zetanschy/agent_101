@@ -65,6 +65,12 @@ def calibration(kind: str, robot_type: str, robot_id: str) -> dict:
 # hand happened to be.
 SWEEP_COVERAGE = 0.9
 
+# How close to a stored limit an end has to land before it counts as that mechanical
+# stop rather than as wherever the hand gave up. A slipped horn moves both stops by the
+# same amount, so ONE of them is enough to estimate it -- and one is often all you get,
+# because the other end of a wrist's travel is where the gripper meets the forearm.
+STOP_TOLERANCE = 5.0
+
 
 def verdict(motor: str, lo: float, hi: float, span_deg: float | None) -> list[str]:
     """What the sweep proved, or that it proved nothing.
@@ -81,6 +87,29 @@ def verdict(motor: str, lo: float, hi: float, span_deg: float | None) -> list[st
         out.append(f"  stored +/-{span_deg:.2f} deg = {2 * span_deg:.1f} deg of travel")
         if travelled < 2 * span_deg * SWEEP_COVERAGE:
             short = 2 * span_deg - travelled
+            low_hit = abs(lo - -span_deg) <= STOP_TOLERANCE
+            high_hit = abs(hi - span_deg) <= STOP_TOLERANCE
+            if low_hit != high_hit:
+                # One real stop and one obstruction. Both stops move together with the
+                # slip, so the one you reached carries the whole answer -- provisionally,
+                # because nothing here can tell a stop you leaned on from a stop you
+                # merely touched.
+                slip = (lo + span_deg) if low_hit else (hi - span_deg)
+                end = "low" if low_hit else "high"
+                blocked = (hi, span_deg) if low_hit else (lo, -span_deg)
+                out.append(
+                    f"\n  ONE STOP ONLY. The {end} end landed on its stored limit; the other\n"
+                    f"  gave up at {blocked[0]:+.1f} instead of {blocked[1]:+.1f}, which is"
+                    f" {abs(blocked[0] - blocked[1]):.0f} deg short --\n"
+                    f"  that is something in the way, not a stop. On a wrist it is usually the\n"
+                    f"  gripper meeting the forearm: pose the arm clear and sweep again.\n\n"
+                    f"  PROVISIONAL SLIP {slip:+.2f} deg, from that one stop. If you want to act\n"
+                    f"  on it without the second stop, confirm it another way first --\n"
+                    f"  ./robot joint-check with both arms held in the same pose reads the same\n"
+                    f"  number independently.\n\n"
+                    f"      ./robot joint-offset --joint {motor} --degrees {slip:.2f} --apply"
+                )
+                return out
             out.append(
                 f"\n  NOT MEASURED. You covered {travelled:.0f} of {2 * span_deg:.0f} deg"
                 f" ({short:.0f} short), so those two ends are not the two stops and their\n"
