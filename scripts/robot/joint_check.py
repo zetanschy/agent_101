@@ -60,6 +60,54 @@ def calibration(kind: str, robot_type: str, robot_id: str) -> dict:
     return json.loads(path.read_text())
 
 
+# How much of the stored travel has to be covered before a midpoint means anything.
+# Below this the two ends are not the two stops, and their middle is just where your
+# hand happened to be.
+SWEEP_COVERAGE = 0.9
+
+
+def verdict(motor: str, lo: float, hi: float, span_deg: float | None) -> list[str]:
+    """What the sweep proved, or that it proved nothing.
+
+    Kept separate from the hardware so it can be tested, and because the first version
+    got this exactly backwards: it warned that the sweep was too short and then
+    pronounced on the midpoint anyway, in the same breath. A measurement that did not
+    happen has no verdict -- saying so is the whole job here.
+    """
+    mid = (lo + hi) / 2
+    travelled = hi - lo
+    out = [f"\n  swept  [{lo:.2f}, {hi:.2f}]  = {travelled:.1f} deg of travel"]
+    if span_deg:
+        out.append(f"  stored +/-{span_deg:.2f} deg = {2 * span_deg:.1f} deg of travel")
+        if travelled < 2 * span_deg * SWEEP_COVERAGE:
+            short = 2 * span_deg - travelled
+            out.append(
+                f"\n  NOT MEASURED. You covered {travelled:.0f} of {2 * span_deg:.0f} deg"
+                f" ({short:.0f} short), so those two ends are not the two stops and their\n"
+                f"  middle is just where your hand was. Nothing is wrong and nothing is\n"
+                f"  proven yet.\n\n"
+                f"      ./robot joint-check --sweep {motor}\n\n"
+                f"  Move {motor} BY HAND all the way to one mechanical stop, then all the\n"
+                f"  way to the other, and watch `seen` open up to about [-{span_deg:.0f},"
+                f" +{span_deg:.0f}].\n  Only then Ctrl-C."
+            )
+            return out
+    out.append(f"\n  MIDPOINT {mid:+.2f} deg  -- it should read 0.00\n")
+    if abs(mid) > 1.0:
+        out.append(
+            f"  So {motor} reads {mid:+.2f} deg high at every pose. To restore the frame:\n"
+            f"      ./robot joint-offset --joint {motor} --degrees {mid:.2f}\n"
+            f"      ./robot joint-offset --joint {motor} --degrees {mid:.2f} --apply\n"
+            "  Sweep again afterwards: the midpoint should come back ~0."
+        )
+    else:
+        out.append(
+            f"  Within a degree of zero, over a full sweep: {motor} is back in the frame\n"
+            "  your checkpoints were trained in. Nothing to patch."
+        )
+    return out
+
+
 def sweep(follower, teleop, args) -> int:
     """Measure one joint's slip against its own mechanical stops.
 
@@ -115,23 +163,8 @@ def sweep(follower, teleop, args) -> int:
 
     if lo is None:
         return 1
-    mid = (lo + hi) / 2
-    travelled = hi - lo
-    print(f"\n  swept  [{lo:.2f}, {hi:.2f}]  = {travelled:.1f} deg of travel")
-    if span_deg:
-        print(f"  stored +/-{span_deg:.2f} deg = {2 * span_deg:.1f} deg of travel")
-        if travelled < 2 * span_deg - 10:
-            print(f"  ...you did not reach both stops ({2 * span_deg - travelled:.0f} deg short);"
-                  " the midpoint below is not trustworthy yet.")
-    print(f"\n  MIDPOINT {mid:+.2f} deg  -- it should read 0.00\n")
-    if abs(mid) > 1.0:
-        print(f"  So {motor} reads {mid:+.2f} deg high at every pose. To restore the frame:\n"
-              f"      ./robot joint-offset --joint {motor} --degrees {mid:.2f}\n"
-              f"      ./robot joint-offset --joint {motor} --degrees {mid:.2f} --apply\n"
-              "  Sweep again afterwards: the midpoint should come back ~0.", flush=True)
-    else:
-        print(f"  Within a degree of zero: {motor}'s zero is where it always was, and the\n"
-              "  problem is somewhere else -- a bent link, or the other arm.", flush=True)
+    for report in verdict(motor, lo, hi, span_deg):
+        print(report, flush=True)
     return 0
 
 
