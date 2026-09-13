@@ -165,6 +165,11 @@ case "$cmd" in
   webui) needs_docker webui;     port="${WEBUI_PORT:-8000}"; echo "web UI -> http://localhost:${port}"
              $DC run --rm -p "${port}:8000" lerobot python webui/app.py ;;
   data) needs_docker data;      grant_display; $RUN ./scripts/robot/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
+  joint-check)          # read both arms and say where they disagree. MOVES NOTHING.
+                        # After a collision, use this to measure the offset BEFORE
+                        # touching calibration -- a crash moves metal, not encoders.
+             needs_docker joint-check
+             $RUN python scripts/robot/joint_check.py "$@" ;;
   calibrate) needs_docker calibrate; $RUN ./scripts/robot/calibrate.sh "$@" ;;
   login)     bash ./scripts/setup/login.sh "$@" ;;  # HF + wandb tokens -> .env.local (host-side)
   train)     native_or train_run bash scripts/robot/train.sh "$@" ;;    # LoRA fine-tune on the GPU
@@ -367,7 +372,10 @@ so rather than failing with "docker: command not found".
   ./robot setup                 prepare this box: build the image, or install
                                 natively when there is no Docker (add --openpi)
   ./robot build                 same thing (alias)
+  ./robot joint-check [--watch] read both arms and show where they disagree (no motion)
   ./robot calibrate follower    calibrate an arm (follower|leader)
+                                WARNING: redefines the joint frame -> every checkpoint
+                                trained on absolute targets is then in a different one
   ./robot teleop [--cams 3]     teleoperate (2 cams default)
   ./robot record --name N --task "..." [--episodes 50] [--cams 3] [--push]
   ./robot preflight [--smoke]   check GPU/VRAM/RAM/disk before a long run

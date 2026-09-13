@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Read both arms and say where they disagree. Moves nothing, commands nothing.
+
+    ./robot joint-check                 # one reading of follower, leader and the delta
+    ./robot joint-check --watch         # keep printing while you move them by hand
+    ./robot joint-check --follower-only # when the leader is not plugged in
+
+WHAT THIS IS FOR. A collision during teleop does not decalibrate an encoder -- a
+magnetic absolute encoder does not forget. What a collision does is move the METAL: the
+horn slips on the spline, and from then on the link sits a few degrees away from where
+the servo thinks it is. The calibration file is untouched (this repo version-controls
+it, so `git status calibration/` proves that in a second), and the arm is simply no
+longer where its numbers say.
+
+WHY THAT MATTERS MORE THAN IT SOUNDS. Every checkpoint here was trained on ABSOLUTE
+joint targets, so what a policy relies on is one mapping:
+
+    physical pose  ->  reported degrees
+
+A slipped horn breaks that mapping for one joint, and the policy then drives that joint
+to the wrong physical place while both the log and the clamp look perfectly normal.
+Restoring the mapping is the whole job -- and there are two ways to do it, one of which
+keeps every trained model and one of which throws them away. See the README section
+this prints a pointer to.
+
+READ-ONLY, DELIBERATELY. It connects (which lerobot uses to push the stored calibration
+INTO the servos, and which makes a servo hold where it already is -- it does not jump)
+and then only reads. No action is ever sent, so this is safe to run on an arm you do
+not trust yet.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import pathlib
+import time
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+
+def env(key: str, default: str) -> str:
+    return os.environ.get(key, default) or default
+
+
+def home_pose() -> dict[str, float]:
+    """The recorded home pose, in degrees: a PHYSICAL reference that predates the crash."""
+    path = pathlib.Path(env("HOME_POSE_FILE", str(ROOT / "config" / "home_pose.json")))
+    if not path.exists():
+        return {}
+    return {k: float(v) for k, v in json.loads(path.read_text()).items()}
+
+
+def calibration(kind: str, robot_type: str, robot_id: str) -> dict:
+    """The versioned calibration, so the printout can show each joint's own range."""
+    path = ROOT / "calibration" / kind / robot_type / f"{robot_id}.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text())
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument("--watch", action="store_true", help="keep printing until Ctrl-C")
+    p.add_argument("--interval", type=float, default=0.5)
+    p.add_argument("--follower-only", action="store_true")
+    p.add_argument("--tolerance", type=float, default=3.0,
+                   help="degrees of leader/follower disagreement to flag (default 3)")
+    args = p.parse_args(argv)
+
+    from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+    follower = SO101Follower(
+        SO101FollowerConfig(
+            port=env("ROBOT_PORT", "/dev/ttyACM1"),
+            id=env("ROBOT_ID", "zetans_follower"),
+            cameras={},  # no cameras: this is about joints, and it keeps the USB quiet
+            use_degrees=True,
+        )
+    )
+    follower.connect()
+    teleop = None
+    if not args.follower_only:
+        from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
+
+        teleop = SO101Leader(
+            SO101LeaderConfig(
+                port=env("TELEOP_PORT", "/dev/ttyACM0"),
+                id=env("TELEOP_ID", "zetans_leader"),
+                use_degrees=True,
+            )
+        )
+        teleop.connect()
+        # Torque off so you can pose it by hand: this is a measurement, not a handover.
+        try:
+            teleop.bus.disable_torque(num_retry=3)
+        except Exception as exc:  # noqa: BLE001 - a stiff leader is annoying, not fatal
+            print(f"could not release the leader ({exc}); pose it anyway if it gives", flush=True)
+
+    home = home_pose()
+    follower_cal = calibration("robots", env("ROBOT_TYPE", "so101_follower"),
+                               env("ROBOT_ID", "zetans_follower"))
+
+    def line(name: str, f: float, l: float | None) -> str:
+        home_delta = f" home{f - home[name]:+7.1f}" if name in home else " " * 12
+        span = ""
+        if name in follower_cal:
+            c = follower_cal[name]
+            span = f"  counts[{c.get('range_min')},{c.get('range_max')}] homing={c.get('homing_offset')}"
+        if l is None:
+            return f"  {name:16s} {f:8.2f}{home_delta}{span}"
+        delta = f - l
+        flag = "  <-- OFFSET" if abs(delta) > args.tolerance else ""
+        return f"  {name:16s} follower {f:8.2f}   leader {l:8.2f}   delta {delta:+7.2f}{flag}"
+
+    try:
+        while True:
+            raw = follower.get_observation()
+            joints = [k[:-4] for k in follower.action_features if k.endswith(".pos")]
+            lead = teleop.get_action() if teleop is not None else {}
+            print(f"\n--- {time.strftime('%H:%M:%S')} ---", flush=True)
+            for motor in joints:
+                f = float(raw[f"{motor}.pos"])
+                l = float(lead[f"{motor}.pos"]) if f"{motor}.pos" in lead else None
+                print(line(motor, f, l), flush=True)
+            if teleop is not None:
+                print("\n  `delta` only means something when BOTH arms are in the same physical\n"
+                      "  pose -- hold them against the same reference (both folded to their\n"
+                      "  mechanical stop is the easiest) and read the joint that disagrees.",
+                      flush=True)
+            elif home:
+                print("\n  `home` is how far each joint is from the recorded home pose. Put the\n"
+                      "  arm physically at home and the joint that does not read ~0 is the one\n"
+                      "  that moved.", flush=True)
+            if not args.watch:
+                break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        follower.disconnect()
+        if teleop is not None:
+            teleop.disconnect()
+
+    print("\nA slipped joint is METAL, not calibration: see 'A joint slipped' in README.md\n"
+          "before changing anything -- one of the two fixes keeps your trained models and\n"
+          "the other silently invalidates them.", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

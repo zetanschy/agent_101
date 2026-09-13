@@ -93,6 +93,47 @@ This wrapper exists because the checkpoint that works on this arm is an openpi *
 directory, which lerobot's policy factory cannot load — see
 [scripts/openpi/dagger.py](scripts/openpi/dagger.py).
 
+## A joint slipped (a crash during teleop)
+
+A collision does not decalibrate an encoder — a magnetic absolute encoder does not
+forget. It moves the **metal**: the horn slips on the spline and the link sits a few
+degrees from where the servo thinks it is. Check that first, it takes a second:
+
+```bash
+git status calibration/     # empty = the stored calibration is untouched, as expected
+./robot joint-check         # read both arms, see which joint disagrees and by how much
+```
+
+Every checkpoint here was trained on **absolute joint targets**, so what a policy relies
+on is exactly one mapping:
+
+```
+physical pose  ->  reported degrees
+```
+
+Restoring *that* is the job. Two fixes do it and keep every trained model:
+
+1. **Reseat the horn** (preferred). Power the joint so it holds, loosen the horn screw,
+   rotate the link back to where it belongs for that reading, retighten. The arm ends up
+   matching both the old frame *and* the URDF, which the sim2real work and the computed
+   safety clamp both assume.
+2. **Shift that one joint's `homing_offset`** in
+   `calibration/robots/so101_follower/zetans_follower.json` by the measured delta, and
+   commit it. Same mapping restored, in software. Note it also moves the eval clamp,
+   which `evals/rig.py` derives from this file.
+
+And one fix that looks right and is not:
+
+> **Do not run `./robot calibrate`.** A full recalibration redefines every joint's frame
+> from scratch, so the same physical pose reports different degrees than it did when
+> `cap_to_cup_200` was recorded — and every checkpoint trained on it is then aiming at a
+> frame that no longer exists. Nothing warns you; the arm simply starts missing.
+
+Measuring the delta: put both arms in the *same physical pose* (folded against their
+mechanical stops is the easiest reference) and read `./robot joint-check`, or put the
+follower physically at its home pose and see which joint does not read ~0 against
+`config/home_pose.json`.
+
 ## Training
 
 ```bash
