@@ -60,6 +60,81 @@ def calibration(kind: str, robot_type: str, robot_id: str) -> dict:
     return json.loads(path.read_text())
 
 
+def sweep(follower, teleop, args) -> int:
+    """Measure one joint's slip against its own mechanical stops.
+
+    THE MIDPOINT IS THE MEASUREMENT. lerobot stores each joint's range in counts and
+    reports degrees as (position - mid) * 360 / 4095 with mid halfway between them, so
+    the middle of the PHYSICAL travel reads 0.00 by construction -- that is what the
+    calibration recorded. A horn that slipped by D moves every reading by D, so sweeping
+    stop to stop and halving gives D directly, with no second arm to pose by eye and no
+    guess about which end you are nearer.
+
+    Only the joint under test is freed. The rest keep holding, because an SO-101 with
+    all six released falls onto the table.
+    """
+    motor = args.sweep
+    joints = [k[:-4] for k in follower.action_features if k.endswith(".pos")]
+    if motor not in joints:
+        print(f"{motor} is not a joint: {', '.join(joints)}", flush=True)
+        return 2
+
+    span_deg = None
+    cal = calibration("robots", env("ROBOT_TYPE", "so101_follower"),
+                      env("ROBOT_ID", "zetans_follower")).get(motor)
+    if cal:
+        span_deg = (int(cal["range_max"]) - int(cal["range_min"])) / 2 * 360 / 4095
+
+    print(f"\nfreeing {motor} only -- the other joints keep holding.", flush=True)
+    try:
+        follower.bus.disable_torque(motors=[motor], num_retry=3)
+    except Exception as exc:  # noqa: BLE001
+        print(f"could not free {motor}: {exc}", flush=True)
+        return 2
+
+    print("Move it BY HAND to one mechanical stop, then to the other, slowly.\n"
+          "Ctrl-C when you have touched both.\n", flush=True)
+    lo = hi = None
+    try:
+        while True:
+            value = float(follower.get_observation()[f"{motor}.pos"])
+            lo = value if lo is None else min(lo, value)
+            hi = value if hi is None else max(hi, value)
+            mid = (lo + hi) / 2
+            print(f"\r  now {value:8.2f}   seen [{lo:8.2f}, {hi:8.2f}]   midpoint {mid:+7.2f}",
+                  end="", flush=True)
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print(flush=True)
+        try:
+            follower.bus.enable_torque(motors=[motor], num_retry=3)
+        except Exception as exc:  # noqa: BLE001
+            print(f"could not re-hold {motor}: {exc}", flush=True)
+
+    if lo is None:
+        return 1
+    mid = (lo + hi) / 2
+    travelled = hi - lo
+    print(f"\n  swept  [{lo:.2f}, {hi:.2f}]  = {travelled:.1f} deg of travel")
+    if span_deg:
+        print(f"  stored +/-{span_deg:.2f} deg = {2 * span_deg:.1f} deg of travel")
+        if travelled < 2 * span_deg - 10:
+            print(f"  ...you did not reach both stops ({2 * span_deg - travelled:.0f} deg short);"
+                  " the midpoint below is not trustworthy yet.")
+    print(f"\n  MIDPOINT {mid:+.2f} deg  -- it should read 0.00\n")
+    if abs(mid) > 1.0:
+        print(f"  So {motor} reads {mid:+.2f} deg high at every pose. To restore the frame:\n"
+              f"      ./robot joint-offset --joint {motor} --degrees {mid:.2f}\n"
+              f"      ./robot joint-offset --joint {motor} --degrees {mid:.2f} --apply\n"
+              "  Sweep again afterwards: the midpoint should come back ~0.", flush=True)
+    else:
+        print(f"  Within a degree of zero: {motor}'s zero is where it always was, and the\n"
+              "  problem is somewhere else -- a bent link, or the other arm.", flush=True)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -69,6 +144,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--follower-only", action="store_true")
     p.add_argument("--tolerance", type=float, default=3.0,
                    help="degrees of leader/follower disagreement to flag (default 3)")
+    p.add_argument("--sweep", metavar="JOINT", default=None,
+                   help="measure ONE joint's slip against its own hard stops: frees that "
+                        "joint (and only that one) so you can move it by hand, tracks the "
+                        "extremes, and reports the midpoint -- which should read 0")
     args = p.parse_args(argv)
 
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
@@ -83,7 +162,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     follower.connect()
     teleop = None
-    if not args.follower_only:
+    # A sweep measures one joint against its own stops, so the leader is not part of it
+    # -- and requiring it to be plugged in would only add a way for the measurement to
+    # fail before it starts.
+    if not args.follower_only and not args.sweep:
         from lerobot.teleoperators.so_leader import SO101Leader, SO101LeaderConfig
 
         teleop = SO101Leader(
@@ -99,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
             teleop.bus.disable_torque(num_retry=3)
         except Exception as exc:  # noqa: BLE001 - a stiff leader is annoying, not fatal
             print(f"could not release the leader ({exc}); pose it anyway if it gives", flush=True)
+
+    if args.sweep:
+        return sweep(follower, teleop, args)
 
     home = home_pose()
     follower_cal = calibration("robots", env("ROBOT_TYPE", "so101_follower"),
