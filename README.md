@@ -93,6 +93,61 @@ This wrapper exists because the checkpoint that works on this arm is an openpi *
 directory, which lerobot's policy factory cannot load — see
 [scripts/openpi/dagger.py](scripts/openpi/dagger.py).
 
+### Training on it: a DAgger round
+
+```bash
+./robot openpi-dagger-stats --dataset zetanschy/v1_cap_to_cup_dagger   # no GPU
+./robot openpi-dagger-train --init-from /checkpoints/openpi_pi05_lora_cap_to_cup_200     --data.repo-id=zetanschy/v1_cap_to_cup_dagger --exp-name=dagger_r1 --steps 3000
+```
+
+Adapted from a private training pipeline this bench does not own; the weight rule and
+the quantisation follow that design, and what changes here is where the labels come
+from — `./robot dagger` writes a per-frame `intervention` column, so this
+bench does not have to reconstruct takeover spans after the fact.
+
+**`--init-from` is what makes a run a round.** It warm-starts from that checkpoint,
+**inherits its norm stats** instead of recomputing them, and fits the LR schedule to the
+round's own length. Inheriting matters more than it looks: recomputing statistics over
+the corrective dataset changes what "normalised" means underneath weights trained
+against the old scaling — the inputs move while the network stands still, which reads as
+a bad dataset rather than as a bug. Pass `--dry-run` to see the composed command and
+train nothing.
+
+**A DAgger dataset is not a demonstration set,** so it is not sampled flat. It is an
+autonomous rollout with takeovers spliced in, and training on it uniformly is wrong in
+two directions: the corrections are the point of the round, while the policy's own
+frames in the seconds *before* a takeover are the failure run-up and must not be
+reinforced. Operator frames get `--human-weight` (1.0), autonomous frames
+`--auto-weight` (0.5), and the `--pre-window-s` (5 s) before each takeover ramps down to
+zero. Weights are applied to **sampling, not to the loss** — each frame is repeated in a
+precomputed index — so a zero-weight frame costs no video decode, where a
+loss-scaled-to-zero frame would still pay a full forward and backward pass.
+
+Those defaults are **not** the usual 2.0/0.3, which is tuned for *sparse*
+interventions. Measured over this bench's six DAgger sets:
+
+| dataset | operator frames | draws at 1.0/0.5 | at 2.0/0.3 |
+|---|---|---|---|
+| `v1_cap_to_cup_dagger` | 39.2% | 59.0% | 82.7% |
+| `v2_cap_to_cup_dagger` | 44.5% | 65.4% | 86.3% |
+| `v3_cap_to_cup_dagger` | 32.2% | 51.4% | 77.9% |
+| `edge_table_..._dagger3` | 38.8% | 59.2% | 82.8% |
+
+At 2.0/0.3 more than four fifths of every batch is corrections, with almost no
+autonomous data left to anchor against forgetting. Tune against the `operator share of
+draws` line `openpi-dagger-stats` prints, not against the ratio.
+
+The index is built **once** and reused for the whole run, so a frame quantised to zero
+draws is excluded permanently rather than missed for one epoch — hence `--epoch-scale 8`
+rather than 1, and a seeded Bernoulli draw on the rounding fraction rather than
+largest-remainder, which would break the ties between identically-weighted autonomous
+frames by index and drop contiguous stretches of late episodes.
+
+openpi's loader is monkeypatched, because `create_torch_data_loader` hardcodes
+`sampler=None` on the JAX path. The seam is **probed before it is patched**
+(`_check_openpi_seam`): a patch that silently stopped applying would train on unweighted
+data and look completely normal.
+
 ## A joint slipped (a crash during teleop)
 
 A collision does not decalibrate an encoder — a magnetic absolute encoder does not

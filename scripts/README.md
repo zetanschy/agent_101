@@ -52,7 +52,15 @@ and a large cache in `$HOME`. `sim.sh` selects the environment and runs the rest
 
 ## openpi/ — the JAX stack
 
-    train.sh               ./robot openpi-train
+    train.sh               ./robot openpi-train, and ./robot openpi-dagger-train
+                           (--init-from warm-starts and inherits the parent's
+                           norm stats; --dagger adds the weighted sampling)
+    dagger_weights.py      ./robot openpi-dagger-stats — the per-frame sampling
+                           weights for a DAgger round, from the `intervention`
+                           column
+    train_dagger.py        openpi's trainer with that sampling installed; the
+                           weights arrive by environment because openpi's tyro
+                           parser owns the command line
     evaluate.py            ./robot openpi-eval; webui/openpi_worker.py imports it
                            by path, so there is one definition of an observation
     rtc_parity.py          ./robot rtc-parity — openpi's real-time chunking vs

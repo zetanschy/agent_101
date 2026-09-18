@@ -368,6 +368,15 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
              native_or openpi_run bash scripts/openpi/train.sh --norm-stats-only "$@" ;;
   openpi-train)
              native_or openpi_run bash scripts/openpi/train.sh "$@" ;;   # computes norm stats if absent
+  openpi-dagger-train)  # a DAgger ROUND: continue an existing checkpoint on corrective
+                        # data, sampling the operator's frames harder than the policy's
+                        # own. --init-from is what makes it a round -- it warm-starts,
+                        # inherits the parent's norm stats rather than recomputing them,
+                        # and fits the LR schedule to the round's length.
+             native_or openpi_run bash scripts/openpi/train.sh --dagger "$@" ;;
+  openpi-dagger-stats)  # what a round WOULD sample, before spending a GPU on it.
+                        # Reads three scalar columns; opens no video.
+             native_or openpi_run python scripts/openpi/dagger_weights.py "$@" ;;
   run)       grant_display; $RUN "$@" ;;      # raw: ./robot run lerobot-train ...
   help|-h|--help|"")
     cat <<'EOF'
@@ -401,6 +410,15 @@ so rather than failing with "docker: command not found".
                                 LoRA fine-tune, OPENPI stack (jax). An ALTERNATIVE to
                                 `train`, not a follow-up: pick one. Dataset comes from
                                 the config, and norm stats are computed automatically.
+  ./robot openpi-dagger-stats --dataset U/D
+                                what a DAgger round would sample: operator share of the
+                                frames, and of the DRAWS after weighting. Costs no GPU.
+  ./robot openpi-dagger-train --init-from CKPT --data.repo-id U/D --exp-name=RUN --steps 3000
+                                a DAgger ROUND: continue CKPT on corrective data, with
+                                the operator's frames sampled harder than the policy's.
+                                --human-weight/--auto-weight to retune (1.0/0.5), and
+                                --pre-window-s for how much of the failure run-up to
+                                fade out (5 s). Norm stats are INHERITED from CKPT.
   ./robot openpi-build                 build the openpi (JAX) reference image
   ./robot openpi-eval --policy P --task "..." [--actions 15] [--dry-run] [--rtc]
                                 openpi checkpoint on the arm + latency report
