@@ -178,10 +178,23 @@ def test_build_caches_the_index_and_reuses_it():
   root = make_dataset(tmpdir(), [[False] * 20 + [True] * 10])
   cfg = dw.DaggerConfig()
   first, _ = dw.build(root, cfg)
-  assert (root / dw.INDEX_FILE).is_file()
+  assert (dw.INDEX_CACHE / root.name / dw.INDEX_FILE).is_file()
   second, _ = dw.build(root, cfg)
   assert np.array_equal(first, second)
   shutil.rmtree(root)
+  shutil.rmtree(dw.INDEX_CACHE / root.name, ignore_errors=True)
+
+
+def test_the_index_is_never_written_inside_the_dataset():
+  """A LeRobotDataset directory is pushed to the Hub wholesale, and push_to_hub
+  uploads whatever it finds. Two derived files were published as part of a
+  dataset once; they do not go back in."""
+  root = make_dataset(tmpdir(), [[False] * 20 + [True] * 10])
+  dw.build(root, dw.DaggerConfig())
+  strays = sorted(q.name for q in root.rglob("dagger_index.*"))
+  assert not strays, f"the index cache leaked into the dataset: {strays}"
+  shutil.rmtree(root)
+  shutil.rmtree(dw.INDEX_CACHE / root.name, ignore_errors=True)
 
 
 def test_relabelling_the_dataset_invalidates_the_cache():

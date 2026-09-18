@@ -57,9 +57,17 @@ import numpy as np
 
 logger = logging.getLogger("dagger_weights")
 
-#: Cached sampling index and its provenance, written beside the staged dataset.
+#: Cached sampling index and its provenance.
 INDEX_FILE = "dagger_index.npy"
 INDEX_META_FILE = "dagger_index.json"
+
+#: Where those two live. NOT inside the dataset directory, which is what the
+#: reference implementation does -- there they sit beside a staging copy that is
+#: thrown away, here the dataset directory is a LeRobotDataset that gets pushed to
+#: the Hub, and `push_to_hub` uploads whatever it finds. Two derived files shipped
+#: as part of a published dataset, where anyone pulling it would reasonably read
+#: them as data.
+INDEX_CACHE = Path(__file__).resolve().parents[2] / "outputs" / "dagger" / "index"
 
 #: LeRobot layout this understands. v2.x has a different data layout and a
 #: different episode bookkeeping; rather than guess at the mapping, refuse it.
@@ -296,7 +304,8 @@ def _dataset_fingerprint(root: Path, cfg: DaggerConfig, is_human: np.ndarray) ->
 def build(root: Path, cfg: DaggerConfig, force: bool = False) -> tuple[np.ndarray, Summary]:
     """The sampling index for this dataset and rule, from cache when it matches."""
     root = Path(root)
-    index_path, meta_path = root / INDEX_FILE, root / INDEX_META_FILE
+    cache = INDEX_CACHE / root.name
+    index_path, meta_path = cache / INDEX_FILE, cache / INDEX_META_FILE
 
     weights, is_human, summary = frame_weights(root, cfg)
     fingerprint = _dataset_fingerprint(root, cfg, is_human)
@@ -314,6 +323,7 @@ def build(root: Path, cfg: DaggerConfig, force: bool = False) -> tuple[np.ndarra
     index = expand_index(weights, cfg)
     summary = summarize(index, is_human, summary)
     try:
+        cache.mkdir(parents=True, exist_ok=True)
         np.save(index_path, index)
         meta_path.write_text(json.dumps(
             {"fingerprint": fingerprint, "config": dataclasses.asdict(cfg),
