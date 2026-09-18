@@ -323,6 +323,63 @@ def build(root: Path, cfg: DaggerConfig, force: bool = False) -> tuple[np.ndarra
     return index, summary
 
 
+def per_episode(root: Path) -> list[dict]:
+    """One row per episode: how long, how much of it you drove, in how many goes.
+
+    The dataset-level share says nothing about WHICH episode is odd, and the odd
+    ones are the whole question when deciding what to train on. An episode you
+    drove end to end is a demonstration that got filed as a correction; one you
+    never touched is the policy succeeding on its own and teaches it what it
+    already believes; a dozen one-second takeovers is usually a session where the
+    handover key was fighting you rather than twelve separate failures.
+    """
+    is_human, episode, fps = read_labels(root)
+    rows = []
+    for ep in np.unique(episode):
+        where = np.flatnonzero(episode == ep)
+        where.sort()
+        mask = is_human[where]
+        # A takeover is a run of True; count the rising edges.
+        edges = int(np.count_nonzero(mask & ~np.r_[False, mask[:-1]]))
+        runs = np.diff(np.flatnonzero(np.r_[True, mask[1:] != mask[:-1], True]))
+        human_runs = runs[0 if mask[0] else 1::2] if mask.any() else np.array([0])
+        rows.append({
+            "episode": int(ep),
+            "frames": int(mask.size),
+            "seconds": mask.size / fps,
+            "human_frames": int(mask.sum()),
+            "human_fraction": float(mask.mean()),
+            "takeovers": edges,
+            "longest_takeover_s": float(human_runs.max() / fps) if mask.any() else 0.0,
+        })
+    return rows
+
+
+def format_per_episode(rows: list[dict]) -> str:
+    """The per-episode table, with the rows worth a second look called out."""
+    out = [f"{'ep':>3s} {'frames':>7s} {'secs':>6s} {'operator':>9s} "
+           f"{'takeovers':>10s} {'longest':>8s}  note"]
+    for r in rows:
+        note = ""
+        # Length first: a one-frame episode is a broken save, and saying "no
+        # correction at all" about it describes the symptom rather than the fault.
+        if r["seconds"] < 1.0:
+            note = "BROKEN — too short to be an attempt; drop this episode"
+        elif r["seconds"] < 5.0:
+            note = "very short for this task; look before keeping it"
+        elif r["takeovers"] == 0:
+            note = "no correction at all — the policy did this one alone"
+        elif r["human_fraction"] > 0.9:
+            note = "you drove almost all of it — a demonstration, not a correction"
+        elif r["longest_takeover_s"] < 0.5 and r["takeovers"] > 3:
+            note = "many tiny takeovers — check the handover key, not the policy"
+        out.append(
+            f"{r['episode']:3d} {r['frames']:7d} {r['seconds']:6.1f} "
+            f"{100 * r['human_fraction']:8.1f}% {r['takeovers']:10d} "
+            f"{r['longest_takeover_s']:7.1f}s  {note}")
+    return "\n".join(out)
+
+
 def format_summary(summary: Summary, root: Path) -> str:
     lines = [
         f"dataset                : {root}",
@@ -500,6 +557,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--epoch-scale", type=int, default=8)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--rebuild", action="store_true", help="ignore a cached index")
+    p.add_argument("--per-episode", action="store_true",
+                   help="one row per episode: length, operator share, takeover count")
     a = p.parse_args(argv)
 
     root = Path(a.dataset)
@@ -511,6 +570,9 @@ def main(argv: list[str] | None = None) -> int:
                        epoch_scale=a.epoch_scale, seed=a.seed)
     _, summary = build(root, cfg, force=a.rebuild)
     print(format_summary(summary, root))
+    if a.per_episode:
+        print()
+        print(format_per_episode(per_episode(root)))
     return 0
 
 
