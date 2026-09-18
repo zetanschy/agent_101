@@ -139,7 +139,14 @@ class Summary:
 def _read_info(root: Path) -> dict[str, Any]:
     info_path = root / "meta" / "info.json"
     if not info_path.is_file():
-        raise FileNotFoundError(f"{info_path} not found — is {root} a LeRobot dataset?")
+        # The common case on a fresh box: openpi would have pulled this itself when
+        # it opened the dataset, but the weighting runs BEFORE that and reads the
+        # shards directly. Say how to fix it rather than name a path that is missing.
+        raise FileNotFoundError(
+            f"{root} is not a LeRobot dataset on disk (no meta/info.json).\n"
+            f"If it is on the Hub, pull it first:\n"
+            f"    huggingface-cli download --repo-type dataset {root.parent.name}/"
+            f"{root.name} --local-dir {root}")
     info = json.loads(info_path.read_text())
     version = info.get("codebase_version")
     if version not in SUPPORTED_CODEBASE_VERSIONS:
@@ -179,7 +186,10 @@ def read_labels(root: Path) -> tuple[np.ndarray, np.ndarray, float]:
 
     files = sorted(glob.glob(str(root / "data" / "**" / "*.parquet"), recursive=True))
     if not files:
-        raise FileNotFoundError(f"no parquet shards under {root / 'data'}")
+        raise FileNotFoundError(
+            f"no parquet shards under {root / 'data'} — the dataset's metadata is "
+            "here but its data is not. A partial `huggingface-cli download` looks "
+            "exactly like this; re-run it.")
     for f in files:
         table = pq.read_table(f, columns=["index", "episode_index", "intervention"])
         idx = table.column("index").to_numpy()

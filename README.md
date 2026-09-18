@@ -148,6 +148,51 @@ openpi's loader is monkeypatched, because `create_torch_data_loader` hardcodes
 (`_check_openpi_seam`): a patch that silently stopped applying would train on unweighted
 data and look completely normal.
 
+### A round on a rented GPU box
+
+Vast.ai and similar are themselves containers and cannot nest one, so this is the
+Docker-less path — [setup_cloud.sh](scripts/openpi/setup_cloud.sh), then `train.sh`
+directly rather than through `./robot`.
+
+**What to rent.** openpi documents **22.5 GB** for a pi05 LoRA fine-tune, and JAX is
+launched at `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9` — which on a 24 GB card is 21.6 GB,
+*under* that figure. So a 4090 is the one size that looks like it should work and
+doesn't. Rent **≥32 GB**; a 48 GB A6000 or L40S is the value pick, and an A100 40/80 GB
+is fine. **≥100 GB disk**: 6.3 GB of parent params, 0.43 GB of dataset, 2-3 GB of CUDA
+wheels, and openpi's own checkpoints are ~9 GB each with ~18 GB peak while one is
+written. Driver must be CUDA 12 (`jax[cuda12]==0.5.3`).
+
+```bash
+git clone --recursive https://github.com/zetanschy/agent_101 && cd agent_101
+bash scripts/openpi/setup_cloud.sh          # 2-3 GB of wheels, several minutes
+
+wandb login                                 # the run logs to WANDB_PROJECT from .env
+huggingface-cli login                       # needed to pull the parent and push the result
+
+# The parent checkpoint. train_state/ is another 3.2 GB and --init-from does not read
+# it: params/ and assets/ are all a warm start needs.
+huggingface-cli download zetanschy/openpi_pi05_lora_cap_to_cup_200 \
+    --include 'params/*' 'assets/*' --local-dir ckpt/cap_to_cup_200
+
+# The dataset, EXPLICITLY. openpi would pull this itself when it opens the dataset,
+# but the weighting runs first and reads the parquet directly.
+huggingface-cli download --repo-type dataset zetanschy/cap_to_cup_dagger_curated_v1 \
+    --local-dir ~/.cache/huggingface/lerobot/zetanschy/cap_to_cup_dagger_curated_v1
+
+bash scripts/openpi/train.sh --dagger --dry-run \
+    --init-from ckpt/cap_to_cup_200 \
+    --data.repo-id=zetanschy/cap_to_cup_dagger_curated_v1 \
+    --exp-name=dagger_r1 --steps 3000
+```
+
+`--dry-run` prints the composed command, the inherited norm stats and the operator
+share of draws, and trains nothing. Drop it to go, **inside tmux** — and note there is
+no norm-stats step to wait through on a round, because they are inherited.
+
+Read the step time off the first few steps and multiply: nothing here has measured
+this config's throughput, so budget the box from what it actually reports rather than
+from an estimate. `--resume` (not `--overwrite`) after a crash.
+
 ## A joint slipped (a crash during teleop)
 
 A collision does not decalibrate an encoder — a magnetic absolute encoder does not
