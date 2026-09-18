@@ -6,6 +6,7 @@ once (slow pi05 load happens here) and then Start/Stop the rollout loop as many
 times as you like without reloading. 'Home' runs webui/home.py (mutually
 exclusive with a loaded model, since both drive the robot).
 """
+import ast
 import glob
 import os
 import re
@@ -13,6 +14,7 @@ import signal
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 import uvicorn
@@ -110,23 +112,28 @@ OPENPI = openpi_available()
 # ONNX metadata. Sourced from kinematics.py so there is one definition of the arm.
 ARM_JOINTS = ("Rotation", "Pitch", "Elbow", "Wrist_Pitch", "Wrist_Roll", "Jaw")
 
-_joint_cache: dict[tuple, tuple | None] = {}
+# (path, mtime) -> (joint names, goal term), either of which may be None.
+_joint_cache: dict[tuple, tuple] = {}
 
 
-def onnx_joints(path: str) -> tuple | None:
-    """Joint names an ONNX export was trained for, or None if they can't be read.
+def onnx_meta(path: str) -> tuple:
+    """(joint names, goal term) an ONNX export was trained for; either may be None.
 
     Cached on (path, mtime): /api/models is polled by the page, and re-opening every
     export on each poll would be pointless work. None means 'unknown', not 'none' —
     callers must not treat it as a mismatch.
+
+    The goal term is the last of mjlab's observation_names, and it is what the page
+    needs to know whether to ask for a yaw (Push-T's footprint) or a height (Lift-T's
+    point in the air). rl_worker.py reads the same field for the same reason.
     """
     try:
         key = (path, os.path.getmtime(path))
     except OSError:
-        return None
+        return (None, None)
     if key in _joint_cache:
         return _joint_cache[key]
-    joints = None
+    joints = goal_term = None
     try:
         import onnxruntime as ort
 
@@ -135,10 +142,74 @@ def onnx_joints(path: str) -> tuple | None:
         ).get_modelmeta().custom_metadata_map
         if meta.get("joint_names"):
             joints = tuple(s.strip() for s in meta["joint_names"].split(","))
+        names = [s.strip() for s in meta.get("observation_names", "").split(",") if s.strip()]
+        if names:
+            goal_term = names[-1]
     except Exception:  # noqa: BLE001 - an unreadable export is 'unknown', not fatal
-        joints = None
-    _joint_cache[key] = joints
-    return joints
+        joints = goal_term = None
+    _joint_cache[key] = (joints, goal_term)
+    return (joints, goal_term)
+
+
+def eval_openpi_checkpoint() -> str | None:
+    """The openpi checkpoint the eval harness actually runs, or None if it can't be read.
+
+    There are several orbax directories under /checkpoints and only one of them drives
+    this bench well; evals/openpi_policy.py names it, and its comment on that constant
+    says it is the one "the web UI's dropdown shows as the working one". So this reads
+    that file rather than keeping a second copy of the path here to drift.
+
+    Read as TEXT, not imported: that module pulls in inspect_robots and JAX, neither of
+    which exists in this container. None means 'could not tell' and the caller falls
+    back to listing every checkpoint, which is the safe direction to fail in -- an
+    empty dropdown is worse than a long one.
+    """
+    try:
+        tree = ast.parse((ROOT / "evals" / "openpi_policy.py").read_text())
+    except (OSError, SyntaxError):
+        return None
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "DEFAULT_CHECKPOINT"
+                   for t in node.targets):
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return node.value.value
+    return None
+
+
+# mjlab's experiment directories, in words. Anything not here falls back to the
+# directory name with its underscores opened out, so a new task is listed rather than
+# hidden -- it just reads less well until it is added.
+_RL_TASKS = {"lift_t": "lift T", "lift_cube": "lift cube", "push_t": "push T"}
+
+
+def rl_label(path: str) -> str:
+    """`so101_lift_t_vision/2026-09-07_01-04-45/...onnx` -> `lift T (vision) · Sep 07 01:04`.
+
+    The old label was the last two path components, which for these exports is the
+    timestamp TWICE -- mjlab names the file after the run directory it sits in -- and
+    dropped the experiment name, the only part that says what the policy does.
+
+    The time comes from the run directory's own name (when training started) rather
+    than the file's mtime, so re-exporting a checkpoint does not relabel the run.
+    """
+    parts = Path(path).parts
+    exp, run = (parts[-3], parts[-2]) if len(parts) >= 3 else ("", "")
+    name = exp[len("so101_"):] if exp.startswith("so101_") else exp
+
+    task, variant = name.replace("_", " "), ""
+    for stem, pretty in _RL_TASKS.items():
+        if name == stem or name.startswith(stem + "_"):
+            task, variant = pretty, name[len(stem):].strip("_").replace("_", " ")
+            break
+
+    try:
+        when = datetime.strptime(run, "%Y-%m-%d_%H-%M-%S").strftime("%b %d %H:%M")
+    except ValueError:
+        when = run
+    return f"{task}{f' ({variant})' if variant else ''} · {when}"
 
 
 def is_openpi_checkpoint(path: str) -> bool:
@@ -164,18 +235,23 @@ def is_rl_policy(path: str) -> bool:
 
 
 def rl_args(p: dict):
-    """Args for webui/rl_worker.py — no task string, no chunking; a goal pose instead.
+    """Args for webui/rl_worker.py — no task string, no chunking; a goal instead.
 
     The RL policy was told where the goal is rather than seeing it (the footprint is
-    1 mm tall and renders in a geom group the wrist camera never saw), so on a real
-    table the operator has to measure it. Everything else about the contract — joints,
-    home pose, action scale — is read from the ONNX metadata by the worker.
+    1 mm tall and renders in a geom group the wrist camera never saw; the lift target
+    is a point in the air that nothing can see), so on a real table the operator has
+    to measure it. Everything else about the contract — joints, home pose, action
+    scale, and which of the two goal terms this export wants — is read from the ONNX
+    metadata by the worker. Both a yaw and a z go over regardless; the worker uses
+    whichever its metadata calls for and ignores the other.
     """
     policy = p.get("policy") or ""
     gx = str(p.get("goal_x", "") or "0.23")
     gy = str(p.get("goal_y", "") or "0.0")
     gyaw = str(p.get("goal_yaw", "") or "0.0")
-    args = [f"--policy={policy}", f"--goal-x={gx}", f"--goal-y={gy}", f"--goal-yaw={gyaw}"]
+    gz = str(p.get("goal_z", "") or "0.12")
+    args = [f"--policy={policy}", f"--goal-x={gx}", f"--goal-y={gy}",
+            f"--goal-yaw={gyaw}", f"--goal-z={gz}"]
     if str(p.get("hz", "") or "").strip():
         args.append(f"--hz={p['hz']}")
     if str(p.get("max_deg_per_s", "") or "").strip():
@@ -183,6 +259,7 @@ def rl_args(p: dict):
     if p.get("dry_run"):
         args.append("--dry-run")
     sig = {"stack": "rl", "policy": policy, "goal_x": gx, "goal_y": gy, "goal_yaw": gyaw,
+           "goal_z": gz,
            "hz": str(p.get("hz", "") or ""), "max_deg_per_s": str(p.get("max_deg_per_s", "") or ""),
            "dry_run": bool(p.get("dry_run"))}
     return args, sig
@@ -315,7 +392,14 @@ def list_models():
 
     openpi checkpoints are scanned from both places they turn up: /checkpoints (the
     hf_models mount, where downloaded ones land) and ./checkpoints/<config>/<exp>/<step>
-    (openpi's own training output layout).
+    (openpi's own training output layout) -- and then narrowed to the ONE the eval
+    harness runs, because the others are training artefacts that have never driven this
+    bench well and picking one by accident costs a session. See eval_openpi_checkpoint.
+
+    The RL exports are narrowed the same way and for the same reason, to the newest run
+    of each experiment. Seventeen entries that differ only in a timestamp is a list you
+    read past rather than read. Everything filtered out is still on disk and still
+    loadable by pasting its path into the custom-path box.
     """
     out: list[dict] = [{"path": DEFAULT_POLICY, "kind": "lerobot"}]
 
@@ -327,26 +411,39 @@ def list_models():
         out.append({"path": str(Path(p)), "kind": "lerobot"})
 
     if OPENPI:
+        working = eval_openpi_checkpoint()
         for pattern in ("/checkpoints/*", str(ROOT / "checkpoints/*/*/*")):
             for p in sorted(glob.glob(pattern)):
-                if is_openpi_checkpoint(p):
-                    out.append({"path": str(Path(p)), "kind": "openpi"})
+                if not is_openpi_checkpoint(p):
+                    continue
+                if working is not None and str(Path(p)) != str(Path(working)):
+                    continue
+                out.append({"path": str(Path(p)), "kind": "openpi"})
 
     # mjlab RL exports. thirdparty/ is inside the ./:/workspace mount, so the training
     # runs are visible in here without a mount of their own. Sorted by mtime, not by
     # path: the paths start with the experiment name, so a string sort buries the run
     # you just finished under whichever task sorts first.
     rl = glob.glob(str(ROOT / "thirdparty/mjlab/logs/rsl_rl/*/*/*.onnx"))
+    seen_exp: set = set()
     for p in sorted(rl, key=lambda f: os.path.getmtime(f), reverse=True):
-        joints = onnx_joints(p)
+        joints, goal_term = onnx_meta(p)
         # Only offer policies whose joints ARE this arm's. mjlab trains other robots in
         # the same tree -- the YAM push-T runs sit right beside the SO-101 ones -- and
         # a 7-joint policy pointed at a 6-joint bus is not a mistake to make on
         # hardware. Unknown joints (no onnxruntime yet) are listed rather than hidden,
         # since the worker rejects a mismatch anyway.
+        #
+        # Filtered BEFORE the per-experiment dedup, so a robot that is not this one
+        # cannot take up its experiment's one slot and hide it.
         if joints is not None and set(joints) != set(ARM_JOINTS):
             continue
-        out.append({"path": str(Path(p)), "kind": "rl"})
+        exp = Path(p).parts[-3]
+        if exp in seen_exp:      # newest run wins; this loop is already newest-first
+            continue
+        seen_exp.add(exp)
+        out.append({"path": str(Path(p)), "kind": "rl", "goal": goal_term,
+                    "label": rl_label(p)})
 
     seen, uniq = set(), []
     for m in out:
@@ -513,8 +610,13 @@ def action_steps(body: dict = Body(...)):
 def goal(body: dict = Body(...)):
     """Live-move the RL policy's goal without reloading.
 
-    The goal is where the printed footprint physically sits, so this is the knob you
-    reach for most: slide the footprint on the table, retype the numbers, keep running.
+    For Push-T the goal is where the printed footprint physically sits, so this is the
+    knob you reach for most: slide the footprint on the table, retype the numbers, keep
+    running. For Lift-T it is the point in the air to lift the block to, and moving it
+    live is how you find a height this arm can actually hold.
+
+    z is optional so an older page — or a caller that only ever drove Push-T — keeps
+    working; the worker then leaves the height where it was loaded with.
     """
     if not _alive(_worker):
         return _err("no model loaded", 409)
@@ -525,12 +627,19 @@ def goal(body: dict = Body(...)):
         yaw = float(body.get("goal_yaw"))
     except (TypeError, ValueError):
         return _err("goal_x, goal_y and goal_yaw must be numbers", 400)
+    z = body.get("goal_z")
+    try:
+        z = None if z in (None, "") else float(z)
+    except (TypeError, ValueError):
+        return _err("goal_z must be a number", 400)
     since = len(_log_text())
-    _send(f"goal {x} {y} {yaw}")
+    _send(f"goal {x} {y} {yaw}" + (f" {z}" if z is not None else ""))
     _wait_new_marker("GOAL_SET", since, 5)
     if _loaded is not None:      # keep the signature honest so Load isn't skipped later
         _loaded.update(goal_x=str(x), goal_y=str(y), goal_yaw=str(yaw))
-    return {"ok": True, "goal": [x, y, yaw]}
+        if z is not None:
+            _loaded.update(goal_z=str(z))
+    return {"ok": True, "goal": [x, y, yaw, z]}
 
 
 @app.post("/api/home")

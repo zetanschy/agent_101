@@ -369,3 +369,65 @@ an SO-101 driven by 0.8 rad deltas, so `max_vel` is the first thing to raise if 
 policy learns to stand still. And the camera is in the **scene** but not in the
 policy's observation — mjlab feeds its actor a 42×24 frame, which is the right end
 state and a much longer run.
+
+## Lift-T: picking the block up, in MuJoCo
+
+`Mjlab-Lift-T-So101-Rgb`, trained in the vendored mjlab rather than in Isaac. The arm
+grasps the printed T and lifts it to a point in the air. The actor loses the block's
+pose and has to find it in the 32×24 wrist frame; what it keeps as state is the
+target, which is a virtual point no camera can see.
+
+    cd thirdparty/mjlab
+    env -u PYTHONPATH uv run play Mjlab-Lift-T-So101-Rgb \
+      --checkpoint-file logs/rsl_rl/so101_lift_t_vision/2026-09-07_01-04-45/model_4999.pt
+
+`env -u PYTHONPATH` because the ROS entries on `PYTHONPATH` break `uv run` here.
+`--num-envs 1` to watch one arm, `--video` to write an mp4 beside the checkpoint.
+
+The state-only twin `Mjlab-Lift-T-So101` exists and has never been trained.
+
+### On the real arm, through the webui
+
+    ./robot webui        # pick "RL: lift T (vision)", tick Dry run, Load
+
+The dropdown lists the **newest run of each experiment**, not every checkpoint on
+disk — an older run is still loadable by pasting its path into the custom-path box.
+
+The RL path already globbed every mjlab `.onnx` into the dropdown, so the lift runs
+were *listed* long before they could be loaded. Three things had to change, and the
+first two were hard failures rather than degradations:
+
+| | Push-T | Lift-T |
+|---|---|---|
+| `action_scale` in the export | six values (the jaw throttled to 0.05) | **one** — uniform 0.5, jaw included |
+| goal term | `goal_pose`, 4 numbers, **constant** | `goal_position`, 3 numbers, **in the grasp site's frame** |
+| obs width | 3×6 + 4 = 22 | 3×6 + 3 = 21 |
+
+`rl_worker.py` now reads the goal term's name out of the ONNX metadata and dispatches
+on it, so neither family is named anywhere in the file.
+
+**The lift goal is not a constant.** mjlab computes it as
+`quat_inv(ee_quat) * (target - ee_pos)` every step, so one fixed point in the air is a
+different three numbers at every arm pose. Feeding the network the operator's numbers
+directly — which is what a `goal_pose` policy wants — would be feeding it a target
+that rides along with the wrist. The worker recomputes it each tick from the measured
+joints through `sim_agent101/kinematics.py`, which is the same FK the MJCF was
+compiled to agree with. Checked against mjlab's own term over random configurations:
+**0.0001 mm**.
+
+The operator numbers are in the frame the training ranges are quoted in — x forward of
+the base, z above the table — and the worker rotates them into the base frame itself.
+Trained on **x 0.10–0.22, |y| < 0.08, z 0.08–0.16**; outside that the policy is
+extrapolating.
+
+**Two things to know before engaging it.** The jaw runs at the arm's own 0.5 action
+scale, where Push-T's was throttled to 0.05 and effectively held shut — it can close on
+a finger as readily as on the block. And the network's output is unbounded (`clip_actions`
+is null in both agent configs), so `default + scale * action` can name a pose outside
+the arm's travel: measured, an out-of-distribution frame had it asking for a **Jaw of
+123°** against a 100° stop within a few frames. In MuJoCo that is free — the joint stops
+and the servo holds against it. Here it is how a horn slips, which is what
+`./robot joint-check` exists to measure. Commands are now clamped to the URDF's limits
+before they are sent, and the log counts every tick that clamping bit.
+
+Run it **dry** first. `--dry-run` computes and logs every target and sends nothing.
