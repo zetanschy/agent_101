@@ -103,6 +103,44 @@ def infer_config(policy_path: str) -> str:
     return matches[0]
 
 
+def load_policy(cfg, policy_path: str):
+    """create_trained_policy, but tolerant of a checkpoint filed under another dataset.
+
+    openpi loads norm stats as `checkpoint/assets/<config's repo_id>/norm_stats.json`.
+    That is right for a checkpoint whose config named its dataset, and wrong for every
+    DAgger ROUND: a round's dataset arrives through --data.repo-id, so the checkpoint
+    files its stats under the round's dataset while the config still names the parent's.
+    Loading then dies with a FileNotFoundError naming a dataset the operator never
+    typed.
+
+    So when the config's asset id is absent and the checkpoint carries EXACTLY ONE set
+    of stats, use that set. One is not a guess -- it is the only statistics this
+    checkpoint was ever trained against. More than one is ambiguous and still raises,
+    because picking would be a guess.
+
+    Note this is not a substitute for passing the right --config: the config still
+    decides the model shape and the transforms. It only unblocks the norm-stats lookup.
+    """
+    import openpi.training.checkpoints as _ckpt
+
+    assets = pathlib.Path(policy_path) / "assets"
+    data_config = cfg.data.create(cfg.assets_dirs, cfg.model)
+    asset_id = data_config.asset_id
+    if asset_id is not None and (assets / asset_id / "norm_stats.json").is_file():
+        return policy_config.create_trained_policy(cfg, policy_path)
+
+    found = sorted(f.parent for f in assets.glob("*/*/norm_stats.json"))
+    if len(found) != 1:
+        # Fall through to openpi's own error, which names the path it wanted.
+        return policy_config.create_trained_policy(cfg, policy_path)
+
+    have = f"{found[0].parent.name}/{found[0].name}"
+    print(f"  norm stats: config wants {asset_id!r}, checkpoint has {have!r} — "
+          f"using the checkpoint's, which is the only set it carries", flush=True)
+    return policy_config.create_trained_policy(
+        cfg, policy_path, norm_stats=_ckpt.load_norm_stats(assets, have))
+
+
 def build_observation(robot: SO101Follower, raw: dict, prompt: str) -> dict:
     """lerobot get_observation() -> openpi / Soarm101Inputs keys (slash-separated)."""
     state = np.asarray([float(raw[k]) for k in robot.action_features], dtype=np.float32)
@@ -165,7 +203,7 @@ def main() -> int:
           f"action_horizon={cfg.model.action_horizon}  fps={fps}")
     print(f"loading {args.policy} ...", flush=True)
     t0 = time.perf_counter()
-    policy = policy_config.create_trained_policy(cfg, args.policy)
+    policy = load_policy(cfg, args.policy)
     print(f"loaded in {time.perf_counter() - t0:.1f}s", flush=True)
 
     chunker = None

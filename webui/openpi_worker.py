@@ -138,7 +138,11 @@ def main() -> int:
 
     print("LOADING", flush=True)
     cfg = pi0_config.get_config(config_name)
-    policy = policy_config.create_trained_policy(cfg, args.policy)
+    # ev.load_policy, not create_trained_policy directly: a DAgger round's checkpoint
+    # files its norm stats under the round's dataset rather than the config's. Same
+    # reason evaluate.py imports one definition of an observation -- one place to be
+    # wrong rather than two.
+    policy = ev.load_policy(cfg, args.policy)
 
     from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 
