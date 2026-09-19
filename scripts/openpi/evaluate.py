@@ -85,8 +85,18 @@ def infer_config(policy_path: str) -> str:
     found = {f"{p.parent.name}/{p.name}" for p in assets.glob("*/*") if p.is_dir()}
     matches = [c.name for c in pi0_config._CONFIGS if getattr(c.data, "repo_id", None) in found]
     if not matches:
+        # A checkpoint trained with --data.repo-id overridden on the command line --
+        # which EVERY DAgger round is -- carries a dataset no registered config names,
+        # so this is the expected path for one, not a broken checkpoint. Name the
+        # configs that could have produced it rather than only saying "pass --config":
+        # the answer is the config the round was launched with, and it is in this list.
+        soarm = [c.name for c in pi0_config._CONFIGS if "soarm" in c.name and "lora" in c.name]
         raise SystemExit(
-            f"no config matches this checkpoint's dataset {sorted(found)}; pass --config explicitly"
+            f"no config matches this checkpoint's dataset {sorted(found)}.\n"
+            "That is normal for a checkpoint whose dataset came from --data.repo-id "
+            "(a DAgger round always does). Pass the config it was TRAINED with, e.g.\n"
+            + "".join(f"    --config {n}\n" for n in soarm or ["<config name>"])
+            + "In the web UI that is the 'Config (blank = infer)' box."
         )
     if len(matches) > 1:
         print(f"  note: {len(matches)} configs match {sorted(found)}, using {matches[0]}")

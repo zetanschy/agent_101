@@ -411,14 +411,24 @@ def list_models():
         out.append({"path": str(Path(p)), "kind": "lerobot"})
 
     if OPENPI:
+        # MARKED, NOT FILTERED. This used to list only the checkpoint evals run, which
+        # kept the dropdown short right up until the next checkpoint was trained -- a
+        # DAgger round lands in the same directory and simply never appeared, which
+        # reads as "the web UI is broken" rather than as a filter doing its job. The
+        # eval one is labelled and sorted first instead, so it is still obvious which
+        # is which, and a new one is always visible.
         working = eval_openpi_checkpoint()
+        found = []
         for pattern in ("/checkpoints/*", str(ROOT / "checkpoints/*/*/*")):
             for p in sorted(glob.glob(pattern)):
-                if not is_openpi_checkpoint(p):
-                    continue
-                if working is not None and str(Path(p)) != str(Path(working)):
-                    continue
-                out.append({"path": str(Path(p)), "kind": "openpi"})
+                if is_openpi_checkpoint(p):
+                    found.append(Path(p))
+        is_eval = (lambda q: working is not None and str(q) == str(Path(working)))
+        # Newest first, but the eval checkpoint pinned to the top whatever its age.
+        found.sort(key=lambda q: (not is_eval(q), -os.path.getmtime(q)))
+        for q in found:
+            out.append({"path": str(q), "kind": "openpi",
+                        "label": q.name + (" · eval" if is_eval(q) else "")})
 
     # mjlab RL exports. thirdparty/ is inside the ./:/workspace mount, so the training
     # runs are visible in here without a mount of their own. Sorted by mtime, not by
