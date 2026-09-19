@@ -28,6 +28,7 @@ import os
 # XLA_MEM_FRACTION in .env; this default only applies to a bare `python` run.
 os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
 
+import json
 import pathlib
 import statistics
 import time
@@ -78,6 +79,19 @@ def infer_config(policy_path: str) -> str:
     confusing FileNotFoundError naming a dataset you never touched. The checkpoint
     already knows which dataset it trained on, so read it from there.
     """
+    # Written by scripts/openpi/train.sh at push time, because a DAgger round's
+    # dataset cannot identify its config -- see the note there. Checked first: it is
+    # a statement of fact from the run itself, where everything below is inference.
+    recorded = pathlib.Path(policy_path) / "agent101_config.json"
+    if recorded.is_file():
+        try:
+            name = json.loads(recorded.read_text()).get("config")
+        except (json.JSONDecodeError, OSError):
+            name = None
+        if name:
+            print(f"  config {name} (recorded by the run that produced this checkpoint)")
+            return name
+
     assets = pathlib.Path(policy_path) / "assets"
     if not assets.is_dir():
         raise SystemExit(f"no assets/ in {policy_path}; pass --config explicitly")

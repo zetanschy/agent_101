@@ -255,6 +255,18 @@ latest=$(ls -d "$ckpt_dir"/[0-9]* 2>/dev/null \
          | awk -F/ '$NF ~ /^[0-9]+$/ {print $NF, $0}' | sort -n | tail -1 | cut -d' ' -f2-)
 [ -n "$latest" ] || { echo "no checkpoint found under $ckpt_dir — nothing to push" >&2; exit 1; }
 
+# WHICH CONFIG TRAINED THIS, recorded beside the weights. A checkpoint is loaded by
+# pairing it with a TrainConfig, and evaluate.py infers that by matching the
+# checkpoint's assets/<repo_id> against each config's data.repo_id -- which works
+# until --data.repo-id overrides the dataset, and a DAgger round ALWAYS does. The
+# round's checkpoint then names a dataset no config claims and cannot be loaded
+# without the operator remembering. openpi writes nothing that records this, so
+# write it here, where it is simply known.
+cat > "$latest/agent101_config.json" <<JSON
+{"config": "$cfg", "dataset": "$repo_id", "init_from": "${init_from:-}"}
+JSON
+echo "  recorded config=$cfg dataset=$repo_id in agent101_config.json"
+
 who=$(python -c "from huggingface_hub import HfApi; print(HfApi().whoami()['name'])" 2>/dev/null) || {
   echo "not logged in to Hugging Face; checkpoint kept at $latest" >&2; exit 1; }
 repo="$who/$exp"
