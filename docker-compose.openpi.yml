@@ -112,10 +112,20 @@ services:
       # Base weights land here (gs://openpi-assets), so they survive --rm.
       - ${HOME}/.cache/openpi:/root/.cache/openpi
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      # Orbax checkpoints downloaded by hand, as the inference services mount them.
+      # A DAgger round warm-starts from one (--init-from), so without this the
+      # training service is the only one that cannot see the parent it continues.
+      - ${HOME}/Downloads/hf_models:/checkpoints:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION:-0.75}
+      # NOT XLA_MEM_FRACTION, which is the INFERENCE figure: .env pins it to 0.75 so a
+      # policy fits beside a desktop session on a 12 GB card. Training wants the
+      # opposite -- openpi documents 22.5 GB for a pi05 LoRA fine-tune, and 0.75 of a
+      # 24 GB card is ~18 GB, which OOMs before the model is even resident. train.sh
+      # defaults to 0.9 for exactly this reason, but its fallback never fired here
+      # because compose had already set the variable to the inference value.
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION_TRAIN:-0.9}
     deploy:
       resources:
         reservations:

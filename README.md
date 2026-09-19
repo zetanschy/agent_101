@@ -148,50 +148,75 @@ openpi's loader is monkeypatched, because `create_torch_data_loader` hardcodes
 (`_check_openpi_seam`): a patch that silently stopped applying would train on unweighted
 data and look completely normal.
 
-### A round on a rented GPU box
+### A round on another machine
 
-Vast.ai and similar are themselves containers and cannot nest one, so this is the
-Docker-less path — [setup_cloud.sh](scripts/openpi/setup_cloud.sh), then `train.sh`
-directly rather than through `./robot`.
+Two paths, and which one you get is decided for you: `./robot` detects Docker. A box
+that has it (an SSH machine, this workstation) runs everything in the images; a
+Vast.ai-style container cannot nest Docker and runs natively instead. Force it with
+`ROBOT_MODE=native|docker` if detection is wrong.
 
-**What to rent.** openpi documents **22.5 GB** for a pi05 LoRA fine-tune, and JAX is
-launched at `XLA_PYTHON_CLIENT_MEM_FRACTION=0.9` — which on a 24 GB card is 21.6 GB,
-*under* that figure. So a 4090 is the one size that looks like it should work and
-doesn't. Rent **≥32 GB**; a 48 GB A6000 or L40S is the value pick, and an A100 40/80 GB
-is fine. **≥100 GB disk**: 6.3 GB of parent params, 0.43 GB of dataset, 2-3 GB of CUDA
-wheels, and openpi's own checkpoints are ~9 GB each with ~18 GB peak while one is
-written. Driver must be CUDA 12 (`jax[cuda12]==0.5.3`).
+**Everything lives on the `sim2real` branch**, which is not the repo's default. A plain
+`git clone` gets `main`, which has no `scripts/openpi/` at all. And do **not** clone
+`--recursive`: `thirdparty/mjlab` is pinned to a commit that is not on its public
+remote, so a recursive clone aborts — and the training box needs neither mjlab nor the
+Isaac assets. `setup_cloud.sh` pulls the two submodules that matter by itself.
+
+**What to rent, if you are renting.** openpi documents **22.5 GB** for a pi05 LoRA
+fine-tune, so a 24 GB card is the one size that looks like it should work and doesn't
+(0.9 of 24 GB is 21.6 GB, under the figure). Take **≥32 GB**; a 48 GB A6000 or L40S is
+the value pick, an A100 40/80 GB is fine. **≥100 GB disk**: 6.3 GB of parent params,
+0.43 GB of dataset, 2-3 GB of CUDA wheels, and openpi's checkpoints are ~9 GB each with
+~18 GB peak while one is written. Driver must be CUDA 12.
+
+Common to both paths — the parent checkpoint and the dataset:
 
 ```bash
-git clone --recursive https://github.com/zetanschy/agent_101 && cd agent_101
-bash scripts/openpi/setup_cloud.sh          # 2-3 GB of wheels, several minutes
+git clone -b sim2real https://github.com/zetanschy/agent_101 && cd agent_101
+huggingface-cli login       # ~/.cache/huggingface is mounted, so this reaches the image
 
-wandb login                                 # the run logs to WANDB_PROJECT from .env
-huggingface-cli login                       # needed to pull the parent and push the result
-
-# The parent checkpoint. train_state/ is another 3.2 GB and --init-from does not read
-# it: params/ and assets/ are all a warm start needs.
+# The parent. train_state/ is another 3.2 GB and --init-from does not read it.
 huggingface-cli download zetanschy/openpi_pi05_lora_cap_to_cup_200 \
     --include 'params/*' 'assets/*' --local-dir ckpt/cap_to_cup_200
 
-# The dataset, EXPLICITLY. openpi would pull this itself when it opens the dataset,
-# but the weighting runs first and reads the parquet directly.
+# The dataset, EXPLICITLY. openpi would pull it when it opens the dataset, but the
+# weighting runs first and reads the parquet directly.
 huggingface-cli download --repo-type dataset zetanschy/cap_to_cup_dagger_curated_v1 \
     --local-dir ~/.cache/huggingface/lerobot/zetanschy/cap_to_cup_dagger_curated_v1
+```
 
+`ckpt/` is inside the repo and the repo is mounted at `/workspace`, so `--init-from
+ckpt/cap_to_cup_200` resolves the same way with Docker and without it. That is the only
+reason to put it there rather than in `~/Downloads/hf_models`, which is mounted at
+`/checkpoints` and works too — on the Docker path only.
+
+**With Docker** — nothing to install, and `wandb login` is *not* enough: the container
+does not mount `~/.netrc`, so the key has to come from `.env.local`, which compose reads.
+
+```bash
+echo "WANDB_API_KEY=$(python3 -c 'import netrc;print(netrc.netrc().authenticators("api.wandb.ai")[2])')" >> .env.local
+./robot openpi-dagger-train --dry-run \
+    --init-from ckpt/cap_to_cup_200 \
+    --data.repo-id=zetanschy/cap_to_cup_dagger_curated_v1 \
+    --exp-name=dagger_r1 --steps 3000
+```
+
+**Without Docker** (Vast.ai and friends) — install first, and `wandb login` works
+because there is no container boundary:
+
+```bash
+bash scripts/openpi/setup_cloud.sh          # 2-3 GB of wheels, several minutes
+wandb login
 bash scripts/openpi/train.sh --dagger --dry-run \
     --init-from ckpt/cap_to_cup_200 \
     --data.repo-id=zetanschy/cap_to_cup_dagger_curated_v1 \
     --exp-name=dagger_r1 --steps 3000
 ```
 
-`--dry-run` prints the composed command, the inherited norm stats and the operator
-share of draws, and trains nothing. Drop it to go, **inside tmux** — and note there is
-no norm-stats step to wait through on a round, because they are inherited.
-
-Read the step time off the first few steps and multiply: nothing here has measured
-this config's throughput, so budget the box from what it actually reports rather than
-from an estimate. `--resume` (not `--overwrite`) after a crash.
+`--dry-run` prints the composed command, the inherited norm stats and the operator share
+of draws, and trains nothing. Drop it to go, **inside tmux**. There is no norm-stats
+step to wait through on a round, because they are inherited. Read the step time off the
+first few steps and budget the box from that — nothing here has measured this config's
+throughput. `--resume`, not `--overwrite`, after a crash.
 
 ## A joint slipped (a crash during teleop)
 
