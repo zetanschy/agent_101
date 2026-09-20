@@ -41,6 +41,7 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu 
 COPY thirdparty/le101 /opt/le101
 RUN pip install --no-cache-dir -e "/opt/le101[feetech,dataset]"
 
+
 # JAX on GPU + exactly what the openpi inference path imports. The set was derived
 # by walking every module `openpi.training.config` and `policy_config` reach:
 #   - pytest: openpi imports it at module level in models_pytorch/gemma_pytorch.py,
@@ -84,6 +85,43 @@ from lerobot.robots.so_follower import SO101Follower; \
 cfg = c.get_config('pi05_soarm101_lora'); \
 print('openpi + lerobot import OK | jax', jax.__version__); \
 print('pi05_soarm101_lora:', cfg.model.__class__.__name__, 'horizon =', cfg.model.action_horizon)"
+
+# Inspect Robots, so the openpi pi0.5 checkpoint can be scored on the same benchmark
+# as the LLM agent (evals/, ./robot eval-openpi). Only the core and the SO-ARM adapter:
+# the agent policy lives in the lerobot image, and installing its HTTP stack here would
+# be dependency surface this container never executes.
+#
+# NO [lerobot] EXTRA -- this image already carries the lerobot openpi needs for serial
+# and camera I/O, and the extra would pull a different one in on top of it.
+RUN pip install --no-cache-dir \
+        "inspect-robots" \
+        "inspect-robots-so101 @ git+https://github.com/robocurve/inspect-robots-so101" \
+    && python -c "import inspect_robots, inspect_robots_so101; \
+print('inspect-robots stack importable in the openpi image')"
+
+# The live view for ./robot dagger --display_data. le101's init_rerun()
+# require_package()s rerun-sdk, so without this the viewer fails at startup (dagger.py
+# checks for it before loading the checkpoint, so it fails in seconds rather than after
+# the JIT compile). Pinned to what the lerobot image carries, so both stacks log to the
+# same viewer version.
+#
+# LAST ON PURPOSE: earlier in the file this would invalidate the jax[cuda12] layer
+# below it and turn a one-wheel rebuild into a multi-gigabyte one.
+RUN pip install --no-cache-dir "rerun-sdk==0.33.1"
+
+# ... and what the VIEWER needs to open a window, which the SDK does not pull in: the
+# X11/XCB client libraries plus Mesa's software Vulkan (lavapipe). Exactly the set
+# Dockerfile (the lerobot image) installs for `./robot record --display_data`, because
+# that is the configuration known to work over X11 on this machine. Without
+# libxkbcommon-x11-0 the spawned viewer panics in winit before the first frame:
+#   thread 'main' panicked: Library libxkbcommon-x11.so could not be loaded.
+# Also last, and apt-only, so the rebuild is one layer and leaves jax alone.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libvulkan1 mesa-vulkan-drivers \
+        libx11-6 libxext6 libxrender1 libxkbcommon0 \
+        libxcb1 libxcb-render0 libxcb-shape0 libxcb-xfixes0 libxcb-cursor0 \
+        libxkbcommon-x11-0 \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
 CMD ["bash"]

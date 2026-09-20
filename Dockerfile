@@ -41,7 +41,11 @@ COPY thirdparty/le101 /opt/le101
 RUN pip install --no-cache-dir -e "/opt/le101[feetech,core_scripts,training,pi,peft]"
 
 # Web UI backend (small; last layer so it doesn't invalidate the lerobot layer).
-RUN pip install --no-cache-dir fastapi "uvicorn[standard]"
+# onnxruntime runs the mjlab-trained RL policies (webui/rl_worker.py). CPU build on
+# purpose: the exported push-T net is 516 KB (two conv layers, a spatial softmax and a
+# 256-256-128 MLP) and runs in well under a millisecond on CPU, so a GPU build would
+# only add a CUDA version to keep in step with torch's for no measurable gain.
+RUN pip install --no-cache-dir fastapi "uvicorn[standard]" onnxruntime
 
 # openpi (JAX) alongside torch, so ONE web UI can load either stack's policies and
 # switch between them per model. This is safe despite appearances: jax's CUDA deps are
@@ -67,6 +71,25 @@ RUN pip install --no-cache-dir --no-deps -e /opt/openpi \
     && pip install --no-cache-dir --no-deps -e /opt/openpi/packages/openpi-client \
     && python -c "import jax, torch; from openpi.training import config; \
 print('jax', jax.__version__, '| torch', torch.__version__, '| openpi importable')"
+
+# Inspect Robots: benchmark harness for evaluating any LLM agent or VLA on this arm
+# (evals/, ./robot eval). Last layer, so adding it does not invalidate the openpi one.
+#
+# NO [lerobot] EXTRA, deliberately. inspect-robots-so101 declares
+# `lerobot[feetech]>=0.5,<0.6`, and this image carries the le101 fork at 0.6.1 --
+# installing the extra would drag the fork out from under everything else in here.
+# The cap is conservative rather than load-bearing: the adapter's whole lerobot seam
+# is seven symbols, and all seven resolve against 0.6.1 (checked with importlib in
+# CI-less fashion, see evals/README.md). Two of them are the fallback arms of a
+# try/except chain whose first arm, lerobot.utils.feature_utils, is the one that
+# resolves -- so the paths the cap was written for are not the paths taken here.
+# If a future lerobot moves that seam, the policy breaks loudly at import, not
+# silently mid-eval.
+RUN pip install --no-cache-dir \
+        "inspect-robots" "inspect-robots-agent" \
+        "inspect-robots-so101 @ git+https://github.com/robocurve/inspect-robots-so101" \
+    && python -c "import inspect_robots, inspect_robots_so101, inspect_robots_agent; \
+print('inspect-robots stack importable')"
 
 WORKDIR /workspace
 CMD ["bash"]

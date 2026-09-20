@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Install all camera udev rules + apply-scripts from ./udev, so camera settings
 # and stable device names persist across reboots and /dev/videoN renumbering.
-#   sudo ./scripts/install-camera-udev.sh
+#   sudo ./scripts/setup/install_camera_udev.sh
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "run with sudo:  sudo $0" >&2; exit 1; }
-root="$(cd "$(dirname "$0")/.." && pwd)"
+root="$(cd "$(dirname "$0")/../.." && pwd)"
 
 # apply-scripts -> /usr/local/bin, rules -> /etc/udev/rules.d
 for f in "$root"/udev/*.sh;    do [ -e "$f" ] && install -m 0755 "$f" "/usr/local/bin/$(basename "$f")"      && echo "installed /usr/local/bin/$(basename "$f")"; done

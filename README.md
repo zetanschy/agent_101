@@ -24,7 +24,7 @@ If a port or camera index changes, edit [.env](.env) — nothing else.
 
 `./robot login` prompts for both tokens and stores them in `.env.local`
 (gitignored, `chmod 600`), then verifies each against the API. Every container and
-`scripts/train.sh` read that one file, so credentials survive `--rm` runs — unlike
+`scripts/robot/train.sh` read that one file, so credentials survive `--rm` runs — unlike
 a `wandb login` inside a container, which dies with it. `./robot login --status`
 shows what's configured without printing secrets. To move to a cloud GPU box,
 copy that single file: `scp .env.local user@box:agent_101/`.
@@ -52,6 +52,232 @@ swap servos.
 Every wrapper prints the exact command it runs before executing, so you can
 copy or tweak it.
 
+## Correcting a policy by hand (DAgger)
+
+```bash
+./robot dagger --dataset zetanschy/rollout_cap_to_cup_dagger
+#   space  pause / resume the policy     tab    take over / hand back
+#   right  task complete: save it          left   the attempt failed: discard it
+#   esc    end the session
+```
+
+The openpi checkpoint drives; when failure looks imminent you pause, take the **leader**
+arm, recover the arm to a state the policy knows, correct, and hand it back — as often
+as you like within one episode. The trajectory stays continuous and the episode ends
+when the *task* is done, which is the protocol in
+[le101's HIL guide](thirdparty/le101/docs/source/hil_data_collection.mdx). Frames are
+written as a LeRobotDataset with an `intervention` column, the same one
+`lerobot-rollout --strategy.type=dagger` writes, so it trains like any other dataset.
+
+Both segments are recorded by default, as that guide describes; `--corrections-only`
+records just your windows, one episode each, which is what lerobot's *code* defaults to.
+The two readings differ and `intervention` is what lets a training run take either.
+
+If **your own correction** goes wrong, keep correcting: recovering the arm from a mess
+you made is the same data as recovering it from one the policy made. Only drop the
+episode when the attempt itself is spoiled. There is deliberately no "undo the last
+correction" — the episode would jump from the frame before it to wherever the arm now
+is, and a trajectory with a teleport in it is worse than no trajectory. Afterwards,
+`lerobot-edit-dataset --operation.type delete_episodes` removes whole episodes, which is
+the same granularity for the same reason.
+
+Episode control is lerobot's, keys included: **→** ends the attempt and keeps it, **←**
+throws it away (`clear_episode_buffer()`, the same call `lerobot-record` makes for a
+re-record), **esc** ends the session. A failed attempt is worse than no attempt — it
+teaches a trajectory that did not work — so discarding is one keypress, and
+`./robot dagger-save-test` proves it leaves nothing behind.
+
+le101 ships that strategy already, and if your checkpoint is in **lerobot** format you
+should use it directly (`lerobot-rollout --strategy.type=dagger`, with a leader teleop).
+This wrapper exists because the checkpoint that works on this arm is an openpi **orbax**
+directory, which lerobot's policy factory cannot load — see
+[scripts/openpi/dagger.py](scripts/openpi/dagger.py).
+
+### Training on it: a DAgger round
+
+```bash
+./robot openpi-dagger-stats --dataset zetanschy/v1_cap_to_cup_dagger   # no GPU
+./robot openpi-dagger-train --init-from /checkpoints/openpi_pi05_lora_cap_to_cup_200     --data.repo-id=zetanschy/v1_cap_to_cup_dagger --exp-name=dagger_r1 --steps 3000
+```
+
+Adapted from a private training pipeline this bench does not own; the weight rule and
+the quantisation follow that design, and what changes here is where the labels come
+from — `./robot dagger` writes a per-frame `intervention` column, so this
+bench does not have to reconstruct takeover spans after the fact.
+
+**`--init-from` is what makes a run a round.** It warm-starts from that checkpoint,
+**inherits its norm stats** instead of recomputing them, and fits the LR schedule to the
+round's own length. Inheriting matters more than it looks: recomputing statistics over
+the corrective dataset changes what "normalised" means underneath weights trained
+against the old scaling — the inputs move while the network stands still, which reads as
+a bad dataset rather than as a bug. Pass `--dry-run` to see the composed command and
+train nothing.
+
+**A DAgger dataset is not a demonstration set,** so it is not sampled flat. It is an
+autonomous rollout with takeovers spliced in, and training on it uniformly is wrong in
+two directions: the corrections are the point of the round, while the policy's own
+frames in the seconds *before* a takeover are the failure run-up and must not be
+reinforced. Operator frames get `--human-weight` (1.0), autonomous frames
+`--auto-weight` (0.5), and the `--pre-window-s` (5 s) before each takeover ramps down to
+zero. Weights are applied to **sampling, not to the loss** — each frame is repeated in a
+precomputed index — so a zero-weight frame costs no video decode, where a
+loss-scaled-to-zero frame would still pay a full forward and backward pass.
+
+Those defaults are **not** the usual 2.0/0.3, which is tuned for *sparse*
+interventions. Measured over this bench's six DAgger sets:
+
+| dataset | operator frames | draws at 1.0/0.5 | at 2.0/0.3 |
+|---|---|---|---|
+| `v1_cap_to_cup_dagger` | 39.2% | 59.0% | 82.7% |
+| `v2_cap_to_cup_dagger` | 44.5% | 65.4% | 86.3% |
+| `v3_cap_to_cup_dagger` | 32.2% | 51.4% | 77.9% |
+| `edge_table_..._dagger3` | 38.8% | 59.2% | 82.8% |
+
+At 2.0/0.3 more than four fifths of every batch is corrections, with almost no
+autonomous data left to anchor against forgetting. Tune against the `operator share of
+draws` line `openpi-dagger-stats` prints, not against the ratio.
+
+The index is built **once** and reused for the whole run, so a frame quantised to zero
+draws is excluded permanently rather than missed for one epoch — hence `--epoch-scale 8`
+rather than 1, and a seeded Bernoulli draw on the rounding fraction rather than
+largest-remainder, which would break the ties between identically-weighted autonomous
+frames by index and drop contiguous stretches of late episodes.
+
+openpi's loader is monkeypatched, because `create_torch_data_loader` hardcodes
+`sampler=None` on the JAX path. The seam is **probed before it is patched**
+(`_check_openpi_seam`): a patch that silently stopped applying would train on unweighted
+data and look completely normal.
+
+### A round on another machine
+
+Two paths, and which one you get is decided for you: `./robot` detects Docker. A box
+that has it (an SSH machine, this workstation) runs everything in the images; a
+Vast.ai-style container cannot nest Docker and runs natively instead. Force it with
+`ROBOT_MODE=native|docker` if detection is wrong.
+
+**Everything lives on the `sim2real` branch**, which is not the repo's default. A plain
+`git clone` gets `main`, which has no `scripts/openpi/` at all. And do **not** clone
+`--recursive`: `thirdparty/mjlab` is pinned to a commit that is not on its public
+remote, so a recursive clone aborts — and the training box needs neither mjlab nor the
+Isaac assets. `setup_cloud.sh` pulls the two submodules that matter by itself.
+
+**What to rent, if you are renting.** openpi documents **22.5 GB** for a pi05 LoRA
+fine-tune, so a 24 GB card is the one size that looks like it should work and doesn't
+(0.9 of 24 GB is 21.6 GB, under the figure). Take **≥32 GB**; a 48 GB A6000 or L40S is
+the value pick, an A100 40/80 GB is fine. **≥100 GB disk**: 6.3 GB of parent params,
+0.43 GB of dataset, 2-3 GB of CUDA wheels, and openpi's checkpoints are ~9 GB each with
+~18 GB peak while one is written. Driver must be CUDA 12.
+
+Common to both paths — the parent checkpoint and the dataset:
+
+```bash
+git clone -b sim2real https://github.com/zetanschy/agent_101 && cd agent_101
+huggingface-cli login       # ~/.cache/huggingface is mounted, so this reaches the image
+
+# The parent. train_state/ is another 3.2 GB and --init-from does not read it.
+huggingface-cli download zetanschy/openpi_pi05_lora_cap_to_cup_200 \
+    --include 'params/*' 'assets/*' --local-dir ckpt/cap_to_cup_200
+
+# The dataset, EXPLICITLY. openpi would pull it when it opens the dataset, but the
+# weighting runs first and reads the parquet directly.
+huggingface-cli download --repo-type dataset zetanschy/cap_to_cup_dagger_curated_v1 \
+    --local-dir ~/.cache/huggingface/lerobot/zetanschy/cap_to_cup_dagger_curated_v1
+```
+
+`ckpt/` is inside the repo and the repo is mounted at `/workspace`, so `--init-from
+ckpt/cap_to_cup_200` resolves the same way with Docker and without it. That is the only
+reason to put it there rather than in `~/Downloads/hf_models`, which is mounted at
+`/checkpoints` and works too — on the Docker path only.
+
+**With Docker** — nothing to install, and `wandb login` is *not* enough: the container
+does not mount `~/.netrc`, so the key has to come from `.env.local`, which compose reads.
+
+```bash
+echo "WANDB_API_KEY=$(python3 -c 'import netrc;print(netrc.netrc().authenticators("api.wandb.ai")[2])')" >> .env.local
+./robot openpi-dagger-train --dry-run \
+    --init-from ckpt/cap_to_cup_200 \
+    --data.repo-id=zetanschy/cap_to_cup_dagger_curated_v1 \
+    --exp-name=dagger_r1 --steps 3000
+```
+
+**Without Docker** (Vast.ai and friends) — install first, and `wandb login` works
+because there is no container boundary:
+
+```bash
+bash scripts/openpi/setup_cloud.sh          # 2-3 GB of wheels, several minutes
+wandb login
+bash scripts/openpi/train.sh --dagger --dry-run \
+    --init-from ckpt/cap_to_cup_200 \
+    --data.repo-id=zetanschy/cap_to_cup_dagger_curated_v1 \
+    --exp-name=dagger_r1 --steps 3000
+```
+
+`--dry-run` prints the composed command, the inherited norm stats and the operator share
+of draws, and trains nothing. Drop it to go, **inside tmux**. There is no norm-stats
+step to wait through on a round, because they are inherited. Read the step time off the
+first few steps and budget the box from that — nothing here has measured this config's
+throughput. `--resume`, not `--overwrite`, after a crash.
+
+## A joint slipped (a crash during teleop)
+
+A collision does not decalibrate an encoder — a magnetic absolute encoder does not
+forget. It moves the **metal**: the horn slips on the spline and the link sits a few
+degrees from where the servo thinks it is. Check that first, it takes a second:
+
+```bash
+git status calibration/     # empty = the stored calibration is untouched, as expected
+./robot joint-check         # read both arms, see which joint disagrees and by how much
+```
+
+Every checkpoint here was trained on **absolute joint targets**, so what a policy relies
+on is exactly one mapping:
+
+```
+physical pose  ->  reported degrees
+```
+
+Restoring *that* is the job. Two fixes do it and keep every trained model:
+
+1. **Reseat the horn, then finish in software** (preferred). Do not try to land the
+   angle by trial and error: the coupling between a servo and its link is *discrete* — a
+   splined horn indexes in whole teeth, a bolted one in whole holes — so you always end
+   up within half a step of the truth no matter how many times you unbolt it. One
+   assembly, one measurement, one patch:
+
+   ```bash
+   ./robot joint-hold --joint wrist_flex --degrees 0     # the servo holds 0.00; bolt it on
+   ./robot joint-check --sweep wrist_flex                # midpoint = what is left over
+   ./robot joint-offset --joint wrist_flex --degrees <midpoint> --apply
+   ```
+
+   This ends up matching both the old frame *and* the URDF, which the sim2real work and
+   the computed safety clamp both assume.
+2. **Shift that one joint's `homing_offset`** by the measured delta:
+
+   ```bash
+   ./robot joint-offset --joint wrist_flex --degrees 12.5          # dry run
+   ./robot joint-offset --joint wrist_flex --degrees 12.5 --apply
+   ```
+
+   Same mapping restored, in software, and the safety clamp is **not** affected:
+   `range_min`/`range_max` are recorded from `Present_Position`, i.e. *after* the
+   offset, so they shift with it and the span `evals/rig.py` derives the clamp from
+   never changes. What this does not fix is the arm's geometry, which still disagrees
+   with the URDF by the slip — so sim2real and solved camera extrinsics stay off until
+   the horn is reseated.
+
+And one fix that looks right and is not:
+
+> **Do not run `./robot calibrate`.** A full recalibration redefines every joint's frame
+> from scratch, so the same physical pose reports different degrees than it did when
+> `cap_to_cup_200` was recorded — and every checkpoint trained on it is then aiming at a
+> frame that no longer exists. Nothing warns you; the arm simply starts missing.
+
+Measuring the delta: put both arms in the *same physical pose* (folded against their
+mechanical stops is the easiest reference) and read `./robot joint-check`, or put the
+follower physically at its home pose and see which joint does not read ~0 against
+`config/home_pose.json`.
+
 ## Training
 
 ```bash
@@ -73,8 +299,8 @@ resuming re-attaches to the same run. `--no-wandb` opts out per run,
 `--wandb-entity` override the destination. Set the default project in
 [.env](.env).
 
-For a rented GPU box, [scripts/setup-cloud.sh](scripts/setup-cloud.sh) installs
-the same stack without Docker; then call `bash scripts/train.sh` with identical flags.
+For a rented GPU box, [scripts/setup/setup_cloud.sh](scripts/setup/setup_cloud.sh) installs
+the same stack without Docker; then call `bash scripts/robot/train.sh` with identical flags.
 
 ## Notes
 

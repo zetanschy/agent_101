@@ -14,6 +14,10 @@ services:
       # Live-editable lerobot fork: patch thirdparty/le101 on the host and it
       # takes effect immediately (editable install points at /opt/le101).
       - ./thirdparty/le101:/opt/le101
+      # Same for openpi, which this image also installs editable (see Dockerfile) so
+      # one web UI can run both stacks. Without this mount /opt/openpi is the COPY
+      # frozen at build time, and edits here — RTC, for one — silently do nothing.
+      - ./thirdparty/openpi:/opt/openpi
       # Persist HF datasets/models + auth token across container runs.
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       # Version-controlled arm calibration (overrides the HF cache path above).
@@ -39,6 +43,9 @@ services:
       - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
       - WGPU_BACKEND=vulkan
       - XDG_RUNTIME_DIR=/tmp/runtime-root
+      # This image runs openpi too, so JAX preallocates here as well — and it has to
+      # share the card with CUDA torch, which the openpi image never had to. See .env.
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION:-0.75}
     # Serial buses (leader + follower) and cameras.
     # Cameras are pinned by USB serial (the stable /dev/v4l/by-id/* path) to a
     # FIXED node inside the container, so host /dev/videoN renumbering never

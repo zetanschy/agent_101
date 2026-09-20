@@ -4,3 +4,10 @@
 [submodule "thirdparty/openpi"]
 	path = thirdparty/openpi
 	url = https://github.com/zetanschy/openpi.git
+[submodule "thirdparty/sim2real_so101"]
+	path = thirdparty/sim2real_so101
+	url = https://github.com/isaac-sim/Sim-to-Real-SO-101-Workshop.git
+[submodule "thirdparty/mjlab"]
+	path = thirdparty/mjlab
+	url = https://github.com/zetanschy/mjlab.git
+	branch = feat/so101-push-t

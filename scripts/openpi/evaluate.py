@@ -22,9 +22,13 @@ which defaults to 50 (1.7s). Everything else here mirrors the original loop.
 import argparse
 import os
 
-# Must precede any JAX import: without it JAX grabs almost all VRAM up front.
-os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.9")
+# Must precede any JAX import: without it JAX grabs almost all VRAM up front. The
+# fraction is of TOTAL VRAM, not free — 0.9 on a 12 GB card asks for more than a
+# desktop session leaves available and dies at kernel load. Compose sets this from
+# XLA_MEM_FRACTION in .env; this default only applies to a bare `python` run.
+os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
 
+import json
 import pathlib
 import statistics
 import time
@@ -75,6 +79,19 @@ def infer_config(policy_path: str) -> str:
     confusing FileNotFoundError naming a dataset you never touched. The checkpoint
     already knows which dataset it trained on, so read it from there.
     """
+    # Written by scripts/openpi/train.sh at push time, because a DAgger round's
+    # dataset cannot identify its config -- see the note there. Checked first: it is
+    # a statement of fact from the run itself, where everything below is inference.
+    recorded = pathlib.Path(policy_path) / "agent101_config.json"
+    if recorded.is_file():
+        try:
+            name = json.loads(recorded.read_text()).get("config")
+        except (json.JSONDecodeError, OSError):
+            name = None
+        if name:
+            print(f"  config {name} (recorded by the run that produced this checkpoint)")
+            return name
+
     assets = pathlib.Path(policy_path) / "assets"
     if not assets.is_dir():
         raise SystemExit(f"no assets/ in {policy_path}; pass --config explicitly")
@@ -82,12 +99,60 @@ def infer_config(policy_path: str) -> str:
     found = {f"{p.parent.name}/{p.name}" for p in assets.glob("*/*") if p.is_dir()}
     matches = [c.name for c in pi0_config._CONFIGS if getattr(c.data, "repo_id", None) in found]
     if not matches:
+        # A checkpoint trained with --data.repo-id overridden on the command line --
+        # which EVERY DAgger round is -- carries a dataset no registered config names,
+        # so this is the expected path for one, not a broken checkpoint. Name the
+        # configs that could have produced it rather than only saying "pass --config":
+        # the answer is the config the round was launched with, and it is in this list.
+        soarm = [c.name for c in pi0_config._CONFIGS if "soarm" in c.name and "lora" in c.name]
         raise SystemExit(
-            f"no config matches this checkpoint's dataset {sorted(found)}; pass --config explicitly"
+            f"no config matches this checkpoint's dataset {sorted(found)}.\n"
+            "That is normal for a checkpoint whose dataset came from --data.repo-id "
+            "(a DAgger round always does). Pass the config it was TRAINED with, e.g.\n"
+            + "".join(f"    --config {n}\n" for n in soarm or ["<config name>"])
+            + "In the web UI that is the 'Config (blank = infer)' box."
         )
     if len(matches) > 1:
         print(f"  note: {len(matches)} configs match {sorted(found)}, using {matches[0]}")
     return matches[0]
+
+
+def load_policy(cfg, policy_path: str):
+    """create_trained_policy, but tolerant of a checkpoint filed under another dataset.
+
+    openpi loads norm stats as `checkpoint/assets/<config's repo_id>/norm_stats.json`.
+    That is right for a checkpoint whose config named its dataset, and wrong for every
+    DAgger ROUND: a round's dataset arrives through --data.repo-id, so the checkpoint
+    files its stats under the round's dataset while the config still names the parent's.
+    Loading then dies with a FileNotFoundError naming a dataset the operator never
+    typed.
+
+    So when the config's asset id is absent and the checkpoint carries EXACTLY ONE set
+    of stats, use that set. One is not a guess -- it is the only statistics this
+    checkpoint was ever trained against. More than one is ambiguous and still raises,
+    because picking would be a guess.
+
+    Note this is not a substitute for passing the right --config: the config still
+    decides the model shape and the transforms. It only unblocks the norm-stats lookup.
+    """
+    import openpi.training.checkpoints as _ckpt
+
+    assets = pathlib.Path(policy_path) / "assets"
+    data_config = cfg.data.create(cfg.assets_dirs, cfg.model)
+    asset_id = data_config.asset_id
+    if asset_id is not None and (assets / asset_id / "norm_stats.json").is_file():
+        return policy_config.create_trained_policy(cfg, policy_path)
+
+    found = sorted(f.parent for f in assets.glob("*/*/norm_stats.json"))
+    if len(found) != 1:
+        # Fall through to openpi's own error, which names the path it wanted.
+        return policy_config.create_trained_policy(cfg, policy_path)
+
+    have = f"{found[0].parent.name}/{found[0].name}"
+    print(f"  norm stats: config wants {asset_id!r}, checkpoint has {have!r} — "
+          f"using the checkpoint's, which is the only set it carries", flush=True)
+    return policy_config.create_trained_policy(
+        cfg, policy_path, norm_stats=_ckpt.load_norm_stats(assets, have))
 
 
 def build_observation(robot: SO101Follower, raw: dict, prompt: str) -> dict:
@@ -130,6 +195,14 @@ def main() -> int:
     # to what the checkpoint expects rather than to lerobot's current default.
     p.add_argument("--units", choices=("normalized", "degrees"), default="normalized",
                    help="joint units the policy was trained in (default normalized)")
+    # Real-time chunking. This loop is synchronous — the arm holds still during
+    # inference — so the inference delay is 0 and RTC only smooths the seam between
+    # chunks. webui/openpi_worker.py --mode rtc is where the delay is nonzero and RTC
+    # does its real job; this flag is for checking the guidance on the bench.
+    p.add_argument("--rtc", action="store_true", help="pin each chunk to the tail of the previous one")
+    p.add_argument("--rtc-schedule", choices=("zeros", "ones", "linear", "exp"), default="exp")
+    p.add_argument("--rtc-max-guidance", type=float, default=5.0, help="beta_max")
+    p.add_argument("--rtc-jacobian", choices=("identity", "full"), default="identity")
     args = p.parse_args()
 
     fps = args.fps or int(env("CAM_FPS", "30"))
@@ -144,8 +217,21 @@ def main() -> int:
           f"action_horizon={cfg.model.action_horizon}  fps={fps}")
     print(f"loading {args.policy} ...", flush=True)
     t0 = time.perf_counter()
-    policy = policy_config.create_trained_policy(cfg, args.policy)
+    policy = load_policy(cfg, args.policy)
     print(f"loaded in {time.perf_counter() - t0:.1f}s", flush=True)
+
+    chunker = None
+    if args.rtc:
+        from openpi.policies.rtc import RealTimeChunker
+
+        chunker = RealTimeChunker(
+            policy,
+            prefix_attention_schedule=args.rtc_schedule,
+            max_guidance_weight=args.rtc_max_guidance,
+            jacobian=args.rtc_jacobian,
+        )
+        print(f"rtc: schedule={args.rtc_schedule} beta_max={args.rtc_max_guidance} "
+              f"jacobian={args.rtc_jacobian} (delay 0 — this loop is synchronous)")
 
     robot = SO101Follower(
         SO101FollowerConfig(
@@ -171,10 +257,16 @@ def main() -> int:
             tick = time.perf_counter()
             # Re-plan when the executed window is used up. Note this tick sends no
             # action — same as the original loop, so a chunk costs 1 + N ticks.
-            if chunk is None or action_index >= min(args.actions, len(chunk)):
+            window = min(args.actions, len(chunk)) if chunk is not None else 0
+            if chunk is None or action_index >= window:
                 obs = build_observation(robot, robot.get_observation(), args.task)
                 t_pred = time.perf_counter()
-                out = policy.infer(obs)
+                if chunker is None:
+                    out = policy.infer(obs)
+                else:
+                    # The new chunk's index 0 is the action after the window we just
+                    # executed, and nothing runs while we think, so d = 0.
+                    out = chunker.infer(obs, prefix_start=window, inference_delay=0)
                 dt = time.perf_counter() - t_pred
                 latencies.append(dt)
                 chunk, action_index = out["actions"], 0

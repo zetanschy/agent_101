@@ -13,7 +13,7 @@
 #   ./robot data merge  --name cap_to_cup_all --from cap_to_cup,cap_to_cup2,cap_to_cup3
 #
 # `delete` failing with "Episode length mismatch: N vs M"? Run `repair` first —
-# see scripts/repair_timestamps.py for what causes it.
+# see scripts/robot/repair_timestamps.py for what causes it.
 set -euo pipefail
 cd "$(dirname "$0")"
 source ./common.sh

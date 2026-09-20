@@ -1,0 +1,45 @@
+{
+  "_comment": "Regenerate spec values with: python -m sim_agent101.cameras --write. Calibrated values are written by scripts/sim_calibrate_cameras.py and must not be overwritten by --write (it refuses).",
+  "cameras": {
+    "front": {
+      "width": 640,
+      "height": 480,
+      "fx": 991.4,
+      "fy": 991.4,
+      "cx": 320.7,
+      "cy": 303.3,
+      "distortion": [
+        0.24718,
+        -1.625751,
+        0.023494,
+        0.003223,
+        6.617417
+      ],
+      "hfov_deg": 35.779,
+      "vfov_deg": 27.218,
+      "source": "ChArUco calibration, refined by Nelder-Mead over real renders vs the real overhead frame",
+      "model": "Logitech C270 HD",
+      "note": "ChArUco gave fx 990.396 fy 996.956 cx 323.496 cy 300.367 (RMS 0.2651 px, 15 views). A 9-parameter silhouette fit over actual Isaac renders moved them to f=991.4, cx=320.7, cy=303.3 -- i.e. it CONFIRMED the calibration, including the 60 px cy offset, rather than replacing it. Paired with OVERHEAD_POS_OVERRIDE in tasks/push_t_env_cfg.py. Omniverse renders square pixels, so fx=fy here; the ChArUco fx/fy differed by 0.7%."
+    },
+    "grip": {
+      "width": 640,
+      "height": 480,
+      "fx": 487.1,
+      "fy": 487.1,
+      "cx": 332.3,
+      "cy": 287.1,
+      "distortion": [
+        -0.334987,
+        0.03574,
+        0.002793,
+        0.004876,
+        0.075527
+      ],
+      "hfov_deg": 66.608,
+      "vfov_deg": 52.462,
+      "source": "Nelder-Mead over real renders, 9 camera parameters, vs the real wrist frame",
+      "model": "Klip Xtreme KWC-500 FHD (Laguham)",
+      "note": "Fitted by rendering the gripper in Isaac across a grid of (f, cx, cy) and scoring each ACTUAL render against the real wrist frame. boundary error 3.1 px, IoU 0.932, against a measured noise floor of ~0.95 (re-thresholding the real frame moves its own mask by 0.94-0.98). Paired with CAMERA_POS_OVERRIDE in assets/objects.py -- the two were fitted together and neither transfers to a different camera pose. Do NOT fit these with a depth-reprojection surrogate: one predicted IoU 0.961 for a pose the renderer then scored 0.339. The surrogate only holds for corrections of a millimetre or two. f is paired with the 24 mm dolly in CAMERA_POS_OVERRIDE and neither means anything without the other -- closer-and-wider is one degree of freedom, fitted on the silhouette's width profile because IoU cannot see it. cx=330 is the one number here that is a real lens property -- it came out ~330 from two camera poses 12 degrees apart, so it is not absorbing pose error. cy is: it fits to 210 at the bore pose and 285 at this one, because a principal-point shift and a camera tilt are indistinguishable from a single view. Treat cy as an image-space correction paired with the pose, not as a measurement of the lens. Superseded: the ChArUco solve (735/695, cx 212 cy 205) scored IoU 0.223. Its distortion coefficients are kept only as the sole estimate available; Omniverse ignores distortion regardless."
+    }
+  }
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One login for every account a training run touches: Hugging Face (pull datasets,
 # push checkpoints) and Weights & Biases (loss curves). Both tokens land in ONE
-# gitignored file, .env.local, which every compose service and scripts/train.sh
+# gitignored file, .env.local, which every compose service and scripts/robot/train.sh
 # read — so they survive `--rm` container runs (a container's ~/.netrc does not)
 # and move to a cloud GPU box by copying that single file.
 #
@@ -15,7 +15,7 @@
 # HF alternative: `./robot run hf auth login` caches a token in the mounted HF
 # cache instead. .env.local wins over it, since HF_TOKEN takes precedence.
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 envfile=".env.local"
 IMAGE="${IMAGE:-agent101/lerobot}"

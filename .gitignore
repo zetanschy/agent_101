@@ -21,6 +21,15 @@ __pycache__/
 # Saved rerun recordings (large)
 rrd/
 
-# openpi training outputs (checkpoints are GB-scale; norm stats are regenerable)
-checkpoints/
-assets/
+# openpi training outputs (checkpoints are GB-scale; norm stats are regenerable).
+# Anchored to the repo root: unanchored, `assets/` also swallowed sim/*/assets/,
+# taking the printed CAD and the scene code with it.
+/checkpoints/
+/assets/
+
+# Isaac Sim renders and generated USD (regenerate with ./robot sim-assets / sim-play)
+sim/outputs/
+sim/sim_agent101/assets/usd/
+
+# Parent checkpoints pulled for a warm start (GBs, and they live on the Hub).
+ckpt/

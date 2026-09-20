@@ -3,7 +3,7 @@
 # Verifies each camera actually delivers a frame and flags recent USB instability,
 # so you don't start a long record only to have a flaky camera drop on episode 0.
 set -u
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 set -a; . ./.env; set +a
 
 # camera name -> stable by-id capture node (survives /dev/videoN renumbering)

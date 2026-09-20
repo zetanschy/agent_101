@@ -31,7 +31,15 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+      # MEASURED, not guessed: this checkpoint holds 6752 MiB resident and peaks at
+      # 6939 MiB, guided RTC pass included (jax memory_stats with preallocation off).
+      # The old 0.75 asks for 9216 MiB of a 12 GB card, which does NOT fit beside a
+      # desktop session -- 9168 MiB were free, so it failed by 48 MiB and the run died
+      # of OOM after loading. 0.65 is 7373 MiB: ~430 above the real peak, and it leaves
+      # 1.1 GB of card for everything else. Raise it per-run with XLA_MEM_FRACTION_INFER
+      # if this box ever has the GPU to itself; XLA_PYTHON_CLIENT_PREALLOCATE=false is
+      # the escape hatch when something else is already holding VRAM.
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION_INFER:-0.65}
     devices:
       # Follower arm only — the eval loop drives the follower, no leader needed.
       - /dev/ttyACM1:/dev/ttyACM1
@@ -49,6 +57,40 @@ services:
     shm_size: "8gb"
     stdin_open: true
     tty: true
+
+  # DAgger (scripts/openpi/dagger.py): the same image and mounts as `openpi`, plus the
+  # LEADER arm, because a human correction is driven from it. Deliberately a separate
+  # service rather than a device added to `openpi`: compose refuses to start a service
+  # whose device is missing, so mapping the leader there would break `./robot
+  # eval-openpi` on any box where only the follower is plugged in.
+  openpi-dagger:
+    extends:
+      service: openpi
+    volumes:
+      # X11 for the rerun viewer that --display_data spawns, as docker-compose.yml does
+      # for the lerobot service. Without a DISPLAY, pass --display_ip/--display_port and
+      # run `rerun` on the host instead; the loop does not need a window either way.
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    environment:
+      - DISPLAY=${DISPLAY}
+      # The rerun viewer renders through Mesa's software Vulkan (lavapipe), which is
+      # what docker-compose.yml settled on for the lerobot service: reliable over X11
+      # without NVIDIA Vulkan passthrough, and it leaves the GPU to JAX -- which here
+      # matters more than there, since the policy is holding most of the VRAM.
+      - VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json
+      - WGPU_BACKEND=vulkan
+      - XDG_RUNTIME_DIR=/tmp/runtime-root
+    # So --display_ip host.docker.internal reaches a viewer running on the HOST, which
+    # is rerun's own recommendation (it warns that the viewer inside a container is
+    # unsupported) and needs no rebuild.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    devices:
+      - /dev/ttyACM1:/dev/ttyACM1
+      # leader — the arm you take over with.
+      - /dev/ttyACM0:/dev/ttyACM0
+      - /dev/v4l/by-id/usb-046d_C270_HD_WEBCAM_01010650-video-index0:/dev/video4
+      - /dev/v4l/by-id/usb-USB_2.0_Camera_USB_2.0_Camera_SN0001-video-index0:/dev/video6
 
   # Training / norm-stats: same image, GPU only — no serial or camera devices, so it
   # runs on a box with no arm attached. openpi writes ./checkpoints/<config>/<exp>/
@@ -70,10 +112,20 @@ services:
       # Base weights land here (gs://openpi-assets), so they survive --rm.
       - ${HOME}/.cache/openpi:/root/.cache/openpi
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      # Orbax checkpoints downloaded by hand, as the inference services mount them.
+      # A DAgger round warm-starts from one (--init-from), so without this the
+      # training service is the only one that cannot see the parent it continues.
+      - ${HOME}/Downloads/hf_models:/checkpoints:ro
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+      # NOT XLA_MEM_FRACTION, which is the INFERENCE figure: .env pins it to 0.75 so a
+      # policy fits beside a desktop session on a 12 GB card. Training wants the
+      # opposite -- openpi documents 22.5 GB for a pi05 LoRA fine-tune, and 0.75 of a
+      # 24 GB card is ~18 GB, which OOMs before the model is even resident. train.sh
+      # defaults to 0.9 for exactly this reason, but its fallback never fired here
+      # because compose had already set the variable to the inference value.
+      - XLA_PYTHON_CLIENT_MEM_FRACTION=${XLA_MEM_FRACTION_TRAIN:-0.9}
     deploy:
       resources:
         reservations:
