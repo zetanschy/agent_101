@@ -75,6 +75,37 @@ case "$cmd" in
   teleop) needs_docker teleop;    grant_display; $RUN ./scripts/robot/teleop.sh "$@" ;;
   record) needs_docker record;    grant_display; $RUN ./scripts/robot/record.sh "$@" ;;
   infer) needs_docker infer;     grant_display; $RUN ./scripts/robot/infer.sh "$@" ;;   # run a trained policy (sync/rtc/async)
+  policy-serve)         # THE GPU HALF of remote inference. No arm, no cameras: this is
+                        # the box with the GPU, which may be anywhere. Runs natively
+                        # when there is no Docker, the same as the training commands.
+             #
+             # The port has to be PUBLISHED, which `compose run` does not do on its
+             # own, and a server that binds 127.0.0.1 INSIDE a container is
+             # unreachable even when it is. So the container binds 0.0.0.0 and the
+             # publish maps it to the host's loopback: the host still listens only on
+             # 127.0.0.1, which is the property the SSH-tunnel story depends on.
+             # --expose puts it on the LAN instead, and says so.
+             rport=8080; rbind=127.0.0.1; rargs=()
+             while [ $# -gt 0 ]; do
+               case "$1" in
+                 --port) rport="$2"; rargs+=("$1" "$2"); shift 2 ;;
+                 --port=*) rport="${1#*=}"; rargs+=("$1"); shift ;;
+                 --expose) rbind=0.0.0.0; shift ;;
+                 *) rargs+=("$1"); shift ;;
+               esac
+             done
+             if [ "$MODE" = native ]; then
+               python scripts/remote/serve.py "${rargs[@]}"
+             else
+               [ "$rbind" = 0.0.0.0 ] && echo "publishing ${rport} on ALL interfaces"
+               $DC -f docker-compose.train.yml run --rm \
+                 -p "${rbind}:${rport}:${rport}" train \
+                 python scripts/remote/serve.py --host 0.0.0.0 "${rargs[@]}"
+             fi ;;
+  infer-remote)         # THE ROBOT HALF. Owns the bus and the cameras and executes the
+                        # chunks a remote policy-serve returns.
+             needs_docker infer-remote
+             $RUN python scripts/remote/client.py "$@" ;;
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   eval) needs_docker eval;      $RUN python -m evals.run "$@" ;;               # Inspect Robots benchmark: LLM agent or VLA
   eval-preflight) needs_docker eval-preflight; $RUN inspect-robots-so101-preflight "$@" ;;  # prove compat, no motion
@@ -419,6 +450,14 @@ so rather than failing with "docker: command not found".
                                 --human-weight/--auto-weight to retune (1.0/0.5), and
                                 --pre-window-s for how much of the failure run-up to
                                 fade out (5 s). Norm stats are INHERITED from CKPT.
+  ./robot policy-serve --port 8080     serve a policy from THIS box's GPU over gRPC
+                                (the GPU half; no arm needed). --list shows what it
+                                can serve. Binds 127.0.0.1 by default — the link is
+                                unauthenticated, so cross machines with an SSH tunnel
+  ./robot infer-remote --server HOST:PORT --policy molmoact2 --task "..."
+                                drive THIS arm from a policy on another machine.
+                                --chunk-threshold is the latency budget: re-query
+                                when that fraction of the action queue remains
   ./robot openpi-build                 build the openpi (JAX) reference image
   ./robot openpi-eval --policy P --task "..." [--actions 15] [--dry-run] [--rtc]
                                 openpi checkpoint on the arm + latency report

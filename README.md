@@ -218,6 +218,69 @@ step to wait through on a round, because they are inherited. Read the step time 
 first few steps and budget the box from that — nothing here has measured this config's
 throughput. `--resume`, not `--overwrite`, after a crash.
 
+## Running a policy on a GPU that is not on the robot
+
+The arm here has no GPU worth the name beside it, and the models worth running do.
+`policy-serve` puts the policy on whichever box has the GPU and leaves the bus and the
+cameras where they are.
+
+```bash
+# on the GPU box
+./robot policy-serve --port 8080
+
+# on the robot, through a tunnel (see below)
+./robot infer-remote --server 127.0.0.1:8080 --policy molmoact2 \
+    --checkpoint <a lerobot policy dir> --task "pick up the lemon"
+```
+
+**The transport is lerobot's own** `async_inference` gRPC pair — `PolicyServer` on the
+GPU, `RobotClient` on the robot — rather than anything invented here. It already does
+the part that makes remote inference work at all: the policy returns a **chunk**, the
+client keeps it in a queue, and `--chunk-threshold` is the fraction of that queue
+remaining when it asks for the next one. At 0.5 the request goes out with half the
+chunk still executing — 0.5 s of cover at 30 fps — and that is the budget the round
+trip plus the inference has to fit inside. Either half can be swapped for a stock
+lerobot one.
+
+**What had to be added is an allow-list, not a protocol.** The server's
+`SUPPORTED_POLICIES` is hand-maintained rather than derived from the policy registry,
+so lerobot can implement a policy in full and the server will still answer "policy type
+not supported". **MolmoAct2 is exactly that case**: `get_policy_class("molmoact2")`
+returns `MolmoAct2Policy` today. [scripts/remote/adapters.py](scripts/remote/adapters.py)
+widens the list, after checking the factory can really build each name — allow-listing
+a name it cannot turns a clear refusal at connect time into a stack trace at load time,
+on the robot, mid-session.
+
+The same file carries a registry for models lerobot does **not** implement, which get a
+**pass-through** input pipeline because they preprocess themselves. That is only for
+foreign models: a native policy like MolmoAct2 keeps lerobot's processors, and
+bypassing them would feed it unnormalized inputs — it would run, and just be worse than
+the same model on the robot, which is the hardest kind of bug to notice. Nothing ships
+in that registry yet; the openpi orbax checkpoints are the obvious first entry, since
+lerobot's factory cannot load one.
+
+**The link is unauthenticated and unencrypted.** Anything that reaches the port can
+drive the arm and read its cameras, so the default bind is loopback and the way across
+machines is a tunnel:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 gpubox &      # on the robot
+```
+
+which needs no open port on the GPU box at all. `--expose` publishes on the LAN
+instead and says so at startup. Under Docker the container binds `0.0.0.0` — the only
+bind a published port can reach — and `./robot` maps it to the host's loopback, so the
+host still listens only on 127.0.0.1.
+
+**What `--checkpoint` means: a lerobot policy directory, not a Hub model repo.** The
+server calls `from_pretrained(<that string>)`, which wants a directory with lerobot's
+own `config.json` and processor state. Pointed at the released weights it fails with
+`Missing 'type' field in config.json`. MolmoAct2's released checkpoints are loaded
+through `policy.checkpoint_path` plus the policy options (`image_keys`, `chunk_size`,
+`setup_type`, `control_mode`), so serving one means materialising that directory once —
+by fine-tuning through lerobot, or by building and saving the config against the
+released weights.
+
 ## A joint slipped (a crash during teleop)
 
 A collision does not decalibrate an encoder — a magnetic absolute encoder does not

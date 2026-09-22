@@ -33,3 +33,6 @@ sim/sim_agent101/assets/usd/
 
 # Parent checkpoints pulled for a warm start (GBs, and they live on the Hub).
 ckpt/
+
+# lerobot's policy server writes a log per run here.
+logs/
