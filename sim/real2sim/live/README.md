@@ -21,7 +21,7 @@ stop those services. That applies to the real arm as much as to the sim.
 | option | default | |
 |---|---|---|
 | `--sim mujoco\|isaac` | — | the engine |
-| `--sim-layout real:N\|random\|random:K` | `random` | where the caps and the mug start: episode N's calibrated layout, or K (1-3) random caps and the mug |
+| `--sim-layout real:N\|random:K\|random` | `random:1` | where the caps and the mug start: one cap and the mug at random reachable spots, drawn afresh at every reset; `random:K` K caps (1-3); `random` 1-3; `real:N` episode N's calibrated layout (`real:0` is one cap) |
 | `--sim-viewer` | off | the engine's 3D window; `R` there = a new layout |
 | `--sim-clock auto\|realtime\|lockstep` | `auto` | realtime for MuJoCo, lockstep for Isaac (below) |
 | `--sim-seed S` | — | reproducible random layouts |

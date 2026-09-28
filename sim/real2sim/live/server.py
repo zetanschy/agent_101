@@ -275,7 +275,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="real2sim live serve")
     ap.add_argument("--engine", required=True, choices=("mujoco", "isaac"))
     ap.add_argument("--ds")
-    ap.add_argument("--layout", default="random", help="real:N | random | random:K (default random)")
+    ap.add_argument("--layout", default="random:1",
+                    help="real:N | random (1-3 caps) | random:K (default random:1: one cap, the task as recorded in ep0)")
     ap.add_argument("--clock", choices=("auto", "realtime", "lockstep"), default="auto",
                     help="auto: realtime for mujoco (9.8x real-time physics), lockstep for isaac (0.19x: "
                          "one physics step per command keeps every recorded frame exactly 1/fps of sim)")

@@ -64,7 +64,8 @@ openpi_run() {
 # for the arm, with ROBOT_TYPE=real2sim and ROBOT_PORT = the sim's socket, which the
 # real2sim lerobot plugin (sim/real2sim/lerobot_plugin) answers. The leader stays real,
 # on its serial port in the container.
-#   --sim-layout real:N|random[:K]   where the caps and the mug start (default random)
+#   --sim-layout real:N|random[:K]   where the caps and the mug start (default random:1: one cap,
+#                                    placed afresh at every reset; random = 1-3 caps)
 #   --sim-viewer                     the engine's 3D window (R = new layout)
 #   --sim-clock auto|realtime|lockstep  auto (default): realtime for mujoco (the servo keeps
 #                                    running between commands, as on the bench), lockstep for
@@ -73,7 +74,7 @@ openpi_run() {
 SIM_ENV=(); SIM_ENGINE=""; SIM_PID=""; REST=()
 sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
   REST=(); SIM_ENGINE=""
-  local layout=random clock=auto extra=() live=sim/outputs/real2sim/live t=0 limit=90
+  local layout=random:1 clock=auto extra=() live=sim/outputs/real2sim/live t=0 limit=90
   while [ $# -gt 0 ]; do
     case "$1" in
       --sim) SIM_ENGINE="$2"; shift 2 ;;
