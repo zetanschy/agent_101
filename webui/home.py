@@ -36,7 +36,16 @@ def positions(robot, motors):
     return {m: float(obs[f"{m}.pos"]) for m in motors}
 
 
-robot = SOFollower(cfg)
+if os.environ.get("ROBOT_TYPE", "") == "real2sim":
+    # `./robot webui --sim ENGINE`: home the live sim's arm through the same send_action loop.
+    # Capturing a home by hand needs free servos, which a sim does not have.
+    from lerobot_robot_real2sim import Real2Sim, Real2SimConfig
+
+    if "--set" in sys.argv:
+        sys.exit("set-home needs the real arm (torque off, moved by hand); the sim uses the saved pose")
+    robot = Real2Sim(Real2SimConfig(port=os.environ.get("ROBOT_PORT", ""), id=cfg.id, cameras={}))
+else:
+    robot = SOFollower(cfg)
 print("connecting follower...", flush=True)
 robot.connect()
 try:

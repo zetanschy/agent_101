@@ -10,7 +10,13 @@ The simulated follower as a lerobot robot. Every command that drives the arm tak
 ./robot openpi-eval --sim mujoco --policy /checkpoints/openpi_pi05_lora_cap_to_cup_200 \
         --task "Put the cap into the red cup"                  # the openpi (JAX) pi0.5 stack
 ./robot infer-remote --sim isaac ...                           # the robot half of remote inference
+./robot webui --sim mujoco          # the browser panel (lerobot + RL backends) on the sim
+./robot openpi-webui --sim mujoco   # the openpi backend: Load, Run, Stop, Home as on the arm
 ```
+
+On this PC the openpi webui's default port 8001 is taken by Omniverse's thumbnail service
+(and 8002 by its tagging service). Set `OPENPI_WEBUI_PORT` (e.g. 8011, in `.env.local`) or
+stop those services. That applies to the real arm as much as to the sim.
 
 | option | default | |
 |---|---|---|
@@ -113,9 +119,13 @@ They have no reflections in the steel mug and no room behind the arm. Isaac rend
   8.5 GB, on the sim exactly as it would on the arm. Run it through `policy-serve` on a
   bigger GPU with `./robot infer-remote --sim ...`, or use the openpi stack, which peaks at
   6.9 GB.
-- **Inference is only as good as the images.** The openpi cap-to-cup checkpoint, trained on
-  real frames, drove the MuJoCo sim for 40 s without placing the cap. The MuJoCo images
-  are a rasterizer's.
+- **Inference: the openpi cap-to-cup checkpoint puts the cap in the mug on MuJoCo.** MEASURED
+  through `./robot openpi-webui --sim mujoco --sim-layout real:0`: RTC mode, degrees, 75
+  inferences at 389 ms. The cap entered the mug ~19 s after Run (the real episode 0 took
+  ~12 s), with the look-dressed MuJoCo images. An earlier 40 s `openpi-eval --sim mujoco`
+  run did not place it, but it differed in three ways at once: plain MuJoCo images,
+  synchronous chunks, and normalized joint units (evaluate.py's default). One run is not a
+  success rate; this says the loop works end to end, not how often the policy succeeds.
 - **No episode hook in lerobot-record:** reset the layout yourself between episodes (above).
 - **Isaac's viewer** is dark: exposure and grading would also rescale the frames the cameras
   record, so it is left alone. Closing its window ends the session, because Kit's shutdown

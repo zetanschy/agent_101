@@ -144,16 +144,23 @@ def main() -> int:
     # wrong rather than two.
     policy = ev.load_policy(cfg, args.policy)
 
-    from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+    if ev.env("ROBOT_TYPE", "") == "real2sim":
+        # `./robot openpi-webui --sim ENGINE`: the live sim (sim/real2sim/live), not the arm
+        from lerobot_robot_real2sim import Real2Sim, Real2SimConfig
 
-    robot = SO101Follower(
-        SO101FollowerConfig(
-            port=ev.env("ROBOT_PORT", "/dev/ttyACM1"),
-            id=ev.env("ROBOT_ID", "zetans_follower"),
-            cameras=ev.cameras(fps),
-            use_degrees=(args.units == "degrees"),
+        robot = Real2Sim(Real2SimConfig(port=ev.env("ROBOT_PORT", ""), id=ev.env("ROBOT_ID", "sim"),
+                                        cameras=ev.cameras(fps), use_degrees=(args.units == "degrees")))
+    else:
+        from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
+
+        robot = SO101Follower(
+            SO101FollowerConfig(
+                port=ev.env("ROBOT_PORT", "/dev/ttyACM1"),
+                id=ev.env("ROBOT_ID", "zetans_follower"),
+                cameras=ev.cameras(fps),
+                use_degrees=(args.units == "degrees"),
+            )
         )
-    )
     robot.connect()
     if not robot.is_connected:
         raise RuntimeError("robot did not connect")

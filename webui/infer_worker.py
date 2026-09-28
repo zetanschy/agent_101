@@ -26,6 +26,12 @@ from pathlib import Path
 # --robot.type=so101_follower / --robot.cameras / etc. parse. main() is
 # __main__-guarded, so this import has no side effect beyond registration.
 import lerobot.scripts.lerobot_rollout  # noqa: F401
+from lerobot.utils.import_utils import register_third_party_plugins
+
+# lerobot-rollout's main() does this before parsing, and this worker parses itself: without it
+# --robot.type=real2sim (./robot webui --sim ENGINE, the lerobot_robot_real2sim plugin on
+# PYTHONPATH) would not exist. Nothing is found and nothing changes for the arm.
+register_third_party_plugins()
 from lerobot.configs import parser
 from lerobot.rollout import RolloutConfig, build_rollout_context, create_strategy
 

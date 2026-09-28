@@ -353,7 +353,14 @@ def main() -> int:
                   cameras={"grip": cam_cfg}, use_degrees=True)
     if "disable_torque_on_disconnect" in SO101FollowerConfig.__dataclass_fields__:
         kwargs["disable_torque_on_disconnect"] = True
-    follower = SO101Follower(SO101FollowerConfig(**kwargs))
+    if os.environ.get("ROBOT_TYPE", "") == "real2sim":
+        # `./robot webui --sim ENGINE`: the live sim (sim/real2sim/live), not the arm
+        from lerobot_robot_real2sim import Real2Sim, Real2SimConfig
+
+        kwargs["port"] = os.environ.get("ROBOT_PORT", "")
+        follower = Real2Sim(Real2SimConfig(**kwargs))
+    else:
+        follower = SO101Follower(SO101FollowerConfig(**kwargs))
     follower.connect()
     print(f"  robot on {kwargs['port']}, wrist camera index {idx}", flush=True)
     if policy.goal_term == "goal_position":

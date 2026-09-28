@@ -57,7 +57,8 @@ openpi_run() {
   $DC -f docker-compose.openpi.yml run --rm "${envargs[@]}" openpi-train "$@"
 }
 
-# --sim mujoco|isaac on teleop / record / infer / infer-remote / openpi-eval: the same
+# --sim mujoco|isaac on teleop / record / infer / infer-remote / openpi-eval / webui /
+# openpi-webui: the same
 # command against the live sim instead of the arm (sim/real2sim/live). The sim runs
 # natively in its engine's interpreter; the command runs in Docker exactly as it does
 # for the arm, with ROBOT_TYPE=real2sim and ROBOT_PORT = the sim's socket, which the
@@ -264,8 +265,8 @@ case "$cmd" in
              needs_docker eval-openpi
              $DC -f docker-compose.openpi.yml run --rm openpi \
                python -m evals.run --policy openpi "$@" ;;
-  webui) needs_docker webui;     port="${WEBUI_PORT:-8000}"; echo "web UI -> http://localhost:${port}"
-             $DC run --rm -p "${port}:8000" lerobot python webui/app.py ;;
+  webui) needs_docker webui;     sim_up "$@"; port="${WEBUI_PORT:-8000}"; echo "web UI -> http://localhost:${port}"
+             $DC run --rm "${SIM_ENV[@]}" -p "${port}:8000" lerobot python webui/app.py ;;
   data) needs_docker data;      grant_display; $RUN ./scripts/robot/data.sh "$@" ;;   # dataset tools: viz / upload / delete / list
   joint-check)          # read both arms and say where they disagree. MOVES NOTHING.
                         # After a collision, use this to measure the offset BEFORE
@@ -291,9 +292,9 @@ case "$cmd" in
              $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" openpi \
                python scripts/openpi/evaluate.py "${REST[@]}" ;;
   openpi-webui)         # same browser panel, openpi backend (separate port)
-             needs_docker openpi-webui
+             needs_docker openpi-webui; sim_up "$@"
              port="${OPENPI_WEBUI_PORT:-8001}"; echo "openpi web UI -> http://localhost:${port}"
-             $DC -f docker-compose.openpi.yml run --rm -p "${port}:8000" openpi \
+             $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" -p "${port}:8000" openpi \
                python webui/app.py ;;
   openpi-build) if [ "$MODE" = native ]; then bash ./scripts/openpi/setup_cloud.sh
                 else $DC -f docker-compose.openpi.yml build "$@"; fi ;;
@@ -510,7 +511,7 @@ so rather than failing with "docker: command not found".
   ./robot train --dataset U/D --name RUN [--steps 20000] [--batch 16] [--push]
                                 LoRA fine-tune, LEROBOT stack (pytorch)
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
-  ./robot teleop|record|infer|infer-remote|openpi-eval ... --sim mujoco|isaac
+  ./robot teleop|record|infer|infer-remote|openpi-eval|webui|openpi-webui ... --sim mujoco|isaac
                                 the same command against the live sim instead of the arm
                                 (real leader; [--sim-layout real:N|random[:K]] [--sim-viewer];
                                 r = new object layout; see sim/real2sim/live/README.md)
