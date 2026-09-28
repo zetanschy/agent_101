@@ -431,3 +431,15 @@ and the servo holds against it. Here it is how a horn slips, which is what
 before they are sent, and the log counts every tick that clamping bit.
 
 Run it **dry** first. `--dry-run` computes and logs every target and sends nothing.
+
+## real2sim: the recorded episodes, replayed physically
+
+`sim/real2sim/` replays a real LeRobot dataset (default the cap-to-mug episodes of
+`soarm101/testingt_real2sim_20260927_152936`) in MuJoCo + Blender and in Isaac Sim, with
+the cameras, joint offsets, table and objects fitted from that dataset's own frames, and
+compares both stacks against the recording and each other.
+
+    ./robot real2sim compare summary          # the measured comparison
+    ./robot real2sim compare video --episode 0
+
+Everything, including how to rebuild each step, is in `sim/real2sim/README.md`.
