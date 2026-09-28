@@ -98,6 +98,7 @@ class MujocoEngine(Engine):
         self.want_viewer, self.viewer = viewer, None
         self.b = self.d = self.renderer = None
         self._k = 0
+        self._t_mj = 0.0
         self._reset_flag = False
         self._look = None
         if look:  # the dataset-derived mat and key light (look_mujoco.py); plain colours without look build
@@ -110,17 +111,50 @@ class MujocoEngine(Engine):
 
     # --- lifecycle -------------------------------------------------------------------
     def reset(self, layout: dict, rest_q: np.ndarray, hold_q=None, settle_s: float = 0.3) -> None:
+        """A layout with the same bodies as the current model (the default random:1 always
+        is) is re-placed IN this model: no rebuild, and the viewer window stays open.
+        Anything else builds a fresh model. The first reset always builds, which is the
+        path the replay-equivalence test checks bitwise."""
         import mujoco
 
+        from .. import objects as objlib
         from ..mujoco import model as mdl
         from ..mujoco.render import Renderer
 
         sc, ep = layouts.scene_with_layout(self.scene, layout)
+        q0 = np.asarray(rest_q, dtype=float)
+        obs = objlib.episode_objects(sc, ep)
+        if self.b is not None and [o["name"] for o in self.b.objects] == [o["name"] for o in obs]:
+            with self._viewer_lock():
+                self._replace(sc, obs, q0, settle_s)
+            self._after_reset(sc, q0, hold_q)
+            return
         self.layout_scene = sc
         b = mdl.build(sc, ep, self.servo, mdl.Physics(), mdl.Perturbation(), spec_hook=self._look)
         d = mujoco.MjData(b.model)
-        q0 = np.asarray(rest_q, dtype=float)
-        # the replay's reset: arm held exactly at its start while the objects settle
+        self._settle(b, d, q0, settle_s)
+        if self.renderer is not None:
+            self.renderer.close()
+        self.b, self.d, self._k = b, d, 0
+        self._after_reset(sc, q0, hold_q)
+        self.renderer = Renderer(b, self.cams)
+        try:
+            sig = _optics() if self._look is not None else {}
+            self._warp = {c: _Warp(b.cameras[c]["cam"], b.cameras[c]["spec"], sig.get(c, 0.0)) for c in self.cams}
+        except ImportError:  # no torch: FastRemap inside Renderer.render
+            self._warp = None
+        self._caps = [o for o in b.objects if o["kind"] == "cap"]
+        self._mug = next(o for o in b.objects if o["kind"] == "mug")
+        if self.want_viewer:
+            self._open_viewer()
+
+    @staticmethod
+    def _settle(b, d, q0, settle_s: float) -> None:
+        """The replay's reset: the arm held exactly at q0 while the objects settle; t = 0."""
+        import mujoco
+
+        from ..mujoco import model as mdl
+
         mdl.set_arm_state(b, d, q0)
         d.ctrl[b.act] = q0
         mujoco.mj_forward(b.model, d)
@@ -132,21 +166,44 @@ class MujocoEngine(Engine):
         d.time = 0.0
         mdl.set_arm_state(b, d, q0)
         mujoco.mj_forward(b.model, d)
-        if self.renderer is not None:
-            self.renderer.close()
-        self.b, self.d, self._k = b, d, 0
+
+    def _replace(self, sc, obs, q0, settle_s: float) -> None:
+        """New poses for the same bodies: each object's free joint set where build() would
+        have placed it (objects.episode_objects, on the table: an open-up cap on its top),
+        velocities and solver state cleared by mj_resetData, then the same settle."""
+        import mujoco
+
+        from ..mujoco import model as mdl
+
+        b, d = self.b, self.d
+        mujoco.mj_resetData(b.model, d)
+        cap_h = sc.cap_dims()["height"]
+        for o, ob in zip(b.objects, obs):
+            pos, quat = np.array(ob["pos"], dtype=float), np.array(ob["quat"], dtype=float)
+            pos[2] = float(mdl.table_top(sc, *pos[:2])) + (cap_h if ob["kind"] == "cap" and ob.get("up") == "open" else 0.0)
+            d.qpos[o["qadr"]:o["qadr"] + 3], d.qpos[o["qadr"] + 3:o["qadr"] + 7] = pos, quat
+            o["pos0"], o["quat0"] = pos, quat
+        self._settle(b, d, q0, settle_s)
+
+    def _after_reset(self, sc, q0, hold_q) -> None:
+        self.layout_scene, self._k, self._t_mj = sc, 0, float(self.d.time)
         self.goals = OnlineGoals(self.servo.dead_time, self.limits, q0 if hold_q is None else hold_q,
                                  self.servo.max_velocity, target0=q0)
-        self.renderer = Renderer(b, self.cams)
-        try:
-            sig = _optics() if self._look is not None else {}
-            self._warp = {c: _Warp(b.cameras[c]["cam"], b.cameras[c]["spec"], sig.get(c, 0.0)) for c in self.cams}
-        except ImportError:  # no torch: FastRemap inside Renderer.render
-            self._warp = None
-        self._caps = [o for o in b.objects if o["kind"] == "cap"]
-        self._mug = next(o for o in b.objects if o["kind"] == "mug")
-        if self.want_viewer:
-            self._open_viewer()
+
+    def _viewer_lock(self):
+        import contextlib
+
+        return self.viewer.lock() if self.viewer is not None else contextlib.nullcontext()
+
+    def _viewer_reset_seen(self) -> bool:
+        """MuJoCo's viewer resets OUR data on its Reset button / Backspace (mj_resetData:
+        time back to 0, the arm to qpos0, the objects to where the model placed them). Sim
+        time never runs backwards otherwise, so that is how it is recognised; the server
+        then draws a new layout, which is what R does."""
+        if self.d is not None and self.d.time + 1e-9 < self._t_mj:
+            self._reset_flag = True
+            return True
+        return False
 
     def _open_viewer(self) -> None:
         import mujoco.viewer
@@ -181,11 +238,15 @@ class MujocoEngine(Engine):
     def step(self) -> None:
         import mujoco
 
+        if self._viewer_reset_seen():  # the server re-places before the next step
+            return
         b, d, n = self.b, self.d, self.b.physics.substeps
-        for s in range(n):  # the replay's substep clock: (k + s/n) / fps
-            d.ctrl[b.act] = self.goals.at((self._k + s / n) / self.fps)
-            mujoco.mj_step(b.model, d)
+        with self._viewer_lock():
+            for s in range(n):  # the replay's substep clock: (k + s/n) / fps
+                d.ctrl[b.act] = self.goals.at((self._k + s / n) / self.fps)
+                mujoco.mj_step(b.model, d)
         self._k += 1
+        self._t_mj = float(d.time)
 
     def state(self) -> np.ndarray:
         from ..mujoco import model as mdl
@@ -193,12 +254,15 @@ class MujocoEngine(Engine):
         return mdl.arm_q(self.b, self.d)
 
     def render(self, cams) -> dict:
-        if self._warp is None:
-            return {c: self.renderer.render(self.d, c) for c in cams}
-        return {c: self._warp[c](self.renderer.render(self.d, c, distort=False)) for c in cams}
+        with self._viewer_lock():  # a viewer click writes the same data
+            if self._warp is None:
+                return {c: self.renderer.render(self.d, c) for c in cams}
+            pin = {c: self.renderer.render(self.d, c, distort=False) for c in cams}
+        return {c: self._warp[c](img) for c, img in pin.items()}
 
     def render_pinhole(self, cams) -> dict:
-        return {c: self.renderer.render(self.d, c, distort=False) for c in cams}
+        with self._viewer_lock():
+            return {c: self.renderer.render(self.d, c, distort=False) for c in cams}
 
     def warp_spec(self, cam: str) -> dict:
         from .. import camera as C
@@ -225,6 +289,7 @@ class MujocoEngine(Engine):
         if not self.viewer.is_running():
             self.viewer = None
             return False
+        self._viewer_reset_seen()
         self.viewer.sync()
         return True
 

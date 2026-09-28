@@ -36,9 +36,19 @@ stop those services. That applies to the real arm as much as to the sim.
   (`R` = new layout). For example: `OPENPI_WEBUI_PORT=8011 ./robot openpi-webui --sim
   mujoco --sim-viewer`.
 
-**A new layout** comes from pressing `r` in the terminal that runs lerobot (the plugin
-listens the way lerobot-record listens for its arrow keys), `R` in the viewer, or
-`./robot real2sim live reset [--layout ...]` from another terminal. lerobot-record gives a
+**A new layout** (cap and mug moved to fresh random spots, arm back at rest) comes from any
+of these:
+- `r` in the terminal that runs lerobot. The plugin listens the way lerobot-record listens
+  for its arrow keys.
+- In MuJoCo's viewer: the **Reset** button, Backspace, or `R`. The viewer's own Reset
+  would put everything back where the model started and snap the arm to its zero pose.
+  The engine sees sim time run backwards, never integrates that state, and draws a new
+  layout instead.
+- `./robot real2sim live reset [--layout ...]` from another terminal.
+
+A layout with the same bodies as the current one (the default `random:1` always is) is
+re-placed in the running model in ~0.02 s, so the viewer window stays open. A different
+cap count rebuilds the model (~1-3 s). lerobot-record gives a
 robot no hook between episodes, and a reset on a timer could teleport objects in the
 middle of a recorded episode. So you reset during the reset phase, as you would on the bench.
 
