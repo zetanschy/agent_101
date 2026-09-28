@@ -1,0 +1,938 @@
+{
+ "_doc": "Identified STS3215 servo model (real2sim/mujoco/servo.py; SI units). Written by ./robot real2sim mujoco servo-fit; merged over <ds>.json and <ds>.calib.json by scene.load.",
+ "actuator": {
+  "source": "fitted: MUJOCO servo_fit.identify + grip_hold on testingt_real2sim_20260927_152936 (mujoco 3.11, dt 1/1800 s, hard joint dry friction); dead time 33.3 ms common to all joints; scene hash d1b5b79b7b9356c0 at fit time",
+  "model": "sts3215/1: tau = clip(kp (u - q) - kd qdot, +-effort_limit) - damping qdot - frictionloss sign(qdot); u = recorded action clamped to the firmware limits, delayed by dead_time_s, slewed at <= max_velocity; Jaw = horn (encoder) + coaxial series flex hinge to the finger",
+  "dead_time_s": 0.0333,
+  "max_velocity": 5.2883,
+  "joints": {
+   "Rotation": {
+    "source": "fitted: servo_fit.identify, action -> observation.state on episodes [0, 1], contacts off; shared STS3215 kp/kd/damping/armature fitted on the 5 arm joints, frictionloss per joint; RMSE train 0.25/0.29 deg, held-out ep2 0.27 deg; effort_limit read: STS3215 full-duty stall servo.BAM_STALL (Rhoban BAM m1)",
+    "kp": 9.35371,
+    "kd": 0.0830206,
+    "damping": 0.770128,
+    "armature": 0.0090082,
+    "frictionloss": 0.0628549,
+    "effort_limit": 3.41018
+   },
+   "Pitch": {
+    "source": "fitted: servo_fit.identify, action -> observation.state on episodes [0, 1], contacts off; shared STS3215 kp/kd/damping/armature fitted on the 5 arm joints, frictionloss per joint; RMSE train 0.96/0.99 deg, held-out ep2 1.23 deg; effort_limit read: STS3215 full-duty stall servo.BAM_STALL (Rhoban BAM m1)",
+    "kp": 9.35371,
+    "kd": 0.0830206,
+    "damping": 0.770128,
+    "armature": 0.0090082,
+    "frictionloss": 0.275092,
+    "effort_limit": 3.41018
+   },
+   "Elbow": {
+    "source": "fitted: servo_fit.identify, action -> observation.state on episodes [0, 1], contacts off; shared STS3215 kp/kd/damping/armature fitted on the 5 arm joints, frictionloss per joint; RMSE train 0.79/0.71 deg, held-out ep2 0.84 deg; effort_limit read: STS3215 full-duty stall servo.BAM_STALL (Rhoban BAM m1)",
+    "kp": 9.35371,
+    "kd": 0.0830206,
+    "damping": 0.770128,
+    "armature": 0.0090082,
+    "frictionloss": 0.287808,
+    "effort_limit": 3.41018
+   },
+   "Wrist_Pitch": {
+    "source": "fitted: servo_fit.identify, action -> observation.state on episodes [0, 1], contacts off; shared STS3215 kp/kd/damping/armature fitted on the 5 arm joints, frictionloss per joint; RMSE train 0.54/0.34 deg, held-out ep2 0.44 deg; effort_limit read: STS3215 full-duty stall servo.BAM_STALL (Rhoban BAM m1)",
+    "kp": 9.35371,
+    "kd": 0.0830206,
+    "damping": 0.770128,
+    "armature": 0.0090082,
+    "frictionloss": 0.105497,
+    "effort_limit": 3.41018
+   },
+   "Wrist_Roll": {
+    "source": "fitted: servo_fit.identify, action -> observation.state on episodes [0, 1], contacts off; shared STS3215 kp/kd/damping/armature fitted on the 5 arm joints, frictionloss per joint; RMSE train 0.41/0.22 deg, held-out ep2 0.32 deg; effort_limit read: STS3215 full-duty stall servo.BAM_STALL (Rhoban BAM m1)",
+    "kp": 9.35371,
+    "kd": 0.0830206,
+    "damping": 0.770128,
+    "armature": 0.0090082,
+    "frictionloss": 0.0386723,
+    "effort_limit": 3.41018
+   },
+   "Jaw": {
+    "source": "fitted: servo_fit.identify, action -> observation.state on episodes [0, 1], contacts off; kp = the shared arm kp (same servo; unloaded, the Jaw only fixes ratios), kd/damping/armature/frictionloss fitted on its free frames; RMSE train 0.19/0.17 deg, held-out ep2 0.89 deg; effort_limit fitted: grip_hold (the clamp seen on the ep2 A' and B holds)",
+    "kp": 9.35371,
+    "kd": 0.7658,
+    "damping": 0.0611259,
+    "armature": 0.00651803,
+    "frictionloss": 0.0671689,
+    "effort_limit": 1.15514,
+    "flex": {
+     "source": "fitted: grip_hold hinge fit over 7 squeeze plateaus: encoder = 16.62 % - 0.486 x min(err, 5.30 %), residual rms 0.14 % (max 0.22); stiffness = kp / 0.486; damping ASSUMED zeta 0.5 of the ~120 Hz flex mode",
+     "stiffness": 19.2308,
+     "damping": 0.0176149
+    }
+   }
+  },
+  "kp": 9.35371,
+  "damping": 0.770128,
+  "armature": 0.0090082,
+  "frictionloss": 0.0628549,
+  "dead_time_frames": 0.999,
+  "effort_limit": {
+   "source": "fitted: see joints.*.effort_limit",
+   "arm": 3.41018,
+   "gripper": 1.15514
+  },
+  "stall_torque": {
+   "source": "read: Rhoban BAM STS3215 7.4 V m1 full-duty stall 0.97 x 7.4 V x 1.1776 N.m/A / 2.4787 ohm; MEASURED: the recorded ep2 motion needs up to 3.16 N.m (Pitch, inverse dynamics), above the vendor ratings 1.91 (7.4 V) and 2.94 N.m (12 V). The gripper's identified clamp is only 33 % of it, not the 50 % Max_Torque_Limit: the firmware's overload protection (Overload_Torque 25) is the likely reason; unverified",
+   "value": 3.4102,
+   "range": [
+    1.91,
+    3.52
+   ],
+   "gripper_clamp_fraction": 0.339
+  },
+  "metrics": {
+   "source": "measured: servo_fit.evaluate (arm-only model, action -> state)",
+   "fit_seconds": 921.0,
+   "dead_time_grid_rmse_deg": {
+    "source": "measured: per-joint RMSE at the fit start point",
+    "0.0ms": [
+     0.573,
+     1.878,
+     1.688,
+     0.825,
+     0.658,
+     0.508
+    ],
+    "11.1ms": [
+     0.362,
+     1.728,
+     1.551,
+     0.586,
+     0.41,
+     0.549
+    ],
+    "22.2ms": [
+     0.295,
+     1.633,
+     1.466,
+     0.437,
+     0.31,
+     0.645
+    ],
+    "33.3ms": [
+     0.441,
+     1.604,
+     1.447,
+     0.476,
+     0.466,
+     0.776
+    ],
+    "44.4ms": [
+     0.674,
+     1.645,
+     1.493,
+     0.668,
+     0.728,
+     0.927
+    ],
+    "55.6ms": [
+     0.949,
+     1.76,
+     1.61,
+     0.944,
+     1.04,
+     1.098
+    ]
+   },
+   "per_joint_es_rmse_deg": {
+    "source": "fitted: per-joint ES train RMSE at each dead time",
+    "11.1ms": [
+     0.288,
+     0.933,
+     0.738,
+     0.48,
+     0.282,
+     0.205
+    ],
+    "22.2ms": [
+     0.286,
+     1.021,
+     0.816,
+     0.416,
+     0.279,
+     0.18
+    ],
+    "33.3ms": [
+     0.277,
+     0.954,
+     0.664,
+     0.413,
+     0.284,
+     0.181
+    ]
+   },
+   "episodes": {
+    "0": {
+     "source": "measured: servo_fit.evaluate ep0 (train), deg; Jaw on free frames",
+     "split": "train",
+     "rmse_deg": [
+      0.253,
+      0.956,
+      0.787,
+      0.54,
+      0.415,
+      0.192
+     ],
+     "bias_deg": [
+      -0.006,
+      -0.06,
+      0.181,
+      0.218,
+      0.086,
+      -1.428
+     ],
+     "max_abs_deg": [
+      0.79,
+      2.25,
+      2.52,
+      1.35,
+      1.93,
+      5.85
+     ],
+     "lag_sim_frames": [
+      4.5,
+      5.2,
+      5.2,
+      4.6,
+      4.4,
+      4.3
+     ],
+     "lag_real_frames": [
+      4.5,
+      4.8,
+      4.9,
+      4.5,
+      4.6,
+      4.2
+     ],
+     "peak_speed_sim_deg_s": [
+      111.0,
+      109.0,
+      113.0,
+      83.0,
+      154.0
+     ],
+     "peak_speed_real_deg_s": [
+      108.0,
+      109.0,
+      113.0,
+      84.0,
+      146.0
+     ]
+    },
+    "1": {
+     "source": "measured: servo_fit.evaluate ep1 (train), deg; Jaw on free frames",
+     "split": "train",
+     "rmse_deg": [
+      0.288,
+      0.994,
+      0.711,
+      0.338,
+      0.222,
+      0.171
+     ],
+     "bias_deg": [
+      -0.07,
+      -0.221,
+      0.118,
+      -0.02,
+      0.023,
+      -0.997
+     ],
+     "max_abs_deg": [
+      0.87,
+      2.5,
+      2.11,
+      2.99,
+      1.07,
+      7.0
+     ],
+     "lag_sim_frames": [
+      4.5,
+      5.3,
+      5.2,
+      4.5,
+      4.4,
+      4.3
+     ],
+     "lag_real_frames": [
+      4.6,
+      5.1,
+      4.8,
+      4.6,
+      4.4,
+      4.3
+     ],
+     "peak_speed_sim_deg_s": [
+      110.0,
+      120.0,
+      117.0,
+      156.0,
+      121.0
+     ],
+     "peak_speed_real_deg_s": [
+      113.0,
+      125.0,
+      115.0,
+      149.0,
+      112.0
+     ]
+    },
+    "2": {
+     "source": "measured: servo_fit.evaluate ep2 (held-out), deg; Jaw on free frames",
+     "split": "held-out",
+     "rmse_deg": [
+      0.272,
+      1.232,
+      0.845,
+      0.443,
+      0.317,
+      0.889
+     ],
+     "bias_deg": [
+      -0.034,
+      0.054,
+      0.129,
+      0.048,
+      0.172,
+      -1.999
+     ],
+     "max_abs_deg": [
+      0.79,
+      4.46,
+      2.67,
+      2.06,
+      1.81,
+      14.15
+     ],
+     "lag_sim_frames": [
+      4.5,
+      5.0,
+      5.2,
+      4.5,
+      4.4,
+      4.3
+     ],
+     "lag_real_frames": [
+      4.6,
+      4.9,
+      5.1,
+      4.6,
+      4.5,
+      4.7
+     ],
+     "peak_speed_sim_deg_s": [
+      121.0,
+      163.0,
+      165.0,
+      131.0,
+      114.0
+     ],
+     "peak_speed_real_deg_s": [
+      127.0,
+      171.0,
+      166.0,
+      121.0,
+      111.0
+     ]
+    }
+   }
+  },
+  "gripper_hold": {
+   "source": "measured: grip_hold.plateaus on the used episodes; fitted: hinge model",
+   "theta_c_pct": 16.615,
+   "theta_c_deg": 8.939,
+   "slope_kp_over_k": 0.4864,
+   "e_sat_pct": 5.296,
+   "rms_pct": 0.136,
+   "max_abs_pct": 0.218,
+   "contact_gap_mm_at_theta_c": 27.15,
+   "_gap": "the free finger-mesh gap at theta_c under the scene's gripper map: the cap width the hold data imply (a cross-check for CALIB's cap diameter)",
+   "plateaus": [
+    {
+     "source": "measured",
+     "start": 232,
+     "stop": 348,
+     "state_pct": 14.803,
+     "err_pct": 4.027,
+     "episode": 0
+    },
+    {
+     "source": "measured",
+     "start": 226,
+     "stop": 314,
+     "state_pct": 15.789,
+     "err_pct": 1.912,
+     "episode": 1
+    },
+    {
+     "source": "measured",
+     "start": 484,
+     "stop": 538,
+     "state_pct": 14.539,
+     "err_pct": 4.58,
+     "episode": 1
+    },
+    {
+     "source": "measured",
+     "start": 751,
+     "stop": 802,
+     "state_pct": 14.211,
+     "err_pct": 4.496,
+     "episode": 1
+    },
+    {
+     "source": "measured",
+     "start": 259,
+     "stop": 303,
+     "state_pct": 15.658,
+     "err_pct": 1.699,
+     "episode": 2
+    },
+    {
+     "source": "measured",
+     "start": 309,
+     "stop": 360,
+     "state_pct": 13.947,
+     "err_pct": 5.294,
+     "episode": 2
+    },
+    {
+     "source": "measured",
+     "start": 532,
+     "stop": 604,
+     "state_pct": 14.079,
+     "err_pct": 10.814,
+     "episode": 2
+    }
+   ]
+  },
+  "per_joint_model": {
+   "source": "fitted: per-joint ES (6 x 5 parameters); diagnostic only",
+   "episodes": {
+    "0": {
+     "source": "measured: per-joint model on ep0",
+     "split": "train",
+     "rmse_deg": [
+      0.259,
+      0.965,
+      0.678,
+      0.538,
+      0.363,
+      0.202
+     ],
+     "bias_deg": [
+      -0.007,
+      0.068,
+      -0.033,
+      -0.007,
+      0.083,
+      -1.408
+     ],
+     "max_abs_deg": [
+      0.78,
+      2.02,
+      2.2,
+      1.22,
+      1.69,
+      5.79
+     ],
+     "lag_sim_frames": [
+      4.5,
+      5.0,
+      4.9,
+      4.6,
+      4.5,
+      4.3
+     ],
+     "lag_real_frames": [
+      4.5,
+      4.8,
+      4.9,
+      4.5,
+      4.6,
+      4.2
+     ],
+     "peak_speed_sim_deg_s": [
+      111.0,
+      114.0,
+      114.0,
+      83.0,
+      149.0
+     ],
+     "peak_speed_real_deg_s": [
+      108.0,
+      109.0,
+      113.0,
+      84.0,
+      146.0
+     ]
+    },
+    "1": {
+     "source": "measured: per-joint model on ep1",
+     "split": "train",
+     "rmse_deg": [
+      0.285,
+      0.876,
+      0.614,
+      0.323,
+      0.229,
+      0.162
+     ],
+     "bias_deg": [
+      -0.074,
+      -0.087,
+      0.093,
+      -0.198,
+      0.026,
+      -1.025
+     ],
+     "max_abs_deg": [
+      0.78,
+      2.77,
+      1.77,
+      1.4,
+      0.83,
+      6.94
+     ],
+     "lag_sim_frames": [
+      4.6,
+      5.1,
+      4.9,
+      4.6,
+      4.5,
+      4.4
+     ],
+     "lag_real_frames": [
+      4.6,
+      5.1,
+      4.8,
+      4.6,
+      4.4,
+      4.3
+     ],
+     "peak_speed_sim_deg_s": [
+      110.0,
+      126.0,
+      117.0,
+      141.0,
+      117.0
+     ],
+     "peak_speed_real_deg_s": [
+      113.0,
+      125.0,
+      115.0,
+      149.0,
+      112.0
+     ]
+    },
+    "2": {
+     "source": "measured: per-joint model on ep2",
+     "split": "held-out",
+     "rmse_deg": [
+      0.266,
+      1.296,
+      0.811,
+      0.49,
+      0.295,
+      0.318
+     ],
+     "bias_deg": [
+      -0.034,
+      0.117,
+      -0.073,
+      -0.208,
+      0.171,
+      -2.117
+     ],
+     "max_abs_deg": [
+      0.79,
+      4.92,
+      2.47,
+      1.44,
+      1.4,
+      14.09
+     ],
+     "lag_sim_frames": [
+      4.5,
+      4.8,
+      4.8,
+      4.6,
+      4.5,
+      5.2
+     ],
+     "lag_real_frames": [
+      4.6,
+      4.9,
+      5.1,
+      4.6,
+      4.5,
+      4.7
+     ],
+     "peak_speed_sim_deg_s": [
+      122.0,
+      170.0,
+      166.0,
+      126.0,
+      112.0
+     ],
+     "peak_speed_real_deg_s": [
+      127.0,
+      171.0,
+      166.0,
+      121.0,
+      111.0
+     ]
+    }
+   },
+   "params": {
+    "Rotation": {
+     "source": "fitted: per-joint ES (diagnostic, not used)",
+     "kp": 7.74387,
+     "kd": 0.18112,
+     "damping": 0.53238,
+     "armature": 0.00692,
+     "frictionloss": 0.05348
+    },
+    "Pitch": {
+     "source": "fitted: per-joint ES (diagnostic, not used)",
+     "kp": 8.64188,
+     "kd": 0.03526,
+     "damping": 0.62651,
+     "armature": 0.01503,
+     "frictionloss": 0.31768
+    },
+    "Elbow": {
+     "source": "fitted: per-joint ES (diagnostic, not used)",
+     "kp": 9.84709,
+     "kd": 0.01534,
+     "damping": 0.7599,
+     "armature": 0.00294,
+     "frictionloss": 0.34019
+    },
+    "Wrist_Pitch": {
+     "source": "fitted: per-joint ES (diagnostic, not used)",
+     "kp": 16.06796,
+     "kd": 0.20188,
+     "damping": 1.34513,
+     "armature": 0.00526,
+     "frictionloss": 0.15415
+    },
+    "Wrist_Roll": {
+     "source": "fitted: per-joint ES (diagnostic, not used)",
+     "kp": 8.89874,
+     "kd": 0.10544,
+     "damping": 0.74124,
+     "armature": 0.00378,
+     "frictionloss": 0.03988
+    },
+    "Jaw": {
+     "source": "fitted: per-joint ES (diagnostic, not used)",
+     "kp": 7.01771,
+     "kd": 0.00832,
+     "damping": 0.5814,
+     "armature": 0.00576,
+     "frictionloss": 0.05819
+    }
+   }
+  },
+  "kv_crosscheck": {
+   "source": "measured: servo_fit.kv_crosscheck, mjlab constants kp 17.8 kv 2.0 armature 0.1 on ep0, no dead time",
+   "rows": [
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "euler",
+     "kv_as": "joint",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      4.85,
+      12.74,
+      7.73,
+      3.13,
+      11.17
+     ],
+     "mean_arm": 7.92,
+     "lag_sim": 9.4,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 54.8
+    },
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "euler",
+     "kv_as": "joint",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.61,
+      2.11,
+      1.96,
+      0.86,
+      2.61
+     ],
+     "mean_arm": 1.63,
+     "lag_sim": 4.86,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 97.2
+    },
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "euler",
+     "kv_as": "actuator",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      0.54,
+      1.53,
+      1.93,
+      0.87,
+      0.92
+     ],
+     "mean_arm": 1.16,
+     "lag_sim": 3.96,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 156.0
+    },
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "euler",
+     "kv_as": "actuator",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.54,
+      1.53,
+      1.93,
+      0.87,
+      0.94
+     ],
+     "mean_arm": 1.16,
+     "lag_sim": 3.96,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 154.3
+    },
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "implicitfast",
+     "kv_as": "joint",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      4.85,
+      12.74,
+      7.73,
+      3.13,
+      11.17
+     ],
+     "mean_arm": 7.92,
+     "lag_sim": 9.4,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 54.8
+    },
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "implicitfast",
+     "kv_as": "joint",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.61,
+      2.11,
+      1.96,
+      0.86,
+      2.61
+     ],
+     "mean_arm": 1.63,
+     "lag_sim": 4.86,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 97.2
+    },
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "implicitfast",
+     "kv_as": "actuator",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      0.55,
+      1.53,
+      1.93,
+      0.88,
+      0.92
+     ],
+     "mean_arm": 1.16,
+     "lag_sim": 4.02,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 156.4
+    },
+    {
+     "source": "measured",
+     "dt": 0.0020833333333333333,
+     "integrator": "implicitfast",
+     "kv_as": "actuator",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.55,
+      1.53,
+      1.93,
+      0.88,
+      0.94
+     ],
+     "mean_arm": 1.17,
+     "lag_sim": 4.0,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 154.4
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "euler",
+     "kv_as": "joint",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      4.85,
+      12.74,
+      7.73,
+      3.14,
+      11.17
+     ],
+     "mean_arm": 7.93,
+     "lag_sim": 9.4,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 54.8
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "euler",
+     "kv_as": "joint",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.6,
+      2.11,
+      1.96,
+      0.86,
+      2.61
+     ],
+     "mean_arm": 1.63,
+     "lag_sim": 4.86,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 97.2
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "euler",
+     "kv_as": "actuator",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      0.54,
+      1.53,
+      1.92,
+      0.87,
+      0.91
+     ],
+     "mean_arm": 1.15,
+     "lag_sim": 4.02,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 156.1
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "euler",
+     "kv_as": "actuator",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.54,
+      1.53,
+      1.92,
+      0.87,
+      0.93
+     ],
+     "mean_arm": 1.16,
+     "lag_sim": 4.0,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 154.2
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "implicitfast",
+     "kv_as": "joint",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      4.85,
+      12.74,
+      7.73,
+      3.14,
+      11.17
+     ],
+     "mean_arm": 7.93,
+     "lag_sim": 9.4,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 54.8
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "implicitfast",
+     "kv_as": "joint",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.6,
+      2.11,
+      1.96,
+      0.86,
+      2.61
+     ],
+     "mean_arm": 1.63,
+     "lag_sim": 4.86,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 97.2
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "implicitfast",
+     "kv_as": "actuator",
+     "forcerange": 1.5,
+     "rmse_deg": [
+      0.54,
+      1.52,
+      1.92,
+      0.87,
+      0.91
+     ],
+     "mean_arm": 1.15,
+     "lag_sim": 4.02,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 156.4
+    },
+    {
+     "source": "measured",
+     "dt": 0.0011111111111111111,
+     "integrator": "implicitfast",
+     "kv_as": "actuator",
+     "forcerange": 3.0,
+     "rmse_deg": [
+      0.54,
+      1.52,
+      1.92,
+      0.87,
+      0.93
+     ],
+     "mean_arm": 1.16,
+     "lag_sim": 4.0,
+     "lag_real": 4.66,
+     "max_speed_deg_s": 154.3
+    }
+   ]
+  }
+ }
+}
