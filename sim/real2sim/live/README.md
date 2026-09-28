@@ -26,6 +26,16 @@ stop those services. That applies to the real arm as much as to the sim.
 | `--sim-clock auto\|realtime\|lockstep` | `auto` | realtime for MuJoCo, lockstep for Isaac (below) |
 | `--sim-seed S` | — | reproducible random layouts |
 
+**Watching it.** Two views, usable together:
+- `./robot real2sim live watch` in a second terminal, while the webui, a teleop or a
+  recording runs, shows both sim cameras exactly as the policy receives them, with sim
+  time, layout and caps in the mug on top. It is observe-only: it never commands the arm
+  and does not advance a lockstep sim. `r` gives a new layout, `q` closes the window;
+  `--snapshot out.png` writes one frame without a window.
+- `--sim-viewer` on the command itself opens the engine's 3D window with a free camera
+  (`R` = new layout). For example: `OPENPI_WEBUI_PORT=8011 ./robot openpi-webui --sim
+  mujoco --sim-viewer`.
+
 **A new layout** comes from pressing `r` in the terminal that runs lerobot (the plugin
 listens the way lerobot-record listens for its arrow keys), `R` in the viewer, or
 `./robot real2sim live reset [--layout ...]` from another terminal. lerobot-record gives a
@@ -146,5 +156,6 @@ They have no reflections in the steel mug and no room behind the arm. Isaac rend
 | `layouts.py` | real and random object layouts, the rest pose |
 | `look_mujoco.py` | the dataset mat texture and fitted light on the MuJoCo scene |
 | `protocol.py` | the wire format |
+| `watch.py` | `live watch`: both sim cameras in a window, observe-only |
 | `../lerobot_plugin/` | `lerobot_robot_real2sim`: the `real2sim` robot (config + class + dist-info) |
 | `run.sh` | `./robot real2sim live serve\|reset\|status\|ping\|test` |
