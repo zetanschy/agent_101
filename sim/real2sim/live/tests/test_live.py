@@ -96,8 +96,7 @@ def test_live_mujoco_is_the_replay(sc):
 
     ep, u = episodes.load()[0], sc.units()
     eng = MujocoEngine(sc, look=False)
-    eng.reset(layouts.real(sc, 0), u.to_urdf(ep.state[0]))
-    eng.goals.reset(u.to_urdf(ep.action[0]), target0=u.to_urdf(ep.state[0]))  # GoalStream's start
+    eng.reset(layouts.real(sc, 0), u.to_urdf(ep.state[0]), hold_q=u.to_urdf(ep.action[0]))  # --start recorded
     q = [eng.state()]
     for k in range(len(ep) - 1):
         eng.command(u.to_urdf(ep.action[k]))

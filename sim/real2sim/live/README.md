@@ -17,7 +17,7 @@ The simulated follower as a lerobot robot. Every command that drives the arm tak
 | `--sim mujoco\|isaac` | — | the engine |
 | `--sim-layout real:N\|random\|random:K` | `random` | where the caps and the mug start: episode N's calibrated layout, or K (1-3) random caps and the mug |
 | `--sim-viewer` | off | the engine's 3D window; `R` there = a new layout |
-| `--sim-clock realtime\|lockstep` | `realtime` | see below |
+| `--sim-clock auto\|realtime\|lockstep` | `auto` | realtime for MuJoCo, lockstep for Isaac (below) |
 | `--sim-seed S` | — | reproducible random layouts |
 
 **A new layout** comes from pressing `r` in the terminal that runs lerobot (the plugin
@@ -68,25 +68,44 @@ real leader ── lerobot (Docker) ── lerobot_robot_real2sim ──unix soc
   `lockstep` advances one step per command, deterministic, for an engine or renderer
   slower than real time.
 
-## What the MuJoCo engine measures (RTX 3060 box)
+## What each engine measures (RTX 3060 box)
 
-| | |
-|---|---|
-| physics | 9.8x real time on one core |
-| reset (build + settle) | 1.1-1.2 s |
-| both cameras, server side (pinhole render) | ~3 ms; the distortion warp + lens blur run in the plugin (cv2, ~1 ms a camera) |
-| observation round trip from the container, both cameras | median 11.5 ms, p90 14.6 ms; an action 0.2 ms |
-| teleop loop with the real leader | 59 Hz mean (lerobot-teleoperate's 60 Hz target; sim at 1.00x real time) |
-| openpi pi0.5 cap-to-cup, closed loop | 372 ms per 50-action chunk, sim at 1.00x real time |
+| | MuJoCo | Isaac |
+|---|---|---|
+| replay over the socket, `--layout real:0 --start recorded` | bitwise (0.0 deg) | bitwise (0.0 deg) |
+| physics | 9.8x real time, one CPU core | **0.19x real time** (the evaluated PhysX: 16 substeps, 64 solver iterations, one env) |
+| default clock (`auto`) | realtime | lockstep |
+| server-side images, both cameras | pinhole render ~3 ms; warp + blur in the plugin (cv2) | RTX real-time 34 ms + camera model on the GPU 2 ms |
+| observation / action round trip | 11.5 ms / 0.2 ms | 1.5 ms (pre-rendered) / ~200 ms (the step) |
+| real-leader teleop loop | 59 Hz, sim at 1.00x real time | 5.1 Hz, one 1/30 s step per command |
+| reset (new layout) | 1.1-1.2 s | 1.7-2.0 s |
+| start-up to serving | ~5 s | ~18 s (Kit) |
+| GPU memory | EGL only | 4.8-5.2 GB, and the GPU lock for the session |
+| images | a rasterizer with LOOK's mat, light and lens softness | RTX with the full LOOK: steel, room backdrop, key + dome light |
 
-The images are MuJoCo's rasterizer, dressed with what LOOK derived from the dataset that
+**Why Isaac runs in lockstep.** It cannot hold real time with the physics the comparison
+evaluated, and changing that physics would make a different sim. In lockstep every
+command advances exactly 1/30 s of sim time, so every recorded frame is one physics step
+and a dataset is physically consistent, however long each step takes in wall time.
+Two consequences:
+- The arm moves at about a fifth of the leader's speed in wall time. To record a demo at
+  natural sim speed, move the leader slowly.
+- lerobot-record counts `episode_time_s` / `reset_time_s` in wall seconds. At ~5 frames a
+  second, 30 s of wall time records ~150 frames, 5 s of sim. Raise
+  `--dataset.episode_time_s` about 6x for Isaac.
+MEASURED: a 10 s episode recorded 51 frames.
+
+**Isaac next to a policy on this card.** With a local policy, Isaac's 5.2 GB, the openpi
+checkpoint's 6.9 GB peak and the desktop's ~3 GB do not fit in 12 GB. Put the policy on
+another GPU (`./robot policy-serve` there, `./robot infer-remote --sim isaac` here), or
+run the policy against MuJoCo.
+
+The MuJoCo images are a rasterizer, dressed with what LOOK derived from the dataset that
 a rasterizer can carry (`look_mujoco.py`):
 - the recorded mat texture, at 1 mm on the table plane;
 - the key light fitted to the mug shadows;
 - the webcams' fitted softness.
-They have no reflections in the steel mug and no room behind the arm, and a policy
-trained on real frames sees that gap. For photoreal frames of a physics run, render its
-pose log with Blender (`blender/`); Isaac renders RTX live.
+They have no reflections in the steel mug and no room behind the arm. Isaac renders those.
 
 ## Known limits
 
@@ -98,6 +117,12 @@ pose log with Blender (`blender/`); Isaac renders RTX live.
   real frames, drove the MuJoCo sim for 40 s without placing the cap. The MuJoCo images
   are a rasterizer's.
 - **No episode hook in lerobot-record:** reset the layout yourself between episodes (above).
+- **Isaac's viewer** is dark: exposure and grading would also rescale the frames the cameras
+  record, so it is left alone. Closing its window ends the session, because Kit's shutdown
+  hangs on this box.
+- **Isaac resets after the first** re-place a pool of three caps on one stage (Replicator
+  cannot tear a stage down and rebuild it in-process). They are near-exact rather than
+  bitwise: episode 0 replayed after a reset matches for 214 frames, then within 0.09 deg.
 
 ## Files
 

@@ -65,12 +65,14 @@ openpi_run() {
 # on its serial port in the container.
 #   --sim-layout real:N|random[:K]   where the caps and the mug start (default random)
 #   --sim-viewer                     the engine's 3D window (R = new layout)
-#   --sim-clock realtime|lockstep    realtime (default): the servo keeps running between
-#                                    commands, as on the bench
+#   --sim-clock auto|realtime|lockstep  auto (default): realtime for mujoco (the servo keeps
+#                                    running between commands, as on the bench), lockstep for
+#                                    isaac (0.19x real time: one step per command, so every
+#                                    recorded frame is exactly 1/30 s of sim)
 SIM_ENV=(); SIM_ENGINE=""; SIM_PID=""; REST=()
 sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
   REST=(); SIM_ENGINE=""
-  local layout=random clock=realtime extra=() live=sim/outputs/real2sim/live t=0 limit=90
+  local layout=random clock=auto extra=() live=sim/outputs/real2sim/live t=0 limit=90
   while [ $# -gt 0 ]; do
     case "$1" in
       --sim) SIM_ENGINE="$2"; shift 2 ;;
@@ -110,7 +112,10 @@ sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
 sim_down() {
   [ -z "$SIM_PID" ] && return 0
   kill -TERM -- "-$SIM_PID" 2>/dev/null || kill -TERM "$SIM_PID" 2>/dev/null || true
-  wait "$SIM_PID" 2>/dev/null || true
+  # wait for the whole group, not just its leader: flock exits on the signal at once, while
+  # Kit takes a few seconds to let go of the GPU (and with it the GPU lock)
+  for _ in $(seq 1 30); do pgrep -g "$SIM_PID" >/dev/null 2>&1 || break; sleep 1; done
+  if pgrep -g "$SIM_PID" >/dev/null 2>&1; then kill -KILL -- "-$SIM_PID" 2>/dev/null || true; fi
   SIM_PID=""
 }
 

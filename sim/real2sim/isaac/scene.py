@@ -83,6 +83,9 @@ class Options:
     params: dict = field(default_factory=P.defaults)
     # per-env perturbations (env 0 is always nominal); see replay.draw_perturbations
     perturb: list = field(default_factory=list)
+    # the arm's start (URDF rad, 6); None = the episode's first recorded state. The live
+    # sim (live.py) passes its rest pose: a live layout has no recording to start from.
+    q0: tuple | None = None
 
     @property
     def replicate_physics(self) -> bool:
@@ -168,14 +171,16 @@ def joint_limits_rad(scene, margin_deg: float = P.PHYSICS["limit_margin_deg"]["v
     return lim
 
 
-def _q0(scene, episode: int, margin_deg: float) -> dict:
-    """The recorded first frame, nudged 1e-4 rad inside the limits: the shut jaw reads
-    exactly the touch angle, and Isaac Lab rejects a default ON a limit in float32."""
-    from .. import episodes
+def _q0(scene, episode: int, margin_deg: float, q=None) -> dict:
+    """The recorded first frame (or q, URDF rad), nudged 1e-4 rad inside the limits: the
+    shut jaw reads exactly the touch angle, and Isaac Lab rejects a default ON a limit in
+    float32."""
+    if q is None:
+        from .. import episodes
 
-    ep = episodes.load(scene.ds, include_excluded=True)[episode]
+        q = scene.units().to_urdf(episodes.load(scene.ds, include_excluded=True)[episode].state[0])
     lim = joint_limits_rad(scene, margin_deg)
-    q = np.clip(scene.units().to_urdf(ep.state[0]), lim[:, 0] + 1e-4, lim[:, 1] - 1e-4)
+    q = np.clip(np.asarray(q, dtype=float), lim[:, 0] + 1e-4, lim[:, 1] - 1e-4)
     return {n: float(v) for n, v in zip(U.URDF_JOINTS, q)}
 
 
@@ -195,7 +200,7 @@ def robot_cfg(scene, opts: Options, gains: dict) -> ArticulationCfg:
     return SO101_CFG.replace(
         prim_path="{ENV_REGEX_NS}/Robot", spawn=spawn,
         init_state=ArticulationCfg.InitialStateCfg(pos=(0.0, 0.0, 0.0), rot=(1.0, 0.0, 0.0, 0.0),
-                                                   joint_pos=_q0(scene, opts.episode, ph["limit_margin_deg"])),
+                                                   joint_pos=_q0(scene, opts.episode, ph["limit_margin_deg"], opts.q0)),
         actuators={"sts3215": ImplicitActuatorCfg(
             joint_names_expr=[".*"], stiffness=gains["stiffness"], damping=gains["damping"], armature=gains["armature"],
             friction=0.0, effort_limit_sim=gains["max_force"],

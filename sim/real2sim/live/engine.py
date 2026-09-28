@@ -19,8 +19,12 @@ class Engine:
     def boot(cls, args) -> None:
         """Start whatever must exist before the engine module imports (Isaac: Kit)."""
 
-    def reset(self, layout: dict, rest_q: np.ndarray) -> None:
-        """Objects to `layout` (layouts.py), arm to rest_q, objects settled; t = 0."""
+    def reset(self, layout: dict, rest_q: np.ndarray, hold_q: np.ndarray | None = None) -> None:
+        """Objects to `layout` (layouts.py), arm to rest_q, objects settled; t = 0. The servo
+        holds hold_q (default rest_q) until the first command takes effect, with its slewed
+        target starting at rest_q: goals.OnlineGoals(q0=hold_q, target0=rest_q). A recording
+        replayed over the socket passes its first state and first action (server --start
+        recorded), which is GoalStream's start."""
         raise NotImplementedError
 
     def command(self, goal: np.ndarray) -> None:

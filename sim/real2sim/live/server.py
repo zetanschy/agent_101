@@ -1,7 +1,8 @@
 """The live sim, served on a Unix socket to the `real2sim` lerobot robot.
 
     ./robot real2sim live serve --engine mujoco|isaac [--layout real:N|random[:K]]
-                                [--clock realtime|lockstep] [--viewer] [--autoreset S] [--seed S]
+                                [--clock auto|realtime|lockstep] [--start rest|recorded]
+                                [--viewer] [--autoreset S] [--seed S]
     ./robot real2sim live reset [--layout ...]   # new layout now (another terminal)
     ./robot real2sim live status
 
@@ -82,9 +83,22 @@ class Server:
         self._frames, self._frames_step, self._images_wanted_until, self._pinhole = None, -1, 0.0, False
 
     # --- the scene ---------------------------------------------------------------
-    def new_layout(self, spec: str | None = None) -> dict:
+    def new_layout(self, spec: str | None = None, start: str | None = None) -> dict:
+        """start 'rest' (default): the arm folded at rest, holding it. 'recorded' (real:N
+        layouts only): episode N's first recorded state, holding its first recorded action,
+        so a recording fed over the socket reproduces the offline replay (GoalStream's start)."""
         self.layout = layouts.parse(spec or self.a.layout, self.scene, self.rng)
-        self.eng.reset(self.layout, self.rest_q)
+        start = start or self.a.start
+        rest_q, hold_q = self.rest_q, None
+        if start == "recorded":
+            if not self.layout["kind"].startswith("real:"):
+                raise ValueError("--start recorded needs a real:N layout")
+            from .. import episodes
+
+            ep = episodes.load(self.scene.ds, include_excluded=True)[int(self.layout["kind"].split(":")[1])]
+            rest_q, hold_q = self.units.to_urdf(ep.state[0]), self.units.to_urdf(ep.action[0])
+        self.eng.reset(self.layout, rest_q, hold_q)
+        self._print_t0 = 0.0
         self._done_since = None
         self._frames, self._frames_step = None, -1
         print(f"layout {self.layout['kind']}: mug at {self.layout['mug']['xy']}, "
@@ -177,7 +191,7 @@ class Server:
                 self.step()
             return {"t": self.eng.t}
         if op == "reset":
-            return {"layout": self.new_layout(msg.get("layout"))}
+            return {"layout": self.new_layout(msg.get("layout"), msg.get("start"))}
         if op == "status":
             return self.status()
         return {"error": f"unknown op {op!r}"}
@@ -193,7 +207,8 @@ class Server:
         clients: list[socket.socket] = []
         period = 1.0 / self.fps
         next_t = time.monotonic()
-        last_print, steps_at_print, t_at_print = time.monotonic(), 0, 0.0
+        last_print, steps_at_print = time.monotonic(), 0
+        self._print_t0 = self.eng.t
         running = [True]
 
         def stop(*_):
@@ -235,12 +250,12 @@ class Server:
                     self.a.viewer = False
                 if time.monotonic() - last_print >= 5.0:
                     wall = time.monotonic() - last_print
-                    rt = (self.eng.t - t_at_print) / wall
+                    rt = (self.eng.t - self._print_t0) / wall  # _print_t0 restarts with every reset
                     st = self.eng.status()
                     cim = st.get("caps_in_mug") or []
                     pace = f"{rt:4.2f}x real time" if self.a.clock == "realtime" else f"{self.n_steps - steps_at_print:5d} steps (lockstep)"
                     print(f"t={self.eng.t:7.1f}s  {pace}  caps in mug {sum(cim)}/{len(cim)}  clients {len(clients)}", flush=True)
-                    last_print, steps_at_print, t_at_print = time.monotonic(), self.n_steps, self.eng.t
+                    last_print, steps_at_print, self._print_t0 = time.monotonic(), self.n_steps, self.eng.t
         finally:
             for c in clients:
                 c.close()
@@ -261,7 +276,11 @@ def main(argv=None) -> int:
     ap.add_argument("--engine", required=True, choices=("mujoco", "isaac"))
     ap.add_argument("--ds")
     ap.add_argument("--layout", default="random", help="real:N | random | random:K (default random)")
-    ap.add_argument("--clock", choices=("realtime", "lockstep"), default="realtime")
+    ap.add_argument("--clock", choices=("auto", "realtime", "lockstep"), default="auto",
+                    help="auto: realtime for mujoco (9.8x real-time physics), lockstep for isaac (0.19x: "
+                         "one physics step per command keeps every recorded frame exactly 1/fps of sim)")
+    ap.add_argument("--start", choices=("rest", "recorded"), default="rest",
+                    help="recorded (real:N only): the episode's first state and first action, as the replay starts")
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--socket", default=None, help="default sim/outputs/real2sim/live/sim.sock")
     ap.add_argument("--viewer", action="store_true", help="open the engine's interactive viewer (R = new layout)")
@@ -269,6 +288,8 @@ def main(argv=None) -> int:
                     help="new layout S seconds after every cap is in the mug (0: never)")
     ap.add_argument("--seed", type=int, default=None)
     a = ap.parse_args(argv)
+    if a.clock == "auto":
+        a.clock = "realtime" if a.engine == "mujoco" else "lockstep"
     cls = engine_class(a.engine)
     cls.boot(a)  # Kit has to exist before the Isaac engine imports isaaclab
     from .. import paths, scene as scene_mod

@@ -6,6 +6,7 @@ Modules that need Kit (import them only after AppLauncher has started the app):
     contact     PhysX contact views: finger-cap forces and separations
     render      RTX pinhole frames -> the real distorted cameras -> mp4
     replay      the entry point: ./robot real2sim isaac replay ...
+    live        the live sim's engine; importable before Kit, IsaacEngine.boot() starts it
 Pure numpy / torch, importable anywhere:
     params      Isaac-only physics numbers with provenance
     servo       the STS3215 servo model re-expressed for PhysX

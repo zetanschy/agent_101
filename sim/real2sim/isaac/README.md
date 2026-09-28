@@ -58,6 +58,7 @@ says which scene each number was measured on.
 | `look.py` | yes (host: textures) | LOOK's assets on the scene: materials, table texture, backdrop, key light, domes, calibration cache |
 | `lookrender.py` | yes | calibration, dome probe, and playback renders (samples, episodes) in scene radiance through `blender.camera_model` |
 | `replay.py` | yes | the entry point: modes, settle, goal streams, ensembles, pose logs |
+| `live.py` | yes | the live sim's Isaac engine (`../live`): this replay stepped on demand, the look rendered per observation |
 | `camcheck.py` | yes | marker spheres at known points, checked against `real2sim.camera` |
 | `servo.py` | no (torch) | the MuJoCo track's servo model expressed for PhysX, and its goal stream |
 | `track.py` | no | track-mode goals by inverse dynamics on the Isaac inertia |
@@ -617,3 +618,58 @@ Each cell is PSNR dB / SSIM / ΔE of the mean colour.
 - The wrist cap is 14-16 dB in every renderer: LOOK's one-sigma colour model (the cap alone
   wants sigma 1.59).
 - The steel's room reflection is by face (floor and rim), not by mirror ray as in Blender.
+
+## Live (`live.py`)
+
+`IsaacEngine` is `../live`'s Isaac engine: the action-mode replay above, stepped on
+demand, so the real leader arm, `lerobot-record` and policies drive it as they drive the
+bench arm.
+
+```
+./robot real2sim live serve --engine isaac --layout real:0 --clock lockstep     # holds the GPU lock
+$R2S_HOST_PY sim/real2sim/isaac/tests/live_replay.py --episode 0 --images       # lockstep vs the offline replay
+$R2S_HOST_PY sim/real2sim/isaac/tests/live_replay.py --realtime 60 --resets real:0,real:1   # (server on the realtime clock)
+```
+
+- **Physics**: this README's, unchanged. The scene is `scene.py`'s, stepped as `params.py` says,
+  with `servo.PhysxServo` on every substep. The goals come from `live.goals.OnlineGoals`
+  (dead time, firmware clamp, zero-order hold, slew), not from a recorded array.
+- **Stage**: built once, on the first layout. The spare cap bodies B and C are appended
+  after the mug; a reset parks unused caps 3 m out, hidden. The stage is not rebuilt in
+  process: replicator's annotator teardown raised, and the rebuild after it hung.
+- **Images**: the look (`look.py`) in RTX real-time, read as HdrColor. `blender.camera_model`
+  runs on the GPU: 2 ms for both cameras, against 17 + 58 ms on the host.
+  - One RTX frame per observation. The server renders it right after each step.
+  - The camera state is LOOK's reference (no per-row white balance).
+  - The cameras' 2.3 / 1.4 frame latency is not emulated.
+
+Measured on the fitted scene `eaa2d91c5133fa25` (RTX 3060, 1 env):
+
+| | |
+|---|---|
+| ep0's 488 recorded actions over the socket, lockstep, started at the recording's start | encoders equal the offline `ep0_action` pose log **bit for bit** (max \|Δq\| 0.0°, both cameras rendered every frame); cap A in the mug |
+| the same from the server's own rest pose (the median first frame: Wrist_Roll 28° and Pitch 4.4° off ep0's) | max 28.3° at frame 0; mean 0.002-0.10° per joint after frame 30; cap A in the mug |
+| ep0 again after a re-placed reset | bitwise for 214 frames, then within 0.09°; in the mug |
+| a step (16 physics steps at 480 Hz) | p50 117-204 ms by phase. In the reach, PhysX is 123 of 138 ms |
+| a render (both cameras, one RTX frame) | p50 38 ms: RTX 33.8, annotators 0.8, camera model 2.1 |
+| one render against a converged one (5 more), along ep0 | front 49.8-58.4 dB, wrist 42.6-57.3 dB PSNR |
+| realtime clock, both images every frame | **0.19× real time** (0.16-0.21); observe round trip p50 163 ms |
+| lockstep, both images every frame | 0.14× real time; observe 1.6 ms (the frames are pre-rendered), act 216 ms |
+| start-up to serving | ~18 s: Kit ~12 s, first build 5.5-6.5 s |
+| reset (re-place, settle 0.3 s, 3 renders), 1-3 caps | 1.5-1.7 s in the engine, 1.7-2.0 s over the socket |
+| GPU memory | 4.8-5.2 GB, the server process |
+
+- **Speed is the replay's physics.** 64 TGS iterations on the GPU for a single env are
+  launch-bound. Anything faster (fewer iterations, CPU PhysX) is physics these numbers do
+  not vouch for. The MuJoCo engine is the real-time one.
+- **`--viewer`** opens the Kit window. Its camera sits inside LOOK's backdrop cylinder, since
+  from outside the wall hides the scene; R starts a new layout.
+  - The viewport is dark, and no render setting may brighten it. RTX applies exposure and
+    colour grading before the HdrColor the cameras read (film ISO ×2^10 scaled HdrColor
+    ×1019, auto exposure ×2.3), and it ignores a camera's own USD exposure.
+  - Closing the window ends the session: exit 0, socket removed. Kit's quit is intercepted,
+    because its shutdown hangs on this box and would keep the GPU lock.
+  - The R key and the quit path were checked by injected events and `post_quit`. A real
+    click on the window was not tested.
+- **GPU lock**: `live/run.sh` runs the server under `flock`. Started any other way,
+  `boot()` takes the lock itself, waiting if another job holds it.

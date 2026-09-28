@@ -109,7 +109,7 @@ class MujocoEngine(Engine):
                 print(f"no look assets ({e}); './robot real2sim look build' adds the real mat and light", flush=True)
 
     # --- lifecycle -------------------------------------------------------------------
-    def reset(self, layout: dict, rest_q: np.ndarray, settle_s: float = 0.3) -> None:
+    def reset(self, layout: dict, rest_q: np.ndarray, hold_q=None, settle_s: float = 0.3) -> None:
         import mujoco
 
         from ..mujoco import model as mdl
@@ -135,7 +135,8 @@ class MujocoEngine(Engine):
         if self.renderer is not None:
             self.renderer.close()
         self.b, self.d, self._k = b, d, 0
-        self.goals = OnlineGoals(self.servo.dead_time, self.limits, q0, self.servo.max_velocity)
+        self.goals = OnlineGoals(self.servo.dead_time, self.limits, q0 if hold_q is None else hold_q,
+                                 self.servo.max_velocity, target0=q0)
         self.renderer = Renderer(b, self.cams)
         try:
             sig = _optics() if self._look is not None else {}
