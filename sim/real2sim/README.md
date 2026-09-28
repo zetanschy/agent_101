@@ -49,6 +49,10 @@ same timesteps, and the fit is scored per view and across views on a held-out ep
 ./robot real2sim compare video --episode 0   # real | MuJoCo+Blender | Isaac RTX, front over wrist
 ```
 
+**Live: teleop, record and run policies on the sim.** `./robot teleop|record|infer|
+infer-remote|openpi-eval ... --sim mujoco|isaac` runs the usual command against the live sim
+instead of the arm, with the real leader: `live/README.md`.
+
 `./robot real2sim mujoco view --log <pose log>` and `./robot real2sim isaac replay ... --gui`
 open a viewer. Each track's README explains its commands, options and measurements:
 `calib/`, `mujoco/`, `isaac/`, `look/`, `blender/`.

@@ -85,15 +85,22 @@ def main() -> int:
               file=sys.stderr)
         return 1
 
-    robot = SO101FollowerConfig(
-        port=env("ROBOT_PORT", "/dev/ttyACM1"),
-        id=env("ROBOT_ID", "zetans_follower"),
-        cameras=cameras,
-        # Degrees, matching how this bench records and how every other worker here
-        # drives the arm. A policy trained on normalized units needs this flipped,
-        # and that is a property of the CHECKPOINT, not of the transport.
-        use_degrees=True,
-    )
+    if env("ROBOT_TYPE", "") == "real2sim":
+        # `./robot infer-remote --sim ENGINE`: the live sim (sim/real2sim/live) instead of
+        # the arm. Same cameras by name, same degrees; ROBOT_PORT is the sim's socket.
+        from lerobot_robot_real2sim import Real2SimConfig
+
+        robot = Real2SimConfig(port=env("ROBOT_PORT", ""), id=env("ROBOT_ID", "sim"), cameras=cameras)
+    else:
+        robot = SO101FollowerConfig(
+            port=env("ROBOT_PORT", "/dev/ttyACM1"),
+            id=env("ROBOT_ID", "zetans_follower"),
+            cameras=cameras,
+            # Degrees, matching how this bench records and how every other worker here
+            # drives the arm. A policy trained on normalized units needs this flipped,
+            # and that is a property of the CHECKPOINT, not of the transport.
+            use_degrees=True,
+        )
 
     cfg = RobotClientConfig(
         policy_type=a.policy,

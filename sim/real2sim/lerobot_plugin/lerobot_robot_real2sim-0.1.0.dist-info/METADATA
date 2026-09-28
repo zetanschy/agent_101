@@ -1,0 +1,4 @@
+Metadata-Version: 2.1
+Name: lerobot_robot_real2sim
+Version: 0.1.0
+Summary: The agent_101 live sim (sim/real2sim/live) as a lerobot robot: --robot.type=real2sim

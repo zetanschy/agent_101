@@ -233,14 +233,23 @@ def main() -> int:
         print(f"rtc: schedule={args.rtc_schedule} beta_max={args.rtc_max_guidance} "
               f"jacobian={args.rtc_jacobian} (delay 0 — this loop is synchronous)")
 
-    robot = SO101Follower(
-        SO101FollowerConfig(
-            port=env("ROBOT_PORT", "/dev/ttyACM1"),
-            id=env("ROBOT_ID", "zetans_follower"),
-            cameras=cameras(fps),
-            use_degrees=(args.units == "degrees"),
+    if env("ROBOT_TYPE", "") == "real2sim":
+        # `./robot openpi-eval --sim ENGINE`: the live sim (sim/real2sim/live) instead of
+        # the arm. --units applies as it does to the arm (the sim converts through the
+        # follower calibration's tick ranges, exactly as the bus normalises).
+        from lerobot_robot_real2sim import Real2Sim, Real2SimConfig
+
+        robot = Real2Sim(Real2SimConfig(port=env("ROBOT_PORT", ""), id=env("ROBOT_ID", "sim"), cameras=cameras(fps),
+                                        use_degrees=(args.units == "degrees")))
+    else:
+        robot = SO101Follower(
+            SO101FollowerConfig(
+                port=env("ROBOT_PORT", "/dev/ttyACM1"),
+                id=env("ROBOT_ID", "zetans_follower"),
+                cameras=cameras(fps),
+                use_degrees=(args.units == "degrees"),
+            )
         )
-    )
     print(f"joint units: {args.units}"
           f"{'  (lerobot 0.6.1 default is degrees — overridden)' if args.units == 'normalized' else ''}")
     robot.connect()

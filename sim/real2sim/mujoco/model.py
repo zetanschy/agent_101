@@ -253,9 +253,11 @@ def joint_ranges(units) -> np.ndarray:
 
 def build(scene, episode: int | None = 0, servo: ServoModel | None = None, physics: Physics | None = None,
           perturb: Perturbation | None = None, cameras=("front", "grip"), objects: bool = True,
-          markers=(), placement: str = "config") -> Built:
+          markers=(), placement: str = "config", spec_hook=None) -> Built:
     """The MjModel of `episode` (None or objects=False: arm, table and cameras only).
     placement: 'config' (the scene's cap xy) or 'grasp' (grasp_placements: a diagnostic).
+    spec_hook(spec, scene): called on the finished MjSpec just before it compiles, for
+    visual-only additions (live/look_mujoco.py); it must not touch anything that collides.
     markers: [(body name or 'world', (x, y, z), radius)] visual spheres named marker<i>,
     for projection tests."""
     import mujoco
@@ -397,6 +399,8 @@ def build(scene, episode: int | None = 0, servo: ServoModel | None = None, physi
         offw, offh = max(offw, rs.width), max(offh, rs.height)
     spec.visual.global_.offwidth, spec.visual.global_.offheight = offw, offh
 
+    if spec_hook is not None:
+        spec_hook(spec, scene)
     m = spec.compile()
     qadr = np.array([m.jnt_qposadr[m.joint(n).id] for n in URDF_JOINTS])
     dadr = np.array([m.jnt_dofadr[m.joint(n).id] for n in URDF_JOINTS])

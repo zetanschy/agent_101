@@ -57,6 +57,63 @@ openpi_run() {
   $DC -f docker-compose.openpi.yml run --rm "${envargs[@]}" openpi-train "$@"
 }
 
+# --sim mujoco|isaac on teleop / record / infer / infer-remote / openpi-eval: the same
+# command against the live sim instead of the arm (sim/real2sim/live). The sim runs
+# natively in its engine's interpreter; the command runs in Docker exactly as it does
+# for the arm, with ROBOT_TYPE=real2sim and ROBOT_PORT = the sim's socket, which the
+# real2sim lerobot plugin (sim/real2sim/lerobot_plugin) answers. The leader stays real,
+# on its serial port in the container.
+#   --sim-layout real:N|random[:K]   where the caps and the mug start (default random)
+#   --sim-viewer                     the engine's 3D window (R = new layout)
+#   --sim-clock realtime|lockstep    realtime (default): the servo keeps running between
+#                                    commands, as on the bench
+SIM_ENV=(); SIM_ENGINE=""; SIM_PID=""; REST=()
+sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
+  REST=(); SIM_ENGINE=""
+  local layout=random clock=realtime extra=() live=sim/outputs/real2sim/live t=0 limit=90
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --sim) SIM_ENGINE="$2"; shift 2 ;;
+      --sim=*) SIM_ENGINE="${1#*=}"; shift ;;
+      --sim-layout) layout="$2"; shift 2 ;;
+      --sim-clock) clock="$2"; shift 2 ;;
+      --sim-viewer) extra+=(--viewer); shift ;;
+      --sim-seed) extra+=(--seed "$2"); shift 2 ;;
+      *) REST+=("$1"); shift ;;
+    esac
+  done
+  [ -z "$SIM_ENGINE" ] && return 0
+  case "$SIM_ENGINE" in mujoco|isaac) ;; *) echo "--sim $SIM_ENGINE: expected mujoco or isaac" >&2; exit 2 ;; esac
+  mkdir -p "$live"
+  if bash sim/real2sim/live/run.sh ping >/dev/null 2>&1; then
+    echo "a live sim is already serving $live/sim.sock -- using it:"
+  else
+    grant_display
+    echo "starting the $SIM_ENGINE sim ($layout, $clock clock; log $live/server.log) ..."
+    # its own process group, so stopping it also stops the interpreter under uv / sim.sh
+    setsid bash sim/real2sim/live/run.sh serve --engine "$SIM_ENGINE" --layout "$layout" --clock "$clock" \
+      "${extra[@]}" > "$live/server.log" 2>&1 &
+    SIM_PID=$!
+    trap sim_down EXIT INT TERM
+    [ "$SIM_ENGINE" = isaac ] && limit=600  # Kit boot + shader cache, and it may wait for the GPU lock
+    until bash sim/real2sim/live/run.sh ping >/dev/null 2>&1; do
+      if ! kill -0 "$SIM_PID" 2>/dev/null || [ "$t" -ge "$limit" ]; then
+        echo "the sim did not come up. Its log:" >&2; tail -25 "$live/server.log" >&2; exit 1
+      fi
+      sleep 1; t=$((t + 1))
+    done
+  fi
+  bash sim/real2sim/live/run.sh ping
+  SIM_ENV=(-e ROBOT_TYPE=real2sim -e "ROBOT_PORT=/workspace/$live/sim.sock"
+           -e PYTHONPATH=/workspace/sim:/workspace/sim/real2sim/lerobot_plugin)
+}
+sim_down() {
+  [ -z "$SIM_PID" ] && return 0
+  kill -TERM -- "-$SIM_PID" 2>/dev/null || kill -TERM "$SIM_PID" 2>/dev/null || true
+  wait "$SIM_PID" 2>/dev/null || true
+  SIM_PID=""
+}
+
 cmd="${1:-help}"; shift || true
 case "$cmd" in
   build|setup)  # one command for every box: build the image, or install natively
@@ -72,9 +129,18 @@ case "$cmd" in
              [ -n "$ids" ] && docker kill $ids && echo "stopped." || echo "nothing running." ;;
   doctor)    bash ./scripts/setup/doctor.sh "$@" ;;   # host-side pre-flight: cameras + USB health
   shell|bash) needs_docker shell; grant_display; $RUN bash "$@" ;;
-  teleop) needs_docker teleop;    grant_display; $RUN ./scripts/robot/teleop.sh "$@" ;;
-  record) needs_docker record;    grant_display; $RUN ./scripts/robot/record.sh "$@" ;;
-  infer) needs_docker infer;     grant_display; $RUN ./scripts/robot/infer.sh "$@" ;;   # run a trained policy (sync/rtc/async)
+  teleop) needs_docker teleop;    grant_display; sim_up "$@"
+          $DC run --rm "${SIM_ENV[@]}" lerobot ./scripts/robot/teleop.sh "${REST[@]}" ;;
+  record) needs_docker record;    grant_display; sim_up "$@"
+          # a sim dataset is never filed under a real one's name: --name N -> sim_<engine>_N
+          if [ -n "$SIM_ENGINE" ]; then
+            for i in "${!REST[@]}"; do
+              [ "${REST[$i]}" = --name ] && REST[$((i + 1))]="sim_${SIM_ENGINE}_${REST[$((i + 1))]}"
+            done
+          fi
+          $DC run --rm "${SIM_ENV[@]}" lerobot ./scripts/robot/record.sh "${REST[@]}" ;;
+  infer) needs_docker infer;     grant_display; sim_up "$@"   # run a trained policy (sync/rtc/async)
+          $DC run --rm "${SIM_ENV[@]}" lerobot ./scripts/robot/infer.sh "${REST[@]}" ;;
   policy-serve)         # THE GPU HALF of remote inference. No arm, no cameras: this is
                         # the box with the GPU, which may be anywhere. Runs natively
                         # when there is no Docker, the same as the training commands.
@@ -104,8 +170,8 @@ case "$cmd" in
              fi ;;
   infer-remote)         # THE ROBOT HALF. Owns the bus and the cameras and executes the
                         # chunks a remote policy-serve returns.
-             needs_docker infer-remote
-             $RUN python scripts/remote/client.py "$@" ;;
+             needs_docker infer-remote; sim_up "$@"
+             $DC run --rm "${SIM_ENV[@]}" lerobot python scripts/remote/client.py "${REST[@]}" ;;
   home) needs_docker home;      $RUN python webui/home.py "$@" ;;               # move follower to calibrated-zero
   eval) needs_docker eval;      $RUN python -m evals.run "$@" ;;               # Inspect Robots benchmark: LLM agent or VLA
   eval-preflight) needs_docker eval-preflight; $RUN inspect-robots-so101-preflight "$@" ;;  # prove compat, no motion
@@ -216,9 +282,9 @@ case "$cmd" in
   train)     native_or train_run bash scripts/robot/train.sh "$@" ;;    # LoRA fine-tune on the GPU
   preflight) native_or train_run bash scripts/setup/preflight.sh "$@" ;; # check GPU/VRAM/RAM/disk first
   openpi-eval|openpi)   # reference stack: openpi (JAX) policy on the real arm
-             needs_docker openpi-eval
-             $DC -f docker-compose.openpi.yml run --rm openpi \
-               python scripts/openpi/evaluate.py "$@" ;;
+             needs_docker openpi-eval; sim_up "$@"
+             $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" openpi \
+               python scripts/openpi/evaluate.py "${REST[@]}" ;;
   openpi-webui)         # same browser panel, openpi backend (separate port)
              needs_docker openpi-webui
              port="${OPENPI_WEBUI_PORT:-8001}"; echo "openpi web UI -> http://localhost:${port}"
@@ -439,6 +505,10 @@ so rather than failing with "docker: command not found".
   ./robot train --dataset U/D --name RUN [--steps 20000] [--batch 16] [--push]
                                 LoRA fine-tune, LEROBOT stack (pytorch)
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
+  ./robot teleop|record|infer|infer-remote|openpi-eval ... --sim mujoco|isaac
+                                the same command against the live sim instead of the arm
+                                (real leader; [--sim-layout real:N|random[:K]] [--sim-viewer];
+                                r = new object layout; see sim/real2sim/live/README.md)
   ./robot openpi-train --exp-name=RUN [--overwrite|--resume]
                                 LoRA fine-tune, OPENPI stack (jax). An ALTERNATIVE to
                                 `train`, not a follow-up: pick one. Dataset comes from
