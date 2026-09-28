@@ -364,6 +364,8 @@ sys.exit(0 if f.exists() and time.time()-json.loads(f.read_text())['t'] < 3 else
              bash ./scripts/sim/sim.sh scripts/sim/teleop.py "$@" ;;
   sim-shell)            # a python REPL inside the Isaac Sim environment
              bash ./scripts/sim/sim.sh "$@" ;;
+  real2sim)             # replay the real episodes physically in MuJoCo and Isaac (sim/real2sim)
+             bash ./scripts/sim/real2sim.sh "$@" ;;
   sim-camera-check)     # check the sim's camera assumptions against the real ones
              python3 ./scripts/sim/camera_check.py "$@" ;;
   sim-calibrate)        # measure real intrinsics from a checkerboard
@@ -486,6 +488,7 @@ so rather than failing with "docker: command not found".
   ./robot sim-play --gui --pose physics off, so prims can be dragged; prints the
                                 camera-mount transform on exit
   ./robot sim-camera-check      verify the sim camera model against the real cameras
+  ./robot real2sim <track> ...  real2sim replay harness; core: extract | info | meshes | test
   ./robot sim-calibrate --camera front|grip   measure real intrinsics (checkerboard)
   ./robot sim-compare-cameras   sim render vs live capture, to tune camera placement
   ./robot print-targets         PDFs to print: checkerboard, charuco, push-T goal
