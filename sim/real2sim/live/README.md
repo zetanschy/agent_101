@@ -23,7 +23,6 @@ stop those services. That applies to the real arm as much as to the sim.
 | `--sim mujoco\|isaac` | — | the engine |
 | `--sim-layout real:N\|random:K\|random` | `random:1` | where the caps and the mug start: one cap and the mug at random reachable spots, drawn afresh at every reset; `random:K` K caps (1-3); `random` 1-3; `real:N` episode N's calibrated layout (`real:0` is one cap) |
 | `--sim-viewer` | off | the engine's 3D window; `R` or Reset there = a new layout |
-| `--sim-flip` | off | the viewer starts top-down turned 180 deg |
 | `--sim-clock auto\|realtime\|lockstep` | `auto` | realtime for MuJoCo, lockstep for Isaac (below) |
 | `--sim-seed S` | — | reproducible random layouts |
 
@@ -35,10 +34,8 @@ stop those services. That applies to the real arm as much as to the sim.
   camera 180 deg (display only: the policy and recordings get it as mounted; `--flip`
   starts that way), `q` closes the window; `--snapshot out.png` writes one frame without a
   window.
-- `--sim-viewer` on the command itself opens the engine's 3D window. It starts top-down
-  as the overhead camera sees it, and `--sim-flip` turns it 180 deg (robot base at the top),
-  which matches an operator facing the leader from the other side. Orbit freely after;
-  `R` or Reset = new layout. For example: `OPENPI_WEBUI_PORT=8011 ./robot openpi-webui --sim
+- `--sim-viewer` on the command itself opens the engine's 3D window with a free camera
+  (`R` or Reset = new layout). For example: `OPENPI_WEBUI_PORT=8011 ./robot openpi-webui --sim
   mujoco --sim-viewer`.
 
 **A new layout** (cap and mug moved to fresh random spots, arm back at rest) comes from any

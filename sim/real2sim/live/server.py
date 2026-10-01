@@ -285,7 +285,6 @@ def main(argv=None) -> int:
     ap.add_argument("--fps", type=float, default=30.0)
     ap.add_argument("--socket", default=None, help="default sim/outputs/real2sim/live/sim.sock")
     ap.add_argument("--viewer", action="store_true", help="open the engine's interactive viewer (R = new layout)")
-    ap.add_argument("--flip", action="store_true", help="viewer: top-down view turned 180 deg (robot base at the top)")
     ap.add_argument("--autoreset", type=float, default=0.0, metavar="S",
                     help="new layout S seconds after every cap is in the mug (0: never)")
     ap.add_argument("--seed", type=int, default=None)
@@ -298,7 +297,6 @@ def main(argv=None) -> int:
 
     sc = scene_mod.load(paths.dataset(a.ds))
     eng = cls(sc, fps=a.fps, viewer=a.viewer)
-    eng.view_flip = a.flip
     srv = Server(eng, sc, a, np.random.default_rng(a.seed))
     srv.new_layout()
     srv.serve(Path(a.socket) if a.socket else default_socket())

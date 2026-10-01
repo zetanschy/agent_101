@@ -67,7 +67,6 @@ openpi_run() {
 #   --sim-layout real:N|random[:K]   where the caps and the mug start (default random:1: one cap,
 #                                    placed afresh at every reset; random = 1-3 caps)
 #   --sim-viewer                     the engine's 3D window (R / Reset = new layout)
-#   --sim-flip                       ...starting top-down turned 180 deg (robot base at the top)
 #   --sim-clock auto|realtime|lockstep  auto (default): realtime for mujoco (the servo keeps
 #                                    running between commands, as on the bench), lockstep for
 #                                    isaac (0.19x real time: one step per command, so every
@@ -83,7 +82,6 @@ sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
       --sim-layout) layout="$2"; shift 2 ;;
       --sim-clock) clock="$2"; shift 2 ;;
       --sim-viewer) extra+=(--viewer); shift ;;
-      --sim-flip) extra+=(--flip); shift ;;
       --sim-seed) extra+=(--seed "$2"); shift 2 ;;
       *) REST+=("$1"); shift ;;
     esac
