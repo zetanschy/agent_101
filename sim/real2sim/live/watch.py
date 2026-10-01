@@ -8,7 +8,7 @@ disturb a policy, a teleop session or a recording, and in lockstep it does not a
 the sim.
 
     r        a new object layout (as 'l' in the lerobot terminal)
-    f        flip the overhead camera 180 deg (display only; also --flip)
+    f        flip both cameras 180 deg (display only; also --flip)
     q / Esc  close the window (the sim keeps running)
 
 --snapshot PATH writes one frame and exits (no window), e.g. to check a headless box.
@@ -56,14 +56,14 @@ def _frame(sock, warp, st: dict, flip: bool = False) -> np.ndarray:
         img = r["images"][c]
         if r.get("pinhole") and warp is not None:
             img = warp(c, img)
-        if flip and c == "front":  # display only: the policy and recordings get the camera as mounted
+        if flip:  # both cameras, display only: the policy and recordings get them as mounted
             img = img[::-1, ::-1]
         tiles.append(np.ascontiguousarray(img))
     out = cv2.cvtColor(np.concatenate(tiles, axis=1), cv2.COLOR_RGB2BGR)
     cim = st.get("caps_in_mug") or []
     lay = (st.get("layout") or {}).get("kind", "?")
     text = (f"{st.get('engine', '?')}  t={r['t']:6.1f}s  layout {lay}  caps in mug {sum(cim)}/{len(cim)}"
-            f"{'  [front flipped]' if flip else ''}  (r: new layout, f: flip, q: close)")
+            f"{'  [flipped]' if flip else ''}  (r: new layout, f: flip, q: close)")
     cv2.rectangle(out, (0, 0), (out.shape[1], 26), (0, 0, 0), -1)
     cv2.putText(out, text, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     return out
@@ -74,7 +74,7 @@ def main(argv=None) -> int:
     ap.add_argument("--socket", default=None)
     ap.add_argument("--hz", type=float, default=15.0, help="refresh rate of the window")
     ap.add_argument("--snapshot", metavar="PATH", help="write one frame to PATH and exit (no window)")
-    ap.add_argument("--flip", action="store_true", help="show the overhead camera turned 180 deg (f toggles)")
+    ap.add_argument("--flip", action="store_true", help="show both cameras turned 180 deg (f toggles)")
     a = ap.parse_args(argv)
     import cv2
 

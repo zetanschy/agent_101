@@ -30,8 +30,8 @@ stop those services. That applies to the real arm as much as to the sim.
 - `./robot real2sim live watch` in a second terminal, while the webui, a teleop or a
   recording runs, shows both sim cameras exactly as the policy receives them, with sim
   time, layout and caps in the mug on top. It is observe-only: it never commands the arm
-  and does not advance a lockstep sim. `r` gives a new layout, `f` turns the overhead
-  camera 180 deg (display only: the policy and recordings get it as mounted; `--flip`
+  and does not advance a lockstep sim. `r` gives a new layout, `f` turns both cameras
+  180 deg (display only: the policy and recordings get it as mounted; `--flip`
   starts that way), `q` closes the window; `--snapshot out.png` writes one frame without a
   window.
 - `--sim-viewer` on the command itself opens the engine's 3D window with a free camera
