@@ -66,7 +66,8 @@ openpi_run() {
 # on its serial port in the container.
 #   --sim-layout real:N|random[:K]   where the caps and the mug start (default random:1: one cap,
 #                                    placed afresh at every reset; random = 1-3 caps)
-#   --sim-viewer                     the engine's 3D window (R = new layout)
+#   --sim-viewer                     the engine's 3D window (R / Reset = new layout)
+#   --sim-flip                       ...starting top-down turned 180 deg (robot base at the top)
 #   --sim-clock auto|realtime|lockstep  auto (default): realtime for mujoco (the servo keeps
 #                                    running between commands, as on the bench), lockstep for
 #                                    isaac (0.19x real time: one step per command, so every
@@ -82,6 +83,7 @@ sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
       --sim-layout) layout="$2"; shift 2 ;;
       --sim-clock) clock="$2"; shift 2 ;;
       --sim-viewer) extra+=(--viewer); shift ;;
+      --sim-flip) extra+=(--flip); shift ;;
       --sim-seed) extra+=(--seed "$2"); shift 2 ;;
       *) REST+=("$1"); shift ;;
     esac
@@ -515,7 +517,7 @@ so rather than failing with "docker: command not found".
   ./robot teleop|record|infer|infer-remote|openpi-eval|webui|openpi-webui ... --sim mujoco|isaac
                                 the same command against the live sim instead of the arm
                                 (real leader; [--sim-layout real:N|random[:K]] [--sim-viewer];
-                                r = new object layout; see sim/real2sim/live/README.md)
+                                l = new object layout; see sim/real2sim/live/README.md)
   ./robot openpi-train --exp-name=RUN [--overwrite|--resume]
                                 LoRA fine-tune, OPENPI stack (jax). An ALTERNATIVE to
                                 `train`, not a follow-up: pick one. Dataset comes from

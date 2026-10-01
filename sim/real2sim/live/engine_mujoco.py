@@ -96,6 +96,7 @@ class MujocoEngine(Engine):
         self.limits = firmware_limits_rad(scene.units())
         self.cameras = {c: (scene.camera(c).height, scene.camera(c).width) for c in self.cams}
         self.want_viewer, self.viewer = viewer, None
+        self.view_flip = False  # set by the server (--flip) before the first reset
         self.b = self.d = self.renderer = None
         self._k = 0
         self._t_mj = 0.0
@@ -220,6 +221,16 @@ class MujocoEngine(Engine):
         except Exception as e:  # no display, or GLFW unavailable next to EGL
             print(f"viewer unavailable ({type(e).__name__}: {e}); serving headless", flush=True)
             self.want_viewer, self.viewer = False, None
+            return
+        # start top-down over the workspace, as the overhead camera sees it (robot base at
+        # the bottom: heading -y), or turned 180 deg with view_flip (base at the top), which
+        # matches an operator facing the leader from the other side. Orbit freely after.
+        with self.viewer.lock():
+            c = self.viewer.cam
+            c.type = mujoco.mjtCamera.mjCAMERA_FREE
+            c.lookat[:] = [0.0, -0.22, self.scene.table_z()]
+            c.distance, c.elevation = 0.75, -89.0  # frames the mat the overhead camera sees
+            c.azimuth = 90.0 if self.view_flip else -90.0
 
     def close(self) -> None:
         if self.viewer is not None:

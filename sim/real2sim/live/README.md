@@ -22,7 +22,8 @@ stop those services. That applies to the real arm as much as to the sim.
 |---|---|---|
 | `--sim mujoco\|isaac` | — | the engine |
 | `--sim-layout real:N\|random:K\|random` | `random:1` | where the caps and the mug start: one cap and the mug at random reachable spots, drawn afresh at every reset; `random:K` K caps (1-3); `random` 1-3; `real:N` episode N's calibrated layout (`real:0` is one cap) |
-| `--sim-viewer` | off | the engine's 3D window; `R` there = a new layout |
+| `--sim-viewer` | off | the engine's 3D window; `R` or Reset there = a new layout |
+| `--sim-flip` | off | the viewer starts top-down turned 180 deg |
 | `--sim-clock auto\|realtime\|lockstep` | `auto` | realtime for MuJoCo, lockstep for Isaac (below) |
 | `--sim-seed S` | — | reproducible random layouts |
 
@@ -30,16 +31,23 @@ stop those services. That applies to the real arm as much as to the sim.
 - `./robot real2sim live watch` in a second terminal, while the webui, a teleop or a
   recording runs, shows both sim cameras exactly as the policy receives them, with sim
   time, layout and caps in the mug on top. It is observe-only: it never commands the arm
-  and does not advance a lockstep sim. `r` gives a new layout, `q` closes the window;
-  `--snapshot out.png` writes one frame without a window.
-- `--sim-viewer` on the command itself opens the engine's 3D window with a free camera
-  (`R` = new layout). For example: `OPENPI_WEBUI_PORT=8011 ./robot openpi-webui --sim
+  and does not advance a lockstep sim. `r` gives a new layout, `f` turns the overhead
+  camera 180 deg (display only: the policy and recordings get it as mounted; `--flip`
+  starts that way), `q` closes the window; `--snapshot out.png` writes one frame without a
+  window.
+- `--sim-viewer` on the command itself opens the engine's 3D window. It starts top-down
+  as the overhead camera sees it, and `--sim-flip` turns it 180 deg (robot base at the top),
+  which matches an operator facing the leader from the other side. Orbit freely after;
+  `R` or Reset = new layout. For example: `OPENPI_WEBUI_PORT=8011 ./robot openpi-webui --sim
   mujoco --sim-viewer`.
 
 **A new layout** (cap and mug moved to fresh random spots, arm back at rest) comes from any
 of these:
-- `r` in the terminal that runs lerobot. The plugin listens the way lerobot-record listens
-  for its arrow keys.
+- **By itself after every recorded episode.** lerobot-record announces its reset phase
+  through logging ("Reset the environment"), and the plugin, running in the same process,
+  draws a new layout right then. Every episode starts on fresh positions, while you bring
+  the leader back. `R2S_NEW_LAYOUT_EACH_EPISODE=0` turns it off.
+- `l` in the terminal that runs lerobot. Not `r`, which lerobot-record binds to re-record.
 - In MuJoCo's viewer: the **Reset** button, Backspace, or `R`. The viewer's own Reset
   would put everything back where the model started and snap the arm to its zero pose.
   The engine sees sim time run backwards, never integrates that state, and draws a new

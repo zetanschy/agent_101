@@ -13,6 +13,7 @@ tell it from the arm, and a dataset recorded from it has the real dataset's feat
 from __future__ import annotations
 
 import logging
+import os
 
 from lerobot.robots.robot import Robot
 
@@ -22,6 +23,22 @@ logger = logging.getLogger(__name__)
 
 MOTORS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 DEFAULT_CAMERAS = {"front": (480, 640), "grip": (480, 640)}
+
+
+class _NewLayoutEachEpisode(logging.Handler):
+    """lerobot-record gives a robot no hook between episodes, but it announces its reset
+    phase through logging (log_say("Reset the environment"), lerobot_record.py), in this
+    same process. The next observation after that line draws a new layout. The next
+    episode then starts on fresh cap and mug positions, while the operator brings the
+    leader back to rest. Off with R2S_NEW_LAYOUT_EACH_EPISODE=0."""
+
+    def __init__(self, robot):
+        super().__init__(logging.INFO)
+        self.robot = robot
+
+    def emit(self, record):
+        if record.getMessage() == "Reset the environment":
+            self.robot._reset_pending = True
 
 
 class Real2Sim(Robot):
@@ -37,6 +54,7 @@ class Real2Sim(Robot):
         self.info: dict = {}
         self._reset_pending = False
         self._keys = None
+        self._episode_hook = None
         # degrees (this bench) or RANGE_M100_100 on the arm, as SOFollower's use_degrees
         self._units = "degrees" if config.use_degrees else "normalized"
 
@@ -92,22 +110,25 @@ class Real2Sim(Robot):
                 raise ValueError(f"camera {k!r}: configured {hw[1]}x{hw[0]}, the sim renders {have[k][1]}x{have[k][0]}")
         logger.info(f"{self} connected: {self.info['engine']} ({self.info['clock']} clock), scene {self.info['scene_hash']}")
         self._listen_for_reset()
+        if os.environ.get("R2S_NEW_LAYOUT_EACH_EPISODE", "1") not in ("0", ""):
+            self._episode_hook = _NewLayoutEachEpisode(self)
+            logging.getLogger().addHandler(self._episode_hook)
 
     def _listen_for_reset(self) -> None:
-        """'r' = new object layout, in the terminal that runs lerobot (pynput, the listener
-        lerobot-record uses for its arrow keys). lerobot-record has no hook between
-        episodes, and resetting on a timer could teleport objects mid-episode, so the
-        operator resets during the reset phase, as they would on the bench."""
+        """'l' = new object layout now, in the terminal that runs lerobot (pynput, the
+        listener lerobot-record uses for its own keys). Not 'r': lerobot-record binds r to
+        re-record. A recording also draws one by itself at every reset phase
+        (_NewLayoutEachEpisode), never on a timer, which could teleport objects mid-episode."""
         try:
             from pynput import keyboard
 
             def press(key):
-                if getattr(key, "char", None) == "r":
+                if getattr(key, "char", None) == "l":
                     self._reset_pending = True
 
             self._keys = keyboard.Listener(on_press=press)
             self._keys.start()
-            logger.info(f"{self}: press 'r' for a new object layout")
+            logger.info(f"{self}: press 'l' for a new object layout (a recording draws one every reset phase)")
         except Exception as e:  # headless: `./robot real2sim live reset` does the same
             logger.info(f"{self}: no keyboard listener ({type(e).__name__}); reset with './robot real2sim live reset'")
 
@@ -122,6 +143,9 @@ class Real2Sim(Robot):
         pass
 
     def disconnect(self) -> None:
+        if self._episode_hook is not None:
+            logging.getLogger().removeHandler(self._episode_hook)
+            self._episode_hook = None
         if self._keys is not None:
             self._keys.stop()
             self._keys = None

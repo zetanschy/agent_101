@@ -7,7 +7,8 @@ caps in the mug drawn on top. It only OBSERVES: it never sends a command, so it 
 disturb a policy, a teleop session or a recording, and in lockstep it does not advance
 the sim.
 
-    r        a new object layout (as 'r' in the lerobot terminal)
+    r        a new object layout (as 'l' in the lerobot terminal)
+    f        flip the overhead camera 180 deg (display only; also --flip)
     q / Esc  close the window (the sim keeps running)
 
 --snapshot PATH writes one frame and exits (no window), e.g. to check a headless box.
@@ -46,7 +47,7 @@ def _warper(info: dict):
     return warp
 
 
-def _frame(sock, warp, st: dict) -> np.ndarray:
+def _frame(sock, warp, st: dict, flip: bool = False) -> np.ndarray:
     import cv2
 
     r = protocol.call(sock, "observe", images=list(CAMS), pinhole=warp is not None)
@@ -55,11 +56,14 @@ def _frame(sock, warp, st: dict) -> np.ndarray:
         img = r["images"][c]
         if r.get("pinhole") and warp is not None:
             img = warp(c, img)
+        if flip and c == "front":  # display only: the policy and recordings get the camera as mounted
+            img = img[::-1, ::-1]
         tiles.append(np.ascontiguousarray(img))
     out = cv2.cvtColor(np.concatenate(tiles, axis=1), cv2.COLOR_RGB2BGR)
     cim = st.get("caps_in_mug") or []
     lay = (st.get("layout") or {}).get("kind", "?")
-    text = f"{st.get('engine', '?')}  t={r['t']:6.1f}s  layout {lay}  caps in mug {sum(cim)}/{len(cim)}  (r: new layout, q: close)"
+    text = (f"{st.get('engine', '?')}  t={r['t']:6.1f}s  layout {lay}  caps in mug {sum(cim)}/{len(cim)}"
+            f"{'  [front flipped]' if flip else ''}  (r: new layout, f: flip, q: close)")
     cv2.rectangle(out, (0, 0), (out.shape[1], 26), (0, 0, 0), -1)
     cv2.putText(out, text, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     return out
@@ -70,6 +74,7 @@ def main(argv=None) -> int:
     ap.add_argument("--socket", default=None)
     ap.add_argument("--hz", type=float, default=15.0, help="refresh rate of the window")
     ap.add_argument("--snapshot", metavar="PATH", help="write one frame to PATH and exit (no window)")
+    ap.add_argument("--flip", action="store_true", help="show the overhead camera turned 180 deg (f toggles)")
     a = ap.parse_args(argv)
     import cv2
 
@@ -83,21 +88,23 @@ def main(argv=None) -> int:
     warp = _warper(info)
     st = protocol.call(sock, "status")
     if a.snapshot:
-        cv2.imwrite(a.snapshot, _frame(sock, warp, st))
+        cv2.imwrite(a.snapshot, _frame(sock, warp, st, a.flip))
         print(f"-> {a.snapshot}")
         return 0
     name = f"real2sim live ({info['engine']})"
     cv2.namedWindow(name, cv2.WINDOW_NORMAL)
-    last_status = 0.0
+    last_status, flip = 0.0, a.flip
     try:
         while True:
             t0 = time.monotonic()
             if t0 - last_status > 0.5:
                 st, last_status = protocol.call(sock, "status"), t0
-            cv2.imshow(name, _frame(sock, warp, st))
+            cv2.imshow(name, _frame(sock, warp, st, flip))
             key = cv2.waitKey(max(1, int(1000 / a.hz - 1000 * (time.monotonic() - t0)))) & 0xFF
             if key in (ord("q"), 27) or cv2.getWindowProperty(name, cv2.WND_PROP_VISIBLE) < 1:
                 break
+            if key == ord("f"):
+                flip = not flip
             if key == ord("r"):
                 print("new layout:", protocol.call(sock, "reset")["layout"].get("kind"), flush=True)
     except (ConnectionError, OSError):
