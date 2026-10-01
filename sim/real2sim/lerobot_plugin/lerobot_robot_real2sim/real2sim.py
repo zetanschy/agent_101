@@ -26,19 +26,24 @@ DEFAULT_CAMERAS = {"front": (480, 640), "grip": (480, 640)}
 
 
 class _NewLayoutEachEpisode(logging.Handler):
-    """lerobot-record gives a robot no hook between episodes, but it announces its reset
-    phase through logging (log_say("Reset the environment"), lerobot_record.py), in this
-    same process. The next observation after that line draws a new layout. The next
-    episode then starts on fresh cap and mug positions, while the operator brings the
-    leader back to rest. Off with R2S_NEW_LAYOUT_EACH_EPISODE=0."""
+    """lerobot-record gives a robot no hook between episodes, but it announces each one
+    through logging, in this same process (log_say, lerobot_record.py). Its order is:
+    "Recording episode N", the episode, "Reset the environment" and the reset phase, then
+    save_episode() (the video encoding), then "Recording episode N+1". A new layout is
+    drawn at every "Recording episode" line after the first: once the previous episode is
+    saved, and before the new one records a frame (get_observation re-places first, so
+    its first frame already shows the new positions). The first episode starts on the
+    layout the sim came up with. Off with R2S_NEW_LAYOUT_EACH_EPISODE=0."""
 
     def __init__(self, robot):
         super().__init__(logging.INFO)
-        self.robot = robot
+        self.robot, self.seen_first = robot, False
 
     def emit(self, record):
-        if record.getMessage() == "Reset the environment":
-            self.robot._reset_pending = True
+        if record.getMessage().startswith("Recording episode "):
+            if self.seen_first:
+                self.robot._reset_pending = True
+            self.seen_first = True
 
 
 class Real2Sim(Robot):
@@ -117,8 +122,9 @@ class Real2Sim(Robot):
     def _listen_for_reset(self) -> None:
         """'l' = new object layout now, in the terminal that runs lerobot (pynput, the
         listener lerobot-record uses for its own keys). Not 'r': lerobot-record binds r to
-        re-record. A recording also draws one by itself at every reset phase
-        (_NewLayoutEachEpisode), never on a timer, which could teleport objects mid-episode."""
+        re-record. A recording also draws one by itself before every episode, once
+        the previous one is saved (_NewLayoutEachEpisode), never on a timer, which could
+        teleport objects mid-episode."""
         try:
             from pynput import keyboard
 
@@ -128,7 +134,7 @@ class Real2Sim(Robot):
 
             self._keys = keyboard.Listener(on_press=press)
             self._keys.start()
-            logger.info(f"{self}: press 'l' for a new object layout (a recording draws one every reset phase)")
+            logger.info(f"{self}: press 'l' for a new object layout (a recording draws one before every episode)")
         except Exception as e:  # headless: `./robot real2sim live reset` does the same
             logger.info(f"{self}: no keyboard listener ({type(e).__name__}); reset with './robot real2sim live reset'")
 

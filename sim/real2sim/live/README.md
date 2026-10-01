@@ -40,10 +40,11 @@ stop those services. That applies to the real arm as much as to the sim.
 
 **A new layout** (cap and mug moved to fresh random spots, arm back at rest) comes from any
 of these:
-- **By itself after every recorded episode.** lerobot-record announces its reset phase
-  through logging ("Reset the environment"), and the plugin, running in the same process,
-  draws a new layout right then. Every episode starts on fresh positions, while you bring
-  the leader back. `R2S_NEW_LAYOUT_EACH_EPISODE=0` turns it off.
+- **By itself before every recorded episode after the first:** once the previous episode
+  is saved (its video encoded) and before the new one records a frame. lerobot-record
+  announces "Recording episode N" through logging, and the plugin, running in the same
+  process, re-places at that line, so the episode's first frame already shows the new
+  positions. `R2S_NEW_LAYOUT_EACH_EPISODE=0` turns it off.
 - `l` in the terminal that runs lerobot. Not `r`, which lerobot-record binds to re-record.
 - In MuJoCo's viewer: the **Reset** button, Backspace, or `R`. The viewer's own Reset
   would put everything back where the model started and snap the arm to its zero pose.
