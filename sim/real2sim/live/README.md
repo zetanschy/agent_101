@@ -54,9 +54,8 @@ of these:
 
 A layout with the same bodies as the current one (the default `random:1` always is) is
 re-placed in the running model in ~0.02 s, so the viewer window stays open. A different
-cap count rebuilds the model (~1-3 s). lerobot-record gives a
-robot no hook between episodes, and a reset on a timer could teleport objects in the
-middle of a recorded episode. So you reset during the reset phase, as you would on the bench.
+cap count rebuilds the model (~1-3 s). Nothing resets on a timer, which could teleport
+objects in the middle of a recorded episode.
 
 **Recorded datasets** come out of lerobot 0.6.1 itself, through `record.sh`. They have the
 real dataset's features (same keys, shapes and names), `robot_type: real2sim`, and a
@@ -152,7 +151,9 @@ They have no reflections in the steel mug and no room behind the arm. Isaac rend
   run did not place it, but it differed in three ways at once: plain MuJoCo images,
   synchronous chunks, and normalized joint units (evaluate.py's default). One run is not a
   success rate; this says the loop works end to end, not how often the policy succeeds.
-- **No episode hook in lerobot-record:** reset the layout yourself between episodes (above).
+- **No episode hook in lerobot-record:** the per-episode layout keys off its "Recording
+  episode N" log line (above). If a lerobot upgrade rewords that line, recordings keep
+  one layout until `l` or a reset.
 - **Isaac's viewer** is dark: exposure and grading would also rescale the frames the cameras
   record, so it is left alone. Closing its window ends the session, because Kit's shutdown
   hangs on this box.
