@@ -73,6 +73,7 @@ benchmark. Scale anything unmeasured by DLPerf from the 6000 Ada row, as
 
 | GPU | s/step | source |
 |---|---|---|
+| 1× RTX 5090 | 1.43 | Vast.ai, 2026-10-02, France host, `openpi_pi05_lora_cap_to_mug_sim_50` |
 | 1× RTX 6000 Ada | 2.55 | Vast.ai, 2026-10-02, `openpi_pi05_lora_cap_to_mug_sim_50` |
 | 2× RTX 4090 | 2.61 | W&B `openpi_pi05_lora_cap_to_cup_200`, 2026-07-30 |
 | 1× RTX 5090 | 1.69 | W&B `dagger_r1`, 2026-09-19 (the user's own 5090, not rented) |
