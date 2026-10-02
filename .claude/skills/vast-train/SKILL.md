@@ -43,13 +43,20 @@ the whole run, not by $/h**:
 The 0.5 h covers setup, normalization stats, the compile and the ~9 GB push.
 
 ```bash
-BASE='disk_space>=100 cuda_vers>=12.4 cpu_cores_effective>=12 cpu_ram>=32 inet_down>=500 reliability>0.99 verified=true rentable=true'
-for q in "num_gpus=1 gpu_name=RTX_5090 cuda_vers>=12.8" "num_gpus=1 gpu_name=RTX_6000Ada" \
-         "num_gpus=1 gpu_name=A100_SXM4" "num_gpus=1 gpu_name=L40S" "num_gpus=1 gpu_name=H100_SXM" \
-         "num_gpus=2 gpu_name=RTX_4090" "num_gpus=2 gpu_name=RTX_3090"; do
+BASE='disk_space>=100 cpu_cores_effective>=12 cpu_ram>=32 inet_down>=500 reliability>0.99 verified=true rentable=true'
+for q in "num_gpus=1 gpu_name=RTX_5090 cuda_vers>=12.8" "num_gpus=1 gpu_name=RTX_6000Ada cuda_vers>=12.4" \
+         "num_gpus=1 gpu_name=A100_SXM4 cuda_vers>=12.4" "num_gpus=1 gpu_name=L40S cuda_vers>=12.4" \
+         "num_gpus=1 gpu_name=H100_SXM cuda_vers>=12.4" "num_gpus=2 gpu_name=RTX_4090 cuda_vers>=12.4" \
+         "num_gpus=2 gpu_name=RTX_3090 cuda_vers>=12.4"; do
   V search offers "$q $BASE" --storage 100 -o dph_total --raw   # take the first few of each
 done
 ```
+
+Give each query exactly one `cuda_vers`. With two (a 12.8 for the 5090 plus a 12.4 in
+`BASE`), the search returns no 5090s at all.
+
+Also note each offer's `inet_up_cost` (per GB). Each checkpoint push uploads ~9 GB, and
+that price varies 10x between hosts.
 
 **What can hold the job.** openpi documents 22.5 GB, and JAX takes only 90% of a card.
 - **One 32 GB or larger card works.**
@@ -82,17 +89,24 @@ Read the frame count from the dataset's `meta/info.json`.
    the cheapest run that fits as Recommended.
 2. **Steps:** 30k, or fewer. If 30k doesn't fit the credit, give the step count that does.
 3. **After the push:** destroy (recommended), stop, or keep.
+4. **Push each checkpoint** (every 5k steps) to the Hub as it is saved: yes (recommended),
+   or only the final push. Give the extra upload cost on the chosen host.
+
+Write prices as "0.59 USD/h", never as a dollar sign followed by a digit. When a skill
+loads, a dollar sign followed by a digit is replaced with that argument, so 0.05 written with a
+dollar sign shows up as "<first argument>.05".
 
 If nothing fits the credit, say how much to add.
 
 ## 3. Launch
 
 Offers vanish within minutes. If the confirmed one is gone, take the same GPU model at
-no more than $0.05/h above it, and say so. Otherwise ask again.
+no more than 0.05 USD/h above it, and say so. Otherwise ask again.
 
 ```bash
 V create instance <OFFER> --image pytorch/pytorch:2.5.1-cuda12.4-cudnn9-devel --disk 100 \
-  --ssh --direct --label agent101-<EXP> --raw          # -> new_contract = instance id
+  --ssh --direct --label agent101-<EXP> --raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["new_contract"])'
+  # print only the id: the reply also holds an instance API key
 V show ssh-keys --raw                                  # empty? V create ssh-key "$(cat ~/.ssh/id_ed25519.pub)"
 V show instance <ID> --raw                             # poll every 15 s until actual_status == running
 ```
@@ -116,8 +130,11 @@ $SSH "tmux new-session -d -s train 'bash /root/remote_run.sh --exp-name <EXP> --
   1. `setup_cloud.sh`, which builds a Python 3.12 venv: the image has 3.11, and le101 needs 3.12.
   2. `train.sh`: normalization stats on this dataset, the training, the push to `<hf user>/<EXP>`.
   3. Checks that `params/` is on the Hub.
-  4. **Destroys the box itself**, using the instance key in PID 1's environment.
-  5. On anything short of a verified push, it **stops** the box instead, keeping the disk
+  4. While it trains, uploads each saved checkpoint (every 5k steps) to `<hf user>/<EXP>`,
+     plus `agent101_step.txt` naming its step. This is the in-progress copy that survives
+     a dead host.
+  5. **Destroys the box itself**, using the instance key in PID 1's environment.
+  6. On anything short of a verified push, it **stops** the box instead, keeping the disk
      and its checkpoint.
 
 The user can watch with `ssh -p <PORT> root@<IP> -t tmux attach -t train` (detach with
@@ -152,10 +169,30 @@ without `remote_run.sh` can be given the self-teardown with
 - Tell the user the model URL, the total hours and the cost (from `V show invoices`).
 - Add the measured step time to the table above.
 
+## When a host dies mid-run
+
+You'll see this: W&B marks the run "crashed" with no Python error, SSH is refused, the
+instance shows `intended_status: stopped`, and `V logs <ID>` says "No such container".
+The host lost the container, and its disk with it.
+- `V destroy instance <ID> -y`. Its disk is still billed.
+- Rent a new box and launch as above.
+- Then resume from the last pushed checkpoint instead of starting over:
+  ```bash
+  $SSH 'cd /root/agent_101 && S=$(curl -sL https://huggingface.co/<hf user>/<EXP>/resolve/main/agent101_step.txt) &&
+        huggingface-cli download <hf user>/<EXP> --local-dir checkpoints/pi05_soarm101_lora_cap_to_cup/<EXP>/$S'
+  ```
+- Start `train.sh` with `--resume` in place of `--overwrite`. Its normalization stats are
+  recomputed from the same dataset, so they are identical.
+
+On 2026-10-02, host 137575 (an RTX 6000 Ada, reliability 0.998) died at step ~4,550,
+before the first checkpoint, and its reliability fell to 0.819. A reliability score is
+not a guarantee.
+
 ## Learned the hard way (2026-10-02)
 
 - **A filter of `gpu_ram>=45` hid every 32 GB card.** The 5090 is the cheapest run.
 - **`compute_norm_stats.py` takes only `--config-name`.** `train.sh` now swaps the dataset in
   for it, so `--data.repo-id` works.
 - **`$?` after a `$(date)` in the same `echo` is the date's exit code.** Save `rc=$?` first.
-- **The host bills downloads and uploads.** It was $0.17 for setup alone.
+- **The host bills downloads and uploads.** It was 0.17 USD for setup alone, and every checkpoint push is ~9 GB at the
+  host's `inet_up_cost`.

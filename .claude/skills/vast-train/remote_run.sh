@@ -76,6 +76,33 @@ finish() { # rc of the run
   fi
 }
 
+push_checkpoints() { # while training: each saved checkpoint -> the Hub, so a dead host loses <= save_interval
+  local done_step=-1 dir step
+  while sleep 120; do
+    # orbax writes <step>.orbax-checkpoint-tmp-* and renames it to <step> when complete
+    dir=$(ls -d checkpoints/*/"$exp"/[0-9]* 2>/dev/null | awk -F/ '$NF ~ /^[0-9]+$/ {print $NF, $0}' \
+          | sort -n | tail -1 | cut -d' ' -f2-)
+    [ -n "$dir" ] || continue
+    step=$(basename "$dir")
+    [ "$step" -gt "$done_step" ] || continue
+    say "pushing checkpoint $step to the Hub (in-progress copy)"
+    if python3 - "$dir" "$exp" "$step" <<'PY'
+import sys
+from huggingface_hub import HfApi
+local, exp, step = sys.argv[1:4]
+api = HfApi()
+repo = f"{api.whoami()['name']}/{exp}"
+api.create_repo(repo, repo_type="model", exist_ok=True)
+api.upload_folder(folder_path=local, repo_id=repo, repo_type="model",
+                  commit_message=f"checkpoint step {step} (training in progress)")
+api.upload_file(path_or_fileobj=step.encode(), path_in_repo="agent101_step.txt", repo_id=repo,
+                repo_type="model", commit_message=f"step {step}")
+print(f"  pushed step {step} -> hf.co/{repo}")
+PY
+    then done_step=$step; fi
+  done
+}
+
 if [ "$finish_only" = 1 ]; then
   say "waiting for the run's EXIT line in $log"
   until rc=$(grep -aoE "EXIT [0-9]+" "$log" 2>/dev/null | tail -1 | cut -d' ' -f2) && [ -n "$rc" ]; do sleep 60; done
@@ -94,8 +121,11 @@ fi
     extra=()
     [ -n "$steps" ] && extra=(--steps "$steps" --lr-decay-steps "$steps")
     say "train $exp on $dataset ${steps:+($steps steps) }with $(python --version)"
+    [ -n "${HF_TOKEN:-}" ] || export "$(grep -m1 '^HF_TOKEN=' .env.local 2>/dev/null || echo HF_TOKEN=)"
+    push_checkpoints & pusher=$!
     bash scripts/openpi/train.sh --exp-name="$exp" --data.repo-id="$dataset" --overwrite "${extra[@]}"
     rc=$?
+    kill "$pusher" 2>/dev/null
   fi
   say "EXIT $rc"
   finish "$rc"
