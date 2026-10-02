@@ -2,7 +2,7 @@
 # One-shot setup for openpi (JAX) training on a box WITHOUT Docker — e.g. a Vast.ai
 # instance, which is itself a container and cannot nest one.
 #
-#   git clone --recursive https://github.com/zetanschy/agent_101 && cd agent_101
+#   git clone https://github.com/zetanschy/agent_101 && cd agent_101   # not --recursive (README)
 #   bash scripts/openpi/setup_cloud.sh
 #   bash scripts/openpi/train.sh --exp-name=smoke --batch-size 16 --overwrite
 #
@@ -23,12 +23,15 @@ cd "$(dirname "$0")/../.."
 
 echo "== python =="
 py=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-echo "  found python $py (openpi requires >=3.10,<3.13)"
+# openpi allows >=3.10,<3.13 and the le101 fork (lerobot 0.6.1) >=3.12, so 3.12 is
+# the only version both install on. pytorch/pytorch images ship 3.11.
+echo "  found python $py (openpi needs <3.13, the le101 fork >=3.12: only 3.12 fits both)"
 case "$py" in
-  3.10|3.11|3.12) ;;
+  3.12) ;;
   *) echo "  unsupported; creating a 3.12 venv with uv" >&2
      command -v uv >/dev/null 2>&1 || { curl -LsSf https://astral.sh/uv/install.sh | sh; . "$HOME/.local/bin/env"; }
-     uv venv --python 3.12 .venv-openpi
+     # --seed: a uv venv has no pip otherwise, and everything below is `python -m pip`
+     uv venv --seed --python 3.12 .venv-openpi
      # shellcheck disable=SC1091
      . .venv-openpi/bin/activate
      echo "  now on $(python -c 'import sys;print(sys.version.split()[0])') — re-activate with: . .venv-openpi/bin/activate" ;;

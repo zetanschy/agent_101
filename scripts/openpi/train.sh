@@ -186,8 +186,21 @@ PY
 elif [ "$force" = 1 ] || [ ! -f "$stats" ]; then
   if [ "$force" = 1 ]; then echo "==> recomputing norm stats (--force-norm-stats)"
   else echo "==> norm stats missing, computing them first (walks the whole dataset)"; fi
-  python "$openpi_root/scripts/compute_norm_stats.py" --config-name "$cfg" \
-    ${repo_override:+--data.repo-id="$repo_override"}
+  # compute_norm_stats.py takes only --config-name (its main() has no data overrides),
+  # so a --data.repo-id would be a parse error there. Run it with the config's dataset
+  # swapped for the override instead: same script, same loader, this run's dataset.
+  python - "$openpi_root/scripts/compute_norm_stats.py" "$cfg" "$repo_override" <<'PY'
+import dataclasses, runpy, sys
+from openpi.training import config as _c
+
+script, name, repo = sys.argv[1:4]
+if repo:
+    base = _c.get_config(name)
+    cfg = dataclasses.replace(base, data=dataclasses.replace(base.data, repo_id=repo))
+    _c.get_config = lambda _name: cfg  # the script looks its config up by name
+sys.argv = [script, "--config-name", name]
+runpy.run_path(script, run_name="__main__")
+PY
   [ -f "$stats" ] || { echo "norm stats still missing at $stats" >&2; exit 1; }
 else
   echo "==> norm stats present, skipping (use --force-norm-stats to redo)"

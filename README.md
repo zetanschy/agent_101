@@ -155,23 +155,28 @@ that has it (an SSH machine, this workstation) runs everything in the images; a
 Vast.ai-style container cannot nest Docker and runs natively instead. Force it with
 `ROBOT_MODE=native|docker` if detection is wrong.
 
-**Everything lives on the `sim2real` branch**, which is not the repo's default. A plain
-`git clone` gets `main`, which has no `scripts/openpi/` at all. And do **not** clone
-`--recursive`: `thirdparty/mjlab` is pinned to a commit that is not on its public
-remote, so a recursive clone aborts — and the training box needs neither mjlab nor the
-Isaac assets. `setup_cloud.sh` pulls the two submodules that matter by itself.
+Clone `main`, and do **not** clone `--recursive`: `thirdparty/mjlab` is pinned to a
+commit that is not on its public remote, so a recursive clone aborts — and the training
+box needs neither mjlab nor the Isaac assets. `setup_cloud.sh` pulls the two submodules
+that matter by itself, into a Python 3.12 venv when the box has another version (the le101
+fork needs 3.12, openpi <3.13).
+
+**On Vast.ai, ask Claude**: the `vast-train` skill (`.claude/skills/vast-train/`) searches
+offers ranked by the cost of the whole run, confirms the machine with you, launches, and the
+box pushes the checkpoint, verifies it on the Hub and destroys itself.
 
 **What to rent, if you are renting.** openpi documents **22.5 GB** for a pi05 LoRA
-fine-tune, so a 24 GB card is the one size that looks like it should work and doesn't
-(0.9 of 24 GB is 21.6 GB, under the figure). Take **≥32 GB**; a 48 GB A6000 or L40S is
-the value pick, an A100 40/80 GB is fine. **≥100 GB disk**: 6.3 GB of parent params,
+fine-tune, so a single 24 GB card is the one size that looks like it should work and
+doesn't (0.9 of 24 GB is 21.6 GB, under the figure); two of them do (data parallel halves
+each card's batch). Take **≥32 GB**, and compare runs by step time × price, not $/h: at
+batch 16 a 5090 measured 1.69 s/step, a 6000 Ada 2.55, 2× 4090 2.61. **≥100 GB disk**: 6.3 GB of parent params,
 0.43 GB of dataset, 2-3 GB of CUDA wheels, and openpi's checkpoints are ~9 GB each with
 ~18 GB peak while one is written. Driver must be CUDA 12.
 
 Common to both paths — the parent checkpoint and the dataset:
 
 ```bash
-git clone -b sim2real https://github.com/zetanschy/agent_101 && cd agent_101
+git clone https://github.com/zetanschy/agent_101 && cd agent_101
 huggingface-cli login       # ~/.cache/huggingface is mounted, so this reaches the image
 
 # The parent. train_state/ is another 3.2 GB and --init-from does not read it.
