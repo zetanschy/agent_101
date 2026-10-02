@@ -38,9 +38,21 @@ Defaults:
 Price every offer with 100 GB of disk (`--storage 100`). Rank offers by **the cost of
 the whole run, not by $/h**:
 
-`cost = steps × s/step ÷ 3600 × dph_total + 0.5 h × dph_total`
+`cost = (steps × s/step ÷ 3600 + 0.5) × dph_total + steps ÷ 5000 × 9 GB × inet_up_cost`
 
-The 0.5 h covers setup, normalization stats, the compile and the ~9 GB push.
+The 0.5 h covers setup, normalization stats and the compile. The last term is the
+checkpoint pushes: ~9 GB every 5k steps.
+
+The hourly price says little; the step time decides. On 2026-10-02 the two boxes cost
+almost the same per hour, but not per run:
+
+| | price | step time | 30k steps | run cost |
+|---|---|---|---|---|
+| RTX 6000 Ada | 0.607 USD/h | 2.55 s | ~21.3 h | ~13 USD |
+| RTX 5090 | 0.588 USD/h | 1.43 s | ~11.9 h | ~7.40 USD |
+
+Prices move during the day. The cheapest 5090 was 0.499 USD/h one night and 0.517 the next
+morning. So search again for every run, and never reuse an earlier search's offers.
 
 ```bash
 BASE='disk_space>=100 cpu_cores_effective>=12 cpu_ram>=32 inet_down>=500 reliability>0.99 verified=true rentable=true'
@@ -191,9 +203,13 @@ not a guarantee.
 
 ## Learned the hard way (2026-10-02)
 
-- **A filter of `gpu_ram>=45` hid every 32 GB card.** The 5090 is the cheapest run.
+- **A filter of `gpu_ram>=45` hid every 32 GB card,** and the first run went to an RTX 6000
+  Ada at ~13 USD for 30k steps. On a 5090, it was ~7.40. Never filter on VRAM above what
+  the job needs (32 GB for one card).
 - **`compute_norm_stats.py` takes only `--config-name`.** `train.sh` now swaps the dataset in
   for it, so `--data.repo-id` works.
 - **`$?` after a `$(date)` in the same `echo` is the date's exit code.** Save `rc=$?` first.
-- **The host bills downloads and uploads.** It was 0.17 USD for setup alone, and every checkpoint push is ~9 GB at the
-  host's `inet_up_cost`.
+- **The host bills downloads and uploads.** It was 0.17 USD for setup alone, and every
+  checkpoint push is ~9 GB at the host's `inet_up_cost`. That price varies 10x between
+  hosts (0.004 vs 0.039 USD/GB on two 5090s), which is why the France box beat the
+  slightly cheaper-per-hour Vietnam one.
