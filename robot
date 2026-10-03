@@ -111,6 +111,35 @@ sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
   SIM_ENV=(-e ROBOT_TYPE=real2sim -e "ROBOT_PORT=/workspace/$live/sim.sock"
            -e PYTHONPATH=/workspace/sim:/workspace/sim/real2sim/lerobot_plugin)
 }
+# The Eval page's stage renderer (real-eval): a MuJoCo sim of its own that only draws
+# where to place the cap and mug for each seeded stage. Lockstep, so it is idle unless
+# asked, and on a socket of its own, so it never collides with a --sim session.
+STAGE_PID=""; STAGE_SOCK="sim/outputs/real2sim/live/stage.sock"
+stage_up() {
+  local t=0
+  if bash sim/real2sim/live/run.sh ping --socket "$PWD/$STAGE_SOCK" >/dev/null 2>&1; then
+    echo "the stage renderer is already serving $STAGE_SOCK -- using it"; return 0
+  fi
+  echo "starting the stage renderer (MuJoCo, lockstep; log sim/outputs/real2sim/live/stage.log) ..."
+  mkdir -p sim/outputs/real2sim/live
+  setsid bash sim/real2sim/live/run.sh serve --engine mujoco --clock lockstep --socket "$PWD/$STAGE_SOCK" \
+    > sim/outputs/real2sim/live/stage.log 2>&1 &
+  STAGE_PID=$!
+  trap 'stage_down; sim_down' EXIT INT TERM
+  until bash sim/real2sim/live/run.sh ping --socket "$PWD/$STAGE_SOCK" >/dev/null 2>&1; do
+    if ! kill -0 "$STAGE_PID" 2>/dev/null || [ "$t" -ge 90 ]; then
+      echo "the stage renderer did not come up:" >&2; tail -20 sim/outputs/real2sim/live/stage.log >&2; exit 1
+    fi
+    sleep 1; t=$((t + 1))
+  done
+}
+stage_down() {
+  [ -z "$STAGE_PID" ] && return 0
+  kill -TERM -- "-$STAGE_PID" 2>/dev/null || kill -TERM "$STAGE_PID" 2>/dev/null || true
+  for _ in $(seq 1 15); do pgrep -g "$STAGE_PID" >/dev/null 2>&1 || break; sleep 1; done
+  pgrep -g "$STAGE_PID" >/dev/null 2>&1 && kill -KILL -- "-$STAGE_PID" 2>/dev/null || true
+  STAGE_PID=""
+}
 sim_down() {
   [ -z "$SIM_PID" ] && return 0
   kill -TERM -- "-$SIM_PID" 2>/dev/null || kill -TERM "$SIM_PID" 2>/dev/null || true
@@ -309,6 +338,11 @@ case "$cmd" in
                  $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" openpi \
                    python scripts/openpi/sim_eval.py "${REST[@]}" ;;
              esac ;;
+  real-eval)            # the Eval page on the REAL arm: seeded stages drawn by MuJoCo, operator grades
+             needs_docker real-eval; stage_up
+             port="${OPENPI_WEBUI_PORT:-8001}"; echo "eval page -> http://localhost:${port}/eval"
+             $DC -f docker-compose.openpi.yml run --rm -e "STAGE_SOCK=/workspace/$STAGE_SOCK" \
+               -e PYTHONPATH=/workspace/sim -p "${port}:8000" openpi python webui/app.py ;;
   openpi-build) if [ "$MODE" = native ]; then bash ./scripts/openpi/setup_cloud.sh
                 else $DC -f docker-compose.openpi.yml build "$@"; fi ;;
   rtc-parity)           # check openpi's RTC port against lerobot's, in both images
@@ -532,6 +566,11 @@ so rather than failing with "docker: command not found".
                                 score an openpi checkpoint on the MuJoCo sim: seeded trials
                                 graded by the sim, report + failure map + videos in
                                 outputs/sim_eval/ (--report DIR, --compare DIR_A DIR_B)
+  ./robot real-eval             the web UI's Eval page on the real arm (http://localhost:PORT/eval):
+                                MuJoCo draws each seeded stage, outlines on the live camera
+                                show where the cap and mug go, you grade each trial; the
+                                same stages and report as sim-eval (--sim mujoco on
+                                openpi-webui runs the page against the sim instead)
   ./robot openpi-train --exp-name=RUN [--overwrite|--resume]
                                 LoRA fine-tune, OPENPI stack (jax). An ALTERNATIVE to
                                 `train`, not a follow-up: pick one. Dataset comes from

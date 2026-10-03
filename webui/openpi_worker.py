@@ -4,8 +4,12 @@
 Same contract as webui/infer_worker.py, so app.py drives either stack identically:
 
     stdin commands   run | stop | home | actions <n> | quit
+                     eval <timeout_s> <video.mp4>   one timed trial of the Eval page
     stdout markers   LOADING, MODEL_LOADED, RUN_START, RUN_STOP, HOME_DONE,
-                     ACTION_STEPS_SET, UNLOADED
+                     ACTION_STEPS_SET, UNLOADED, EVAL_DONE {json}
+
+While loaded it also keeps outputs/eval_preview.jpg fresh (the front camera, ~10 Hz) for
+the Eval page's live view, and records front | grip video during an eval trial.
 
 Why a separate worker rather than a branch inside infer_worker.py: openpi needs
 JAX-on-GPU with CPU torch, lerobot pi05 needs CUDA torch, and those cannot share one
@@ -23,6 +27,7 @@ tested without a GPU in scripts/openpi/chunk_loop_test.py.
 """
 
 import argparse
+import json
 import importlib.util
 import os
 import pathlib
@@ -30,6 +35,8 @@ import statistics
 import sys
 import threading
 import time
+
+import numpy as np
 
 # Fraction of TOTAL VRAM, not free — see .env (XLA_MEM_FRACTION), which compose
 # passes in. This default only applies to a bare `python webui/openpi_worker.py`.
@@ -60,6 +67,72 @@ def _load_chunk_loop():
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+PREVIEW = ROOT / "outputs" / "eval_preview.jpg"
+
+
+class Preview(threading.Thread):
+    """The front camera for the Eval page, and each eval trial's video, at ~10 Hz.
+
+    Never through robot.get_observation(): on the arm that reads the feetech bus, which
+    the control loop owns. The real cameras run their own capture threads, so peeking
+    at their latest frame (read_latest) is safe from here. The sim gets a socket of its
+    own instead (the live server takes several clients), warped like the plugin does.
+    """
+
+    def __init__(self, robot, sim: bool, hz: float = 10.0):
+        super().__init__(daemon=True)
+        import cv2
+
+        self.cv2, self.robot, self.sim, self.period = cv2, robot, sim, 1.0 / hz
+        self.lock = threading.Lock()
+        self.writer, self.last = None, None
+        self._sock = self._warp = None
+        if sim:
+            from real2sim.live import protocol, watch
+
+            self._protocol = protocol
+            self._sock = protocol.connect(os.environ["ROBOT_PORT"], 30.0)
+            self._warp = watch._warper(protocol.call(self._sock, "hello", warp=True))
+
+    def frames(self) -> dict:
+        if self.sim:
+            r = self._protocol.call(self._sock, "observe", images=["front", "grip"], pinhole=self._warp is not None)
+            return {k: self._warp(k, v) if (r.get("pinhole") and self._warp) else v for k, v in r["images"].items()}
+        return {k: cam.read_latest(max_age_ms=1000) for k, cam in self.robot.cameras.items() if k in ("front", "grip")}
+
+    def record(self, path: str | None) -> None:
+        """Start writing front | grip frames to `path`; None stops and keeps the last frame."""
+        cv2 = self.cv2
+        with self.lock:
+            if self.writer is not None:
+                self.writer.release()
+                if self.last is not None:  # the final overhead frame, for grading
+                    cv2.imwrite(self._path[:-4] + "_end.jpg", cv2.cvtColor(self.last["front"], cv2.COLOR_RGB2BGR))
+                self.writer = None
+            if path:
+                pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
+                self._path = path
+                self.writer = cv2.VideoWriter(path, cv2.VideoWriter_fourcc(*"mp4v"), 1.0 / self.period, (640, 240))
+
+    def run(self) -> None:
+        cv2 = self.cv2
+        tmp = PREVIEW.with_suffix(".tmp.jpg")
+        while True:
+            t0 = time.monotonic()
+            try:
+                f = self.frames()
+                self.last = f
+                cv2.imwrite(str(tmp), cv2.cvtColor(f["front"], cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 85])
+                os.replace(tmp, PREVIEW)
+                with self.lock:
+                    if self.writer is not None and "grip" in f:
+                        tile = np.concatenate([cv2.resize(f["front"], (320, 240)), cv2.resize(f["grip"], (320, 240))], 1)
+                        self.writer.write(cv2.cvtColor(tile, cv2.COLOR_RGB2BGR))
+            except Exception:  # noqa: BLE001 - a missed preview frame must not end the worker
+                pass
+            time.sleep(max(0.0, self.period - (time.monotonic() - t0)))
 
 
 # Same location and override as infer_worker.py, so both stacks home to one pose.
@@ -202,11 +275,18 @@ def main() -> int:
         chunker.reset()
     print(f"WARMUP_DONE {(time.perf_counter() - t) * 1000:.0f} ms (jit compile)", flush=True)
 
+    preview = None
+    try:
+        preview = Preview(robot, sim=ev.env("ROBOT_TYPE", "") == "real2sim")
+        preview.start()
+    except Exception as e:  # noqa: BLE001 - inference works without the Eval page's view
+        print(f"no eval preview: {e}", flush=True)
+
     print("MODEL_LOADED", flush=True)
 
     # `actions` is mutable so the UI can retune the open-loop window live, the same
     # way lerobot's n_action_steps is live in the other worker.
-    state = {"actions": args.actions}
+    state = {"actions": args.actions, "trial": None}
     shutdown = threading.Event()
     shutdown.set()
     run_thread: threading.Thread | None = None
@@ -217,6 +297,12 @@ def main() -> int:
         from lerobot.utils.robot_utils import precise_sleep
 
         print("RUN_START", flush=True)
+        # an eval trial (the Eval page): a deadline, its own latency list, a video
+        trial = state["trial"]
+        if trial is not None:
+            trial.update(t0=time.perf_counter(), lat=[], reason="stopped")
+            if preview is not None:
+                preview.record(trial["video"])
         # The cursor, the retirement index and `d` all live in the schedule, which the
         # eval loop drives too — see scripts/openpi/chunk_loop.py. With rtc a new chunk
         # does not start at 0: the first `d` of its actions were already executed off
@@ -260,6 +346,8 @@ def main() -> int:
 
         def record(dt: float, n: int, window: int) -> None:
             latencies.append(dt)
+            if trial is not None:
+                trial["lat"].append(dt)
             rtc = f" d={chunker.last_delay} s={chunker.last_horizon}" if chunker is not None else ""
             print(f"inference {dt * 1000:.0f} ms (mean {statistics.mean(latencies) * 1000:.0f}) "
                   f"chunk={n} using={window} mode={args.mode}{rtc}", flush=True)
@@ -267,6 +355,9 @@ def main() -> int:
         try:
             while not shutdown.is_set():
                 tick = time.perf_counter()
+                if trial is not None and tick - trial["t0"] >= trial["timeout"]:
+                    trial["reason"] = "timeout"
+                    break
                 # The window stays live-tunable from the UI, but the schedule refuses
                 # the change while an inference is in flight: moving the retirement
                 # index after a submit would falsify the delay the sampler was given.
@@ -312,6 +403,17 @@ def main() -> int:
             if pending is not None:
                 pending.cancel()
             pool.shutdown(wait=False)
+            if trial is not None:
+                if preview is not None:
+                    preview.record(None)
+                lat = trial["lat"]
+                print("EVAL_DONE " + json.dumps({
+                    "duration": round(time.perf_counter() - trial["t0"], 2), "reason": trial["reason"],
+                    "inferences": len(lat),
+                    "latency_ms_mean": round(statistics.mean(lat) * 1000) if lat else None,
+                    "latency_ms_p95": round(float(np.percentile(lat, 95)) * 1000) if lat else None,
+                    "video": trial["video"]}), flush=True)
+                state["trial"] = None
             print("RUN_STOP", flush=True)
 
     try:
@@ -320,6 +422,15 @@ def main() -> int:
             if cmd == "run":
                 if run_thread and run_thread.is_alive():
                     continue
+                shutdown.clear()
+                run_thread = threading.Thread(target=loop, daemon=True)
+                run_thread.start()
+            elif cmd.startswith("eval "):
+                if run_thread and run_thread.is_alive():
+                    print("EVAL_ERROR: a run is already going", flush=True)
+                    continue
+                _, timeout_s, video = cmd.split(maxsplit=2)
+                state["trial"] = {"timeout": float(timeout_s), "video": video}
                 shutdown.clear()
                 run_thread = threading.Thread(target=loop, daemon=True)
                 run_thread.start()

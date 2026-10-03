@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -763,6 +764,337 @@ def sim_reset():
     except (OSError, KeyError) as e:
         return _err(f"no live sim at {os.environ.get('ROBOT_PORT')}: {e}", 503)
     return {"ok": True, "layout": layout.get("kind")}
+
+
+
+# --- Eval page: seeded stages, timed trials, operator grades (webui/eval.html) ----------
+import importlib.util as _ilu
+import json as _json
+
+from fastapi.responses import FileResponse, Response
+
+import eval_stage
+
+_ev: dict = {}                       # the open eval run
+_ev_lock = threading.Lock()
+PREVIEW = ROOT / "outputs" / "eval_preview.jpg"   # kept fresh by the openpi worker
+
+
+def _sim_eval():
+    """scripts/openpi/sim_eval.py: the report, the map and --compare read real runs too."""
+    if "sim_eval" not in sys.modules:
+        spec = _ilu.spec_from_file_location("sim_eval", ROOT / "scripts" / "openpi" / "sim_eval.py")
+        mod = _ilu.module_from_spec(spec)
+        sys.modules["sim_eval"] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules["sim_eval"]
+
+
+def _jsonl(path: Path) -> list[dict]:
+    return [_json.loads(l) for l in path.read_text().splitlines() if l.strip()] if path.exists() else []
+
+
+def _ev_next() -> int | None:
+    d, n = _ev["dir"], _ev["run"]["episodes"]
+    taken = {t["trial"] for t in _jsonl(d / "trials.jsonl")} | {t["trial"] for t in _jsonl(d / "skipped.jsonl")}
+    return next((i for i in range(n) if i not in taken), None)
+
+
+def _ev_prepare(i: int | None, force: bool = False) -> None:
+    """Trial i's stage: layout + overhead render, cached per seed. In sim mode preparing
+    IS placing (the robot's own sim resets to the stage), so it always runs there."""
+    import cv2
+
+    _ev.update(i=i, phase="done" if i is None else "place", result=None, t_success=None, auto=None, layout=None,
+               after=None, sim_grade=None)
+    if i is None:
+        return
+    seed = _ev["run"]["seed"] + i
+    js, jpg = _ev["dir"] / "stages" / f"seed_{seed}.json", _ev["dir"] / "stages" / f"seed_{seed}.jpg"
+    if force or SIM or not js.exists():
+        layout, img = eval_stage.prepare(seed)
+        js.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(jpg), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        js.write_text(_json.dumps(layout))
+    _ev["layout"] = _json.loads(js.read_text())
+
+
+def _ev_poll() -> None:
+    """running -> homing -> grade. When the worker reports the trial over (timeout or
+    stop), the arm goes home, and only then is the overhead frame taken for the camera
+    check: right after a release the gripper still hangs over the mug and hides the cap."""
+    import shutil
+
+    if _ev.get("phase") == "running":
+        log = _log_text()[_ev["since"]:]
+        k = log.rfind("EVAL_DONE ")
+        if k < 0 and _alive(_worker):
+            return
+        res = _json.loads(log[k + 10:].splitlines()[0]) if k >= 0 else {"reason": "worker stopped", "duration": None}
+        sim_grade = eval_stage.sim_caps_in_mug() if SIM else None  # the trial's end, before the arm moves
+        _ev.update(result=res, sim_grade=sim_grade, since=len(_log_text()), t_home=time.time())
+        if _alive(_worker):
+            _send("home")
+            _ev["phase"] = "homing"
+            return
+        _ev["phase"] = "grade"
+    if _ev.get("phase") == "homing":
+        done = "HOME_DONE" in _log_text()[_ev["since"]:] or "HOME_ERROR" in _log_text()[_ev["since"]:]
+        if not done and time.time() - _ev["t_home"] < 60:
+            return
+        if time.time() - _ev["t_home"] < 1.0:
+            return
+        time.sleep(0.4)  # a preview frame from after the arm settled
+        after = _ev["dir"] / "videos" / f"trial_{_ev['i']:03d}_after.jpg"
+        after.parent.mkdir(parents=True, exist_ok=True)
+        if PREVIEW.exists():
+            shutil.copyfile(PREVIEW, after)
+        cam = eval_stage.auto_check(after) if after.exists() else {"verdict": "unknown", "detail": "no frame"}
+        sg = _ev.get("sim_grade")
+        _ev.update(phase="grade", after=after.name if after.exists() else None,
+                   auto=({"verdict": "in" if sg else "out", "detail": f"the sim's own check; camera after homing: "
+                          f"{cam['verdict']} ({cam['detail']})"} if sg is not None else cam))
+
+
+def _ev_public() -> dict:
+    if not _ev:
+        return {"open": False}
+    se = _sim_eval()
+    trials = _jsonl(_ev["dir"] / "trials.jsonl")
+    k = sum(t["success"] for t in trials)
+    lo, hi = se.wilson(k, len(trials))
+    i = _ev.get("i")
+    out = {"open": True, "name": _ev["dir"].name, "run": _ev["run"], "i": i, "phase": _ev["phase"],
+           "seed": None if i is None else _ev["run"]["seed"] + i, "n_done": len(trials), "n_ok": k,
+           "ci": [round(100 * lo), round(100 * hi)], "result": _ev.get("result"), "auto": _ev.get("auto"),
+           "t_success": _ev.get("t_success"), "recent": trials[-10:][::-1], "after": _ev.get("after"),
+           "n_skipped": len(_jsonl(_ev["dir"] / "skipped.jsonl")),
+           "elapsed": round(time.time() - _ev["t_run"], 1) if _ev["phase"] == "running" else None,
+           "report": (_ev["dir"] / "report.md").exists(), "causes": eval_stage.CAUSES}
+    if _ev.get("layout"):
+        out["where"] = eval_stage.describe(_ev["layout"])
+    return out
+
+
+def _ev_chown() -> None:
+    """The container runs as root: hand the run back to whoever owns the repo."""
+    st = ROOT.stat()
+    for f in [eval_stage.RUNS, *eval_stage.RUNS.rglob("*")]:
+        try:
+            os.chown(f, st.st_uid, st.st_gid)
+        except OSError:
+            pass
+
+
+@app.get("/eval", response_class=HTMLResponse)
+def eval_page():
+    return (WEBUI / "eval.html").read_text()
+
+
+@app.get("/api/eval/state")
+def eval_state():
+    with _ev_lock:
+        _ev_poll()
+        log = _log_text()
+        return {**_ev_public(), "loaded": _loaded, "worker": _alive(_worker), "running": _alive(_worker) and _is_running(log),
+                "homing": _alive(_home) or log.rfind("HOME_START") > log.rfind("HOME_DONE"), "sim": SIM,
+                "stage_sim": eval_stage.sim_socket() is not None,
+                "preview": PREVIEW.exists() and time.time() - PREVIEW.stat().st_mtime < 3}
+
+
+@app.post("/api/eval/open")
+def eval_open(body: dict = Body(...)):
+    if not (_alive(_worker) and _loaded and _loaded.get("stack") == "openpi"):
+        return _err("load an openpi model on the main page first (the Eval page drives the loaded one)", 409)
+    if eval_stage.sim_socket() is None:
+        return _err("no sim to draw the stages: start the page with `./robot real-eval`", 400)
+    policy = Path(_loaded["policy"].rstrip("/")).name
+    seed, n, timeout = int(body.get("seed") or 1000), int(body.get("episodes") or 100), float(body.get("timeout") or 45)
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", (body.get("name") or "").strip()) or \
+        f"{policy}_{'sim' if SIM else 'real'}_seed{seed}_n{n}"
+    d = eval_stage.RUNS / name
+    with _ev_lock:
+        d.mkdir(parents=True, exist_ok=True)
+        if (d / "run.json").exists():  # resume: the run's own settings win, so its stages stay its stages
+            run = _json.loads((d / "run.json").read_text())
+            if Path(run["policy"].rstrip("/")).name != policy:
+                return _err(f"run {name} was made with {Path(run['policy']).name}, not {policy}", 409)
+        else:
+            run = {"policy": _loaded["policy"], "task": _loaded.get("task"), "episodes": n, "seed": seed,
+                   "timeout": timeout, "settle": "operator", "actions": _loaded.get("actions") or 15,
+                   "where": "sim (web UI)" if SIM else "real", "created": datetime.now().isoformat(timespec="seconds")}
+            (d / "run.json").write_text(_json.dumps(run, indent=2))
+        _ev.clear()
+        _ev.update(dir=d, run=run)
+        try:
+            _ev_prepare(_ev_next())
+        except Exception as e:  # noqa: BLE001
+            return _err(f"could not draw the stage: {e}", 503)
+    return {"ok": True, **_ev_public()}
+
+
+@app.get("/api/eval/stage.jpg")
+def eval_stage_jpg():
+    import cv2
+
+    if not _ev.get("layout"):
+        return Response(status_code=404)
+    img = cv2.imread(str(_ev["dir"] / "stages" / f"seed_{_ev['run']['seed'] + _ev['i']}.jpg"))
+    eval_stage.draw_targets(img, _ev["layout"])
+    return Response(cv2.imencode(".jpg", img)[1].tobytes(), media_type="image/jpeg")
+
+
+@app.get("/api/eval/live.mjpg")
+def eval_live(hz: float = 8.0):
+    """The overhead camera (the worker's preview) with the stage's outlines on top."""
+    import cv2
+    import numpy as np
+
+    def frames():
+        blank = np.full((480, 640, 3), 24, np.uint8)
+        while True:
+            t0 = time.monotonic()
+            img = cv2.imread(str(PREVIEW)) if PREVIEW.exists() and time.time() - PREVIEW.stat().st_mtime < 3 else None
+            if img is None:
+                img = blank.copy()
+                cv2.putText(img, "no camera: load a model on the main page", (110, 240), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6, (200, 200, 200), 1, cv2.LINE_AA)
+            elif _ev.get("layout") and _ev.get("phase") in ("place", "running", "grade"):
+                eval_stage.draw_targets(img, _ev["layout"], label=_ev["phase"] == "place")
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + cv2.imencode(".jpg", img)[1].tobytes() + b"\r\n"
+            time.sleep(max(0.0, 1.0 / hz - (time.monotonic() - t0)))
+
+    return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.post("/api/eval/run")
+def eval_run():
+    import shutil
+
+    with _ev_lock:
+        if _ev.get("phase") != "place":
+            return _err("no stage waiting to run", 409)
+        if not _alive(_worker):
+            return _err("no model loaded", 409)
+        log = _log_text()
+        if _is_running(log) or _alive(_home) or log.rfind("HOME_START") > log.rfind("HOME_DONE"):
+            return _err("busy: the arm is running or homing", 409)
+        if PREVIEW.exists() and not (_ev["dir"] / "stage.jpg").exists():
+            shutil.copyfile(PREVIEW, _ev["dir"] / "stage.jpg")  # the map's backdrop: this camera, this mat
+        video = _ev["dir"] / "videos" / f"trial_{_ev['i']:03d}.mp4"
+        _ev.update(since=len(log), t_run=time.time(), phase="running", t_success=None)
+        _send(f"eval {_ev['run']['timeout']} {video}")
+    return {"ok": True}
+
+
+@app.post("/api/eval/success")
+def eval_success():
+    """The cap is in: stop the policy now, and remember when."""
+    with _ev_lock:
+        if _ev.get("phase") != "running":
+            return _err("no trial running", 409)
+        _ev["t_success"] = round(time.time() - _ev["t_run"], 2)
+        _send("stop")
+    return {"ok": True}
+
+
+@app.post("/api/eval/stop")
+def eval_stop():
+    with _ev_lock:
+        if _ev.get("phase") != "running":
+            return _err("no trial running", 409)
+        _send("stop")
+    return {"ok": True}
+
+
+@app.post("/api/eval/grade")
+def eval_grade(body: dict = Body(...)):
+    success = bool(body.get("success"))
+    cause = "success" if success else (body.get("cause") or "")
+    if not success and cause not in eval_stage.CAUSES:
+        return _err("pick what went wrong", 400)
+    with _ev_lock:
+        if _ev.get("phase") != "grade":
+            return _err("nothing to grade", 409)
+        res, i = _ev["result"] or {}, _ev["i"]
+        dur = res.get("duration")
+        rec = {"trial": i, "seed": _ev["run"]["seed"] + i, "success": success, "cause": cause,
+               "t_success": (_ev.get("t_success") or dur) if success else None, "duration": dur,
+               **eval_stage.record_fields(_ev["layout"]),
+               "inferences": res.get("inferences"), "latency_ms_mean": res.get("latency_ms_mean"),
+               "latency_ms_p95": res.get("latency_ms_p95"), "end": res.get("reason"),
+               "video": f"videos/trial_{i:03d}.mp4" if res.get("video") else None,
+               "auto": (_ev.get("auto") or {}).get("verdict"), "note": (body.get("note") or "").strip(),
+               "graded_at": datetime.now().isoformat(timespec="seconds")}
+        with open(_ev["dir"] / "trials.jsonl", "a") as fh:
+            fh.write(_json.dumps(rec) + "\n")
+        _ev_chown()
+        try:
+            _ev_prepare(_ev_next())
+        except Exception as e:  # noqa: BLE001
+            return _err(f"saved; the next stage failed to draw: {e}", 503)
+    return {"ok": True}
+
+
+@app.post("/api/eval/redo")
+def eval_redo():
+    """Throw this trial away (a misplaced object, a bump) and run the same stage again."""
+    with _ev_lock:
+        if _ev.get("phase") != "grade":
+            return _err("nothing to redo", 409)
+        for f in (_ev["dir"] / "videos").glob(f"trial_{_ev['i']:03d}*"):
+            f.unlink()
+        _ev_prepare(_ev["i"], force=SIM)
+    return {"ok": True}
+
+
+@app.post("/api/eval/skip")
+def eval_skip(body: dict = Body(default={})):
+    """This stage cannot be set up as drawn (it happens): leave it out of the run."""
+    with _ev_lock:
+        if _ev.get("phase") not in ("place", "grade"):
+            return _err("nothing to skip", 409)
+        with open(_ev["dir"] / "skipped.jsonl", "a") as fh:
+            fh.write(_json.dumps({"trial": _ev["i"], "seed": _ev["run"]["seed"] + _ev["i"],
+                                  "why": (body.get("why") or "").strip()}) + "\n")
+        _ev_prepare(_ev_next())
+    return {"ok": True}
+
+
+@app.post("/api/eval/place")
+def eval_place():
+    """Sim mode: put the objects back on the stage (the sim's reset is the placement)."""
+    if not SIM:
+        return _err("on the real arm you place the objects yourself", 400)
+    with _ev_lock:
+        if _ev.get("phase") != "place":
+            return _err("no stage waiting", 409)
+        _ev_prepare(_ev["i"], force=True)
+    return {"ok": True}
+
+
+@app.post("/api/eval/report")
+def eval_report():
+    if not _ev:
+        return _err("no eval run open", 409)
+    if not _jsonl(_ev["dir"] / "trials.jsonl"):
+        return _err("no graded trials yet", 409)
+    _sim_eval().report(_ev["dir"])
+    return {"ok": True, "url": f"/eval/files/{_ev['dir'].name}/report.md"}
+
+
+@app.get("/eval/files/{run}/{path:path}")
+def eval_files(run: str, path: str):
+    f = (eval_stage.RUNS / run / path).resolve()
+    if eval_stage.RUNS.resolve() not in f.parents or not f.is_file():
+        return Response(status_code=404)
+    if f.suffix == ".md":  # the report, readable in the browser with its images
+        body = f.read_text()
+        imgs = "".join(f'<p><img src="{m}" style="max-width:100%"></p>' for m in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", body))
+        return HTMLResponse(f"<!doctype html><meta charset=utf-8><title>{run}</title><body style='background:#0e1016;"
+                            f"color:#e8ebf1;font:13px system-ui;max-width:900px;margin:auto;padding:16px'>"
+                            f"<pre style='white-space:pre-wrap'>{body}</pre>{imgs}</body>")
+    return FileResponse(f)
 
 
 if __name__ == "__main__":

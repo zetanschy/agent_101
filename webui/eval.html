@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SO-ARM101 · eval</title>
+<style>
+  :root { color-scheme: dark; --bg:#0e1016; --panel:#171a22; --tile:#0b0d12; --line:#2b3140; --fg:#e8ebf1; --mut:#8b93a3; --acc:#4c8bf5; --ok:#2ecc71; --bad:#e5533c; --cap:#2a78d6; --mug:#eb6834; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:13px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap { max-width: 1240px; margin:0 auto; padding:14px 16px; }
+  h1 { font-size:16px; margin:0 0 12px; display:flex; align-items:center; gap:10px; }
+  h1 a { margin-left:auto; font-size:12px; color:var(--mut); font-weight:400; }
+  a { color:var(--acc); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:12px; }
+  .panel h2 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); margin:0 0 9px; font-weight:700; }
+  label { display:block; font-size:11px; color:var(--mut); margin:0 0 4px; }
+  input, button { font:inherit; }
+  input { width:100%; padding:7px 9px; background:var(--tile); color:var(--fg); border:1px solid var(--line); border-radius:7px; }
+  input:focus { outline:none; border-color:var(--acc); }
+  button { cursor:pointer; border:1px solid var(--line); background:#232936; color:var(--fg); padding:9px 12px; border-radius:8px; font-weight:600; }
+  button:hover:not(:disabled) { border-color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.good { background:var(--ok); border-color:var(--ok); color:#0b1a10; }
+  button.danger { background:var(--bad); border-color:var(--bad); color:#fff; }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  .setup { display:grid; grid-template-columns:2fr 1fr 1fr 1fr auto; gap:8px 10px; align-items:end; }
+  @media (max-width:800px){ .setup { grid-template-columns:1fr 1fr; } }
+  .model { font-size:12px; color:var(--mut); margin-top:8px; }
+  .model b { color:var(--fg); font-weight:600; }
+  .warn { color:#f0b94a; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+  .t { background:var(--tile); border:1px solid var(--line); border-radius:8px; padding:8px 4px; text-align:center; }
+  .t .v { font-size:20px; font-weight:800; color:var(--fg); font-variant-numeric:tabular-nums; line-height:1.15; }
+  .t .l { font-size:10px; color:var(--mut); text-transform:uppercase; letter-spacing:.03em; }
+  .views { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:900px){ .views { grid-template-columns:1fr; } }
+  .view h3 { font-size:12px; margin:0 0 6px; font-weight:600; }
+  .view h3 span { color:var(--mut); font-weight:400; }
+  .view img { width:100%; aspect-ratio:4/3; object-fit:contain; background:var(--tile); border:1px solid var(--line); border-radius:8px; display:block; }
+  .where { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin-top:10px; font-size:13px; }
+  .where .k { font-weight:700; }
+  .where .k.cap { color:var(--cap); } .where .k.mug { color:var(--mug); }
+  .ctl { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+  .timer { margin-left:auto; font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .timer small { font-size:12px; color:var(--mut); font-weight:400; }
+  .grade { display:none; }
+  .grade.on { display:block; }
+  .auto { font-size:13px; margin-bottom:10px; }
+  .causes { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:8px; }
+  @media (max-width:800px){ .causes { grid-template-columns:1fr 1fr; } }
+  .msg { font-size:12px; color:var(--mut); min-height:16px; margin-top:8px; }
+  table { width:100%; border-collapse:collapse; font-size:12px; }
+  th, td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:600; font-size:11px; }
+  td.num { font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; }
+  .pill.ok { background:#173d26; color:var(--ok); } .pill.bad { background:#3d1c17; color:#ff8a76; }
+  .hint { font-size:11px; color:var(--mut); margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SO-ARM101 · eval <span id="mode" class="pill"></span> <a href="/">← inference panel (load a model there)</a></h1>
+
+  <div class="panel">
+    <h2>Run</h2>
+    <div class="setup">
+      <div><label>Run name (blank = model_mode_seed_n)</label><input id="name" placeholder="auto" /></div>
+      <div><label>First seed</label><input id="seed" type="number" value="1000" /></div>
+      <div><label>Trials</label><input id="episodes" type="number" value="100" /></div>
+      <div><label>Timeout (s)</label><input id="timeout" type="number" value="45" /></div>
+      <button id="btnOpen" class="primary">Open / resume</button>
+    </div>
+    <div class="model" id="model"></div>
+    <div class="hint">Seed 1000 with 100 trials gives the same stages as <code>./robot sim-eval</code>, so a run here pairs with the sim runs trial by trial.</div>
+  </div>
+
+  <div class="panel" id="progress" style="display:none">
+    <div class="stats">
+      <div class="t"><div class="v" id="sTrial">—</div><div class="l">stage</div></div>
+      <div class="t"><div class="v" id="sOk">—</div><div class="l">successes</div></div>
+      <div class="t"><div class="v" id="sCi">—</div><div class="l">95% interval</div></div>
+      <div class="t"><div class="v" id="sSkip">0</div><div class="l">skipped</div></div>
+    </div>
+  </div>
+
+  <div class="panel" id="stagePanel" style="display:none">
+    <h2 id="stageTitle">Stage</h2>
+    <div class="views">
+      <div class="view"><h3>Target <span>· MuJoCo, same overhead camera</span></h3><img id="stageImg" alt="target stage" /></div>
+      <div class="view"><h3>Live overhead camera <span>· put each object inside its outline</span></h3><img id="liveImg" alt="live camera" /></div>
+    </div>
+    <div class="where" id="where"></div>
+    <div class="ctl">
+      <button id="btnHome">🏠 Home</button>
+      <button id="btnPlace" hidden>🎲 Place it for me</button>
+      <button id="btnRun" class="primary">▶ Run trial</button>
+      <button id="btnSuccess" class="good" disabled>✓ In the mug — stop</button>
+      <button id="btnStop" class="danger" disabled>■ Stop</button>
+      <div class="timer" id="timer">— <small>s</small></div>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="panel grade" id="gradePanel">
+    <h2>Grade this trial</h2>
+    <div class="views" style="grid-template-columns:minmax(0,320px) 1fr;align-items:start;margin-bottom:10px">
+      <div class="view"><h3>After homing <span>· the overhead camera</span></h3><img id="afterImg" alt="after the trial" /></div>
+      <div><div class="auto" id="auto"></div></div>
+    </div>
+    <button id="gSuccess" class="good" style="width:100%">✓ Success: the cap ended in the mug</button>
+    <div class="causes" id="causes"></div>
+    <div class="ctl">
+      <div style="flex:1"><input id="note" placeholder="note (optional): what happened" /></div>
+      <button id="btnRedo">↺ Redo this stage</button>
+      <button id="btnSkip">⤼ Skip stage</button>
+    </div>
+    <div class="hint">Grading saves the trial, homes the arm and draws the next stage. Redo throws the trial away (a bumped object, a misplacement); skip leaves the stage out of the run.</div>
+  </div>
+
+  <div class="panel" id="trialsPanel" style="display:none">
+    <h2>Trials <button id="btnReport" style="float:right;padding:5px 10px;font-size:11px">Build report</button></h2>
+    <table><thead><tr><th>stage</th><th>seed</th><th>outcome</th><th>time</th><th>camera check</th><th>latency</th><th>note</th><th>video</th></tr></thead>
+      <tbody id="rows"></tbody></table>
+    <div class="msg" id="reportMsg"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const api = async (p, opt) => { const r = await fetch(p, opt); try { return await r.json(); } catch (e) { return {ok:false, msg:r.statusText}; } };
+const post = (p, b) => api(p, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(b||{})});
+let S = {}, stageKey = null, busy = false;
+
+async function act(fn) { busy = true; try { const r = await fn(); if (r && r.ok === false) $('msg').textContent = r.msg || 'failed'; return r; } finally { busy = false; poll(); } }
+
+$('btnOpen').onclick = () => act(async () => {
+  $('msg').textContent = 'drawing the stage…';
+  const r = await post('/api/eval/open', {name:$('name').value, seed:$('seed').value, episodes:$('episodes').value, timeout:$('timeout').value});
+  if (r.ok) { $('msg').textContent = ''; $('name').value = r.name; }
+  else alert(r.msg);
+  return r;
+});
+$('btnHome').onclick    = () => act(() => post('/api/home'));
+$('btnPlace').onclick   = () => act(() => post('/api/eval/place'));
+$('btnRun').onclick     = () => act(() => post('/api/eval/run'));
+$('btnSuccess').onclick = () => act(() => post('/api/eval/success'));
+$('btnStop').onclick    = () => act(() => post('/api/eval/stop'));
+$('btnRedo').onclick    = () => act(() => post('/api/eval/redo'));
+$('btnSkip').onclick    = () => { const why = prompt('Why skip this stage? (optional)', ''); if (why !== null) act(() => post('/api/eval/skip', {why})); };
+$('gSuccess').onclick   = () => grade(true, 'success');
+$('btnReport').onclick  = () => act(async () => { const r = await post('/api/eval/report'); if (r.ok) { $('reportMsg').innerHTML = `report: <a href="${r.url}" target="_blank">${r.url}</a>`; window.open(r.url, '_blank'); } else $('reportMsg').textContent = r.msg; return r; });
+function grade(success, cause) { const note = $('note').value; act(async () => { const r = await post('/api/eval/grade', {success, cause, note}); if (r.ok) $('note').value = ''; return r; }); }
+
+function render(s) {
+  $('mode').textContent = s.sim ? 'sim' : 'real arm';
+  const L = s.loaded;
+  $('model').innerHTML = (L && L.stack === 'openpi')
+    ? `model <b>${L.policy.split('/').filter(Boolean).pop()}</b> · task “${L.task}”`
+    : `<span class="warn">No openpi model loaded: load one on the <a href="/">inference panel</a>, then open a run.</span>`;
+  if (!s.stage_sim) $('model').innerHTML += ` · <span class="warn">no stage sim: start with <code>./robot real-eval</code></span>`;
+  const open = s.open;
+  for (const id of ['progress', 'stagePanel', 'trialsPanel']) $(id).style.display = open ? '' : 'none';
+  if (!open) return;
+  const R = s.run;
+  $('sTrial').textContent = s.i === null ? 'done' : `${s.i + 1} / ${R.episodes}`;
+  $('sOk').textContent = s.n_done ? `${s.n_ok}/${s.n_done}` : '—';
+  $('sCi').textContent = s.n_done ? `${s.ci[0]}–${s.ci[1]}%` : '—';
+  $('sSkip').textContent = s.n_skipped;
+  $('stageTitle').textContent = s.i === null ? 'All stages done: build the report below'
+    : `Stage ${s.i + 1} of ${R.episodes} · seed ${s.seed} · ${s.phase === 'place' ? (s.sim ? 'placed by the sim, ready to run' : 'place the objects, then run') : s.phase === 'running' ? 'running' : s.phase === 'homing' ? 'trial over, homing the arm' : 'grade it'}`;
+  const key = `${s.name}:${s.seed}:${s.phase === 'place'}`;
+  if (s.i !== null && key !== stageKey) { stageKey = key; $('stageImg').src = '/api/eval/stage.jpg?k=' + encodeURIComponent(key) + '&t=' + Date.now(); }
+  const W = s.where || {};
+  $('where').innerHTML = s.i === null ? '' : `<span class="k cap">Cap</span><span>${W.cap || ''}</span><span class="k mug">Mug</span><span>${W.mug || ''}</span>`;
+  const running = s.phase === 'running', place = s.phase === 'place';
+  if (!busy) {
+    $('btnRun').disabled = !place || s.running || s.homing || !s.worker;
+    $('btnSuccess').disabled = !running;
+    $('btnStop').disabled = !running;
+    $('btnHome').disabled = running || s.homing || !s.worker;
+    $('btnPlace').hidden = !s.sim;
+    $('btnPlace').disabled = !place;
+  }
+  $('timer').innerHTML = running ? `${s.elapsed.toFixed(1)} <small>/ ${R.timeout} s</small>`
+    : (s.phase === 'grade' && s.result && s.result.duration != null) ? `${(s.t_success || s.result.duration).toFixed(1)} <small>s${s.t_success ? ' (stopped: in)' : ' (' + s.result.reason + ')'}</small>` : '— <small>s</small>';
+  if (s.homing) $('msg').textContent = 'homing…';
+  $('gradePanel').classList.toggle('on', s.phase === 'grade');
+  if (s.phase === 'grade') {
+    const a = s.auto || {};
+    const verdict = a.verdict === 'in' ? '<b style="color:var(--ok)">cap looks IN the mug</b>' : a.verdict === 'out' ? '<b style="color:#ff8a76">cap looks NOT in the mug</b>' : '<b>no verdict</b>';
+    const afterSrc = s.after ? `/eval/files/${s.name}/videos/${s.after}?t=${s.seed}` : '';
+    if (afterSrc && !$('afterImg').src.endsWith(afterSrc)) $('afterImg').src = afterSrc;
+    $('auto').innerHTML = `Camera check: ${verdict} <span style="color:var(--mut)">(${a.detail || ''}). A hint; your grade counts.</span>`;
+    $('gSuccess').className = s.t_success || a.verdict === 'in' ? 'good' : '';
+    if (!$('causes').childElementCount) for (const c of s.causes) { const b = document.createElement('button'); b.textContent = '✗ ' + c; b.onclick = () => grade(false, c); $('causes').appendChild(b); }
+  }
+  $('rows').innerHTML = s.recent.map(t => `<tr><td class="num">${t.trial + 1}</td><td class="num">${t.seed}</td>
+    <td><span class="pill ${t.success ? 'ok' : 'bad'}">${t.cause}</span></td>
+    <td class="num">${t.success ? (t.t_success ?? '').toString() + ' s' : (t.duration ?? '') + ' s'}</td><td>${t.auto || ''}</td>
+    <td class="num">${t.latency_ms_mean ?? ''} ms</td><td>${t.note || ''}</td>
+    <td>${t.video ? `<a href="/eval/files/${s.name}/${t.video}" download>mp4</a>` : ''}</td></tr>`).join('');
+}
+
+async function poll() {
+  try { S = await api('/api/eval/state'); render(S); } catch (e) {}
+}
+$('liveImg').src = '/api/eval/live.mjpg';
+$('liveImg').onerror = () => setTimeout(() => { $('liveImg').src = '/api/eval/live.mjpg?t=' + Date.now(); }, 2000);
+setInterval(() => { if (!busy) poll(); }, 500);
+poll();
+</script>
+</body>
+</html>

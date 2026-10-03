@@ -38,6 +38,18 @@ stop those services. That applies to the real arm as much as to the sim.
   (`R` or Reset = new layout). For example: `OPENPI_WEBUI_PORT=8011 ./robot openpi-webui --sim
   mujoco --sim-viewer`.
 
+**Scoring a checkpoint.** Both runs use the same seeded stages (seed 1000 + i for trial i),
+so their results pair trial by trial:
+- `./robot sim-eval --policy /checkpoints/X --episodes 100` runs it unattended in MuJoCo, and
+  the sim grades every trial.
+- `./robot real-eval` serves the web UI's Eval page (`http://localhost:PORT/eval`) on the real
+  arm. For each stage, MuJoCo renders the overhead camera with the cap and mug in place, and
+  the same positions are outlined on the live camera, so you slide the real objects into
+  them. Run the trial, then grade it. The arm homes first, and the page shows the frame
+  after homing plus a colour check of the mug's opening as a hint.
+- `./robot sim-eval --compare outputs/real_eval/<run> outputs/sim_eval/<run>` compares the arm
+  with the sim on the same stages. Reports, maps and videos land in each run's directory.
+
 **A new layout** (cap and mug moved to fresh random spots, arm back at rest) comes from any
 of these:
 - **By itself before every recorded episode after the first:** once the previous episode

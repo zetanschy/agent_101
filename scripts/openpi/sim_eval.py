@@ -404,7 +404,8 @@ def summary_lines(trials, title: str) -> list[str]:
 def report(d: pathlib.Path) -> None:
     trials = load_trials(d)
     run = json.loads((d / "run.json").read_text()) if (d / "run.json").exists() else {}
-    title = f"Sim eval: {pathlib.Path(run.get('policy', d.name)).name}"
+    real = run.get("where") == "real"
+    title = f"{'Real-arm' if real else 'Sim'} eval: {pathlib.Path(run.get('policy', d.name)).name}"
     k = sum(t["success"] for t in trials)
     draw_map(trials, d / "map.jpg", f"{title}  ({k}/{len(trials)}): every trial")
     draw_map([t for t in trials if not t["success"]], d / "map_failures.jpg",
@@ -416,9 +417,13 @@ def report(d: pathlib.Path) -> None:
           "## Failure videos", ""]
     L += [f"- trial {t['trial']}: {t['cause']} — [{t['video']}]({t['video']})" for t in trials
           if not t["success"] and t.get("video")]
-    L += ["", f"Setup: {run.get('episodes')} trials, seeds {run.get('seed')}–{run.get('seed', 0) + run.get('episodes', 0) - 1}, "
-          f"timeout {run.get('timeout')} s, success held {run.get('settle')} s, task \"{run.get('task')}\", "
-          f"RTC with {run.get('actions')} of 50 actions, degrees, MuJoCo realtime."]
+    graded = (f"graded by the operator ({sum(t.get('auto') == ('in' if t['success'] else 'out') for t in trials)}"
+              f"/{len(trials)} agree with the camera check)" if run.get("settle") == "operator"
+              else f"success held {run.get('settle')} s")
+    L += ["", f"Setup: {len(trials)} trials of {run.get('episodes')}, seeds {run.get('seed')}–"
+          f"{run.get('seed', 0) + run.get('episodes', 0) - 1}, timeout {run.get('timeout')} s, {graded}, "
+          f"task \"{run.get('task')}\", RTC with {run.get('actions')} of 50 actions, degrees, "
+          f"{'the real arm' if real else run.get('where') or 'MuJoCo realtime'}."]
     (d / "report.md").write_text("\n".join(L) + "\n")
     print("\n".join(summary_lines(trials, title)[:4]))
     print(f"report: {d / 'report.md'}   map: {d / 'map.jpg'}")
@@ -437,8 +442,10 @@ def chown_like_repo(d: pathlib.Path) -> None:
 def compare(da: pathlib.Path, db: pathlib.Path) -> None:
     A, B = {t["seed"]: t for t in load_trials(da)}, {t["seed"]: t for t in load_trials(db)}
     seeds = sorted(set(A) & set(B))
-    na, nb = pathlib.Path(json.loads((da / "run.json").read_text())["policy"]).name, \
-        pathlib.Path(json.loads((db / "run.json").read_text())["policy"]).name
+    ra, rb = json.loads((da / "run.json").read_text()), json.loads((db / "run.json").read_text())
+    na, nb = pathlib.Path(ra["policy"].rstrip("/")).name, pathlib.Path(rb["policy"].rstrip("/")).name
+    if na == nb or ra.get("where") != rb.get("where"):  # the same model on the arm and in the sim
+        na, nb = f"{na} ({ra.get('where', 'sim')})", f"{nb} ({rb.get('where', 'sim')})"
     both = [s for s in seeds if A[s]["success"] and B[s]["success"]]
     a_only = [s for s in seeds if A[s]["success"] and not B[s]["success"]]
     b_only = [s for s in seeds if B[s]["success"] and not A[s]["success"]]
