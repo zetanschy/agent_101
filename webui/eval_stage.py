@@ -115,8 +115,10 @@ def object_points(layout: dict) -> dict:
     }
 
 
-def draw_targets(img_bgr: np.ndarray, layout: dict, label: bool = True) -> np.ndarray:
-    """The stage's outlines on an overhead frame (BGR, 640x480), in place."""
+def draw_targets(img_bgr: np.ndarray, layout: dict, label: bool = True, flip: bool = False) -> np.ndarray:
+    """The stage's outlines on an overhead frame (BGR, 640x480). flip turns the frame 180°
+    (display only: the bench is worked from the far side), with the labels drawn after
+    the turn so they still read."""
     import cv2
 
     cam = camera()
@@ -130,9 +132,14 @@ def draw_targets(img_bgr: np.ndarray, layout: dict, label: bool = True) -> np.nd
     a, b = px(P["handle"])
     cv2.line(img_bgr, tuple(a), tuple(b), (16, 16, 16), 6, cv2.LINE_AA)
     cv2.line(img_bgr, tuple(a), tuple(b), MUG_COL, 3, cv2.LINE_AA)
+    H, W = img_bgr.shape[:2]
+    if flip:
+        img_bgr = np.ascontiguousarray(img_bgr[::-1, ::-1])
     if label:
         for k, txt, col in (("cap_centre", "cap", CAP_COL), ("mug_centre", "mug", MUG_COL)):
             u, v = px(P[k])
+            if flip:
+                u, v = W - 1 - u, H - 1 - v
             r = 22 if k == "cap_centre" else 48
             cv2.putText(img_bgr, txt, (u + r, v + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (16, 16, 16), 4, cv2.LINE_AA)
             cv2.putText(img_bgr, txt, (u + r, v + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 1, cv2.LINE_AA)
@@ -146,8 +153,14 @@ def _image_direction(cam, frm, to) -> str:
     return names[int(((ang + 22.5) % 360) // 45)]
 
 
-def describe(layout: dict) -> dict:
-    """Where each object goes, in words a person placing them can follow."""
+_FLIPPED = {"left": "right", "right": "left", "up": "down", "down": "up", "up-left": "down-right",
+            "down-right": "up-left", "up-right": "down-left", "down-left": "up-right"}
+
+
+def describe(layout: dict, flip: bool = False) -> dict:
+    """Where each object goes, in words a person placing them can follow. With flip the
+    directions are the turned view's, matching what the page shows."""
+    turn = (lambda d: _FLIPPED[d]) if flip else (lambda d: d)  # noqa: E731
     cam, tz = camera(), scene().table_z()
     out = {}
     for key, xy in (("cap", layout["caps"][0]["xy"]), ("mug", layout["mug"]["xy"])):
@@ -156,11 +169,11 @@ def describe(layout: dict) -> dict:
         # which side of straight ahead it lands on in the overhead image
         side = "right" if cam.project(np.array([x, y, tz]))[0] > cam.project(np.array([0.0, -r, tz]))[0] else "left"
         out[key] = (f"{r * 100:.0f} cm from the base, " + ("straight ahead" if abs(az) < 3 else
-                    f"{abs(az):.0f}° off straight ahead, to the image {side}"))
+                    f"{abs(az):.0f}° off straight ahead, to the image {turn(side)}"))
     out["cap"] += ", " + ("OPEN side up (cavity facing up)" if layout["caps"][0]["up"] == "open"
                           else "closed side up (rim on the mat)")
     pts = object_points(layout)["handle"]
-    out["mug"] += f", handle toward image {_image_direction(cam, pts[0], pts[1])}"
+    out["mug"] += f", handle toward image {turn(_image_direction(cam, pts[0], pts[1]))}"
     return out
 
 

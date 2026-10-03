@@ -93,6 +93,7 @@
     </div>
     <div class="where" id="where"></div>
     <div class="ctl">
+      <button id="btnFlip" title="turn both views 180° (display only)">↻ Flip view</button>
       <button id="btnHome">🏠 Home</button>
       <button id="btnPlace" hidden>🎲 Place it for me</button>
       <button id="btnRun" class="primary">▶ Run trial</button>
@@ -131,6 +132,16 @@ const $ = id => document.getElementById(id);
 const api = async (p, opt) => { const r = await fetch(p, opt); try { return await r.json(); } catch (e) { return {ok:false, msg:r.statusText}; } };
 const post = (p, b) => api(p, {method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(b||{})});
 let S = {}, stageKey = null, busy = false;
+// flipped by default: the bench is worked from the far side. Display only.
+let flip = true; try { flip = localStorage.getItem('evalFlip') !== '0'; } catch (e) {}
+const F = () => flip ? 1 : 0;
+function showFlip() {
+  $('btnFlip').textContent = flip ? '↻ Flipped 180° (click: as mounted)' : '↻ As mounted (click: flip 180°)';
+  $('liveImg').src = '/api/eval/live.mjpg?flip=' + F() + '&t=' + Date.now();
+  $('afterImg').style.transform = flip ? 'rotate(180deg)' : '';
+  stageKey = null; poll();
+}
+
 
 async function act(fn) { busy = true; try { const r = await fn(); if (r && r.ok === false) $('msg').textContent = r.msg || 'failed'; return r; } finally { busy = false; poll(); } }
 
@@ -141,6 +152,7 @@ $('btnOpen').onclick = () => act(async () => {
   else alert(r.msg);
   return r;
 });
+$('btnFlip').onclick    = () => { flip = !flip; try { localStorage.setItem('evalFlip', F() ? '1' : '0'); } catch (e) {} showFlip(); };
 $('btnHome').onclick    = () => act(() => post('/api/home'));
 $('btnPlace').onclick   = () => act(() => post('/api/eval/place'));
 $('btnRun').onclick     = () => act(() => post('/api/eval/run'));
@@ -170,7 +182,7 @@ function render(s) {
   $('stageTitle').textContent = s.i === null ? 'All stages done: build the report below'
     : `Stage ${s.i + 1} of ${R.episodes} · seed ${s.seed} · ${s.phase === 'place' ? (s.sim ? 'placed by the sim, ready to run' : 'place the objects, then run') : s.phase === 'running' ? 'running' : s.phase === 'homing' ? 'trial over, homing the arm' : 'grade it'}`;
   const key = `${s.name}:${s.seed}:${s.phase === 'place'}`;
-  if (s.i !== null && key !== stageKey) { stageKey = key; $('stageImg').src = '/api/eval/stage.jpg?k=' + encodeURIComponent(key) + '&t=' + Date.now(); }
+  if (s.i !== null && key !== stageKey) { stageKey = key; $('stageImg').src = '/api/eval/stage.jpg?flip=' + F() + '&k=' + encodeURIComponent(key) + '&t=' + Date.now(); }
   const W = s.where || {};
   $('where').innerHTML = s.i === null ? '' : `<span class="k cap">Cap</span><span>${W.cap || ''}</span><span class="k mug">Mug</span><span>${W.mug || ''}</span>`;
   const running = s.phase === 'running', place = s.phase === 'place';
@@ -203,10 +215,10 @@ function render(s) {
 }
 
 async function poll() {
-  try { S = await api('/api/eval/state'); render(S); } catch (e) {}
+  try { S = await api('/api/eval/state?flip=' + F()); render(S); } catch (e) {}
 }
-$('liveImg').src = '/api/eval/live.mjpg';
-$('liveImg').onerror = () => setTimeout(() => { $('liveImg').src = '/api/eval/live.mjpg?t=' + Date.now(); }, 2000);
+$('liveImg').onerror = () => setTimeout(() => { $('liveImg').src = '/api/eval/live.mjpg?flip=' + F() + '&t=' + Date.now(); }, 2000);
+showFlip();
 setInterval(() => { if (!busy) poll(); }, 500);
 poll();
 </script>

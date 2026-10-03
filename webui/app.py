@@ -856,7 +856,7 @@ def _ev_poll() -> None:
                           f"{cam['verdict']} ({cam['detail']})"} if sg is not None else cam))
 
 
-def _ev_public() -> dict:
+def _ev_public(flip: bool = False) -> dict:
     if not _ev:
         return {"open": False}
     se = _sim_eval()
@@ -872,7 +872,7 @@ def _ev_public() -> dict:
            "elapsed": round(time.time() - _ev["t_run"], 1) if _ev["phase"] == "running" else None,
            "report": (_ev["dir"] / "report.md").exists(), "causes": eval_stage.CAUSES}
     if _ev.get("layout"):
-        out["where"] = eval_stage.describe(_ev["layout"])
+        out["where"] = eval_stage.describe(_ev["layout"], flip)
     return out
 
 
@@ -892,11 +892,11 @@ def eval_page():
 
 
 @app.get("/api/eval/state")
-def eval_state():
+def eval_state(flip: int = 0):
     with _ev_lock:
         _ev_poll()
         log = _log_text()
-        return {**_ev_public(), "loaded": _loaded, "worker": _alive(_worker), "running": _alive(_worker) and _is_running(log),
+        return {**_ev_public(bool(flip)), "loaded": _loaded, "worker": _alive(_worker), "running": _alive(_worker) and _is_running(log),
                 "homing": _alive(_home) or log.rfind("HOME_START") > log.rfind("HOME_DONE"), "sim": SIM,
                 "stage_sim": eval_stage.sim_socket() is not None,
                 "preview": PREVIEW.exists() and time.time() - PREVIEW.stat().st_mtime < 3}
@@ -934,18 +934,18 @@ def eval_open(body: dict = Body(...)):
 
 
 @app.get("/api/eval/stage.jpg")
-def eval_stage_jpg():
+def eval_stage_jpg(flip: int = 0):
     import cv2
 
     if not _ev.get("layout"):
         return Response(status_code=404)
     img = cv2.imread(str(_ev["dir"] / "stages" / f"seed_{_ev['run']['seed'] + _ev['i']}.jpg"))
-    eval_stage.draw_targets(img, _ev["layout"])
+    img = eval_stage.draw_targets(img, _ev["layout"], flip=bool(flip))
     return Response(cv2.imencode(".jpg", img)[1].tobytes(), media_type="image/jpeg")
 
 
 @app.get("/api/eval/live.mjpg")
-def eval_live(hz: float = 8.0):
+def eval_live(hz: float = 8.0, flip: int = 0):
     """The overhead camera (the worker's preview) with the stage's outlines on top."""
     import cv2
     import numpy as np
@@ -955,12 +955,14 @@ def eval_live(hz: float = 8.0):
         while True:
             t0 = time.monotonic()
             img = cv2.imread(str(PREVIEW)) if PREVIEW.exists() and time.time() - PREVIEW.stat().st_mtime < 3 else None
+            if img is not None and flip and not (_ev.get("layout") and _ev.get("phase") in ("place", "running", "grade")):
+                img = np.ascontiguousarray(img[::-1, ::-1])
             if img is None:
                 img = blank.copy()
                 cv2.putText(img, "no camera: load a model on the main page", (110, 240), cv2.FONT_HERSHEY_SIMPLEX,
                             0.6, (200, 200, 200), 1, cv2.LINE_AA)
             elif _ev.get("layout") and _ev.get("phase") in ("place", "running", "grade"):
-                eval_stage.draw_targets(img, _ev["layout"], label=_ev["phase"] == "place")
+                img = eval_stage.draw_targets(img, _ev["layout"], label=_ev["phase"] == "place", flip=bool(flip))
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + cv2.imencode(".jpg", img)[1].tobytes() + b"\r\n"
             time.sleep(max(0.0, 1.0 / hz - (time.monotonic() - t0)))
 
