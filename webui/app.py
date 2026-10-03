@@ -19,7 +19,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import Body, FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 ROOT = Path(__file__).resolve().parent.parent          # /workspace
 WEBUI = ROOT / "webui"
@@ -107,6 +107,8 @@ def rl_available() -> bool:
 
 
 OPENPI = openpi_available()
+# `./robot webui|openpi-webui --sim mujoco|isaac` points the robot at the live sim's socket
+SIM = os.environ.get("ROBOT_TYPE") == "real2sim"
 
 # The SO-101's joints, in URDF names — the vocabulary mjlab's exporter writes into the
 # ONNX metadata. Sourced from kinematics.py so there is one definition of the arm.
@@ -488,6 +490,7 @@ def status():
         "loaded_sig": _loaded,
         "running": _alive(_worker) and _is_running(log),
         "homing": _alive(_home),
+        "sim": SIM,
         "latency": latency_stats(log),
         "log": log[-8000:],
     }
@@ -675,6 +678,91 @@ def home():
             env=os.environ.copy(), start_new_session=True,
         )
     return {"ok": True, "via": "subprocess"}
+
+
+@app.get("/api/sim/watch.mjpg")
+def sim_watch_stream(flip: int = 0, hz: float = 12.0):
+    """Both sim cameras as the policy receives them, as an MJPEG stream: the browser
+    twin of `./robot real2sim live watch` (same frames and overlay, real2sim.live.watch).
+    One more client on the sim's socket that only OBSERVES: it never commands the arm
+    and does not advance a lockstep sim. `flip` turns both views 180 deg, display only."""
+    if not SIM:
+        return _err("not a sim session: start the web UI with --sim mujoco|isaac", 400)
+    import cv2
+    from real2sim.live import protocol, watch
+
+    def frames():
+        sock = protocol.connect(os.environ["ROBOT_PORT"], 30.0)
+        try:
+            warp = watch._warper(protocol.call(sock, "hello", warp=True))
+            st, t_st = {}, 0.0
+            while True:
+                t0 = time.monotonic()
+                if t0 - t_st > 0.5:
+                    st, t_st = protocol.call(sock, "status"), t0
+                ok, jpg = cv2.imencode(".jpg", watch._frame(sock, warp, st, bool(flip), hint=""),
+                                       [cv2.IMWRITE_JPEG_QUALITY, 80])
+                if ok:
+                    yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+                time.sleep(max(0.0, 1.0 / max(hz, 1.0) - (time.monotonic() - t0)))
+        except (OSError, ConnectionError):
+            return  # the sim stopped, or the tab closed
+        finally:
+            sock.close()
+
+    return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.get("/sim/watch", response_class=HTMLResponse)
+def sim_watch_page():
+    """The Live watch tab: the stream above, a flip toggle and the stage reset."""
+    return """<!doctype html><html><head><meta charset="utf-8"><title>Live watch</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;background:#0b0d12;color:#e6e8ee;font:14px system-ui,sans-serif}
+.bar{display:flex;gap:8px;align-items:center;padding:8px 12px}
+button{cursor:pointer;border:1px solid #2a3040;background:#232936;color:#e6e8ee;padding:7px 12px;border-radius:8px;font-weight:600}
+button:disabled{opacity:.4;cursor:not-allowed}
+img{display:block;width:100%;height:auto}#msg{opacity:.8}</style></head><body>
+<div class="bar"><button id="flip">↻ Flip 180°</button><button id="reset">🎲 Reset stage</button><span id="msg"></span></div>
+<img id="v" alt="sim cameras">
+<script>
+let flip = false; try { flip = localStorage.getItem('r2sFlip') === '1'; } catch (e) {}
+const v = document.getElementById('v'), msg = document.getElementById('msg');
+const show = () => { v.src = '/api/sim/watch.mjpg?flip=' + (flip ? 1 : 0) + '&t=' + Date.now(); };
+document.getElementById('flip').onclick = () => { flip = !flip; try { localStorage.setItem('r2sFlip', flip ? '1' : '0'); } catch (e) {} show(); };
+document.getElementById('reset').onclick = async () => {
+  msg.textContent = 'resetting…';
+  const r = await (await fetch('/api/sim/reset', {method: 'POST'})).json();
+  msg.textContent = r.ok ? 'new stage ✓ (' + r.layout + ')' : r.msg;
+};
+v.onerror = () => { msg.textContent = 'no sim stream — retrying'; setTimeout(show, 2000); };
+show();
+</script></body></html>"""
+
+
+@app.post("/api/sim/reset")
+def sim_reset():
+    """New stage in the live sim: the cap(s) and mug at fresh random spots, the arm back
+    at rest. The same request as `./robot real2sim live reset`, sent over the sim's
+    socket (ROBOT_PORT), which takes several clients next to the robot's own. Refused
+    while a policy runs: the reset would teleport the arm out from under it."""
+    if not SIM:
+        return _err("not a sim session: start the web UI with --sim mujoco|isaac", 400)
+    if _alive(_worker) and _is_running(_log_text()):
+        return _err("stop the policy first (a reset mid-run moves the arm under it)", 409)
+    if _alive(_home):
+        return _err("busy: homing — wait for it to finish", 409)
+    from real2sim.live import protocol
+
+    try:
+        sock = protocol.connect(os.environ["ROBOT_PORT"], 30.0)
+        try:
+            layout = protocol.call(sock, "reset")["layout"]
+        finally:
+            sock.close()
+    except (OSError, KeyError) as e:
+        return _err(f"no live sim at {os.environ.get('ROBOT_PORT')}: {e}", 503)
+    return {"ok": True, "layout": layout.get("kind")}
 
 
 if __name__ == "__main__":

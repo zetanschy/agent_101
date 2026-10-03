@@ -206,6 +206,8 @@
           <button id="btnStart" disabled>▶ Start</button>
           <button id="btnStop" class="danger" disabled>■ Stop</button>
           <button id="btnHome" class="wide">🏠 Home</button>
+          <button id="btnWatch" hidden title="sim only: both cameras as the policy sees them, in a new tab">📺 Live watch</button>
+          <button id="btnReset" hidden title="sim only: cap and mug to new random spots, arm back at rest">🎲 Reset stage</button>
         </div>
         <div class="msg" id="msg"></div>
       </div>
@@ -327,6 +329,8 @@ $('btnUnload').onclick = () => act(async () => { await post('/api/unload'); $('m
 $('btnStart').onclick  = () => act(async () => { const r = await post('/api/infer'); $('msg').textContent = r.ok ? 'running…' : r.msg; });
 $('btnStop').onclick   = () => act(async () => { await post('/api/stop'); $('msg').textContent = 'stopped (loaded)'; });
 $('btnHome').onclick   = () => act(async () => { const r = await post('/api/home'); $('msg').textContent = r.ok ? 'home done ✓' : r.msg; }, 'homing…');
+$('btnWatch').onclick  = () => window.open('/sim/watch', 'r2s_watch');
+$('btnReset').onclick  = () => act(async () => { const r = await post('/api/sim/reset'); $('msg').textContent = r.ok ? `new stage ✓ (${r.layout})` : r.msg; }, 'resetting stage…');
 $('btnSteps').onclick  = () => act(async () => { const r = await post('/api/steps', {steps: $('steps').value}); $('msg').textContent = r.ok ? `denoise steps → ${r.steps} (live)` : r.msg; });
 $('btnActionSteps').onclick = () => act(async () => { const r = await post('/api/action-steps', {action_steps: $('actionSteps').value}); $('msg').textContent = r.ok ? `action steps → ${r.action_steps} (live, queue flushed)` : r.msg; });
 $('btnGoal').onclick   = () => act(async () => { const r = await post('/api/goal', {goal_x: $('goalX').value, goal_y: $('goalY').value, goal_yaw: $('goalYaw').value, goal_z: $('goalZ').value}); $('msg').textContent = r.ok ? (isLift() ? `goal → x=${r.goal[0]} y=${r.goal[1]} z=${r.goal[3]} (live)` : `goal → x=${r.goal[0]} y=${r.goal[1]} yaw=${r.goal[2]}° (live)`) : r.msg; });
@@ -348,6 +352,9 @@ async function poll() {
       $('btnStart').disabled  = !loaded || running || homing;
       $('btnStop').disabled   = !running;
       $('btnHome').disabled   = homing;
+      $('btnWatch').hidden    = !s.sim;
+      $('btnReset').hidden    = !s.sim;
+      $('btnReset').disabled  = running || homing;
       const rl = (s.loaded_sig || {}).stack === 'rl';
       $('btnSteps').disabled  = !loaded || rl;
       $('btnActionSteps').disabled = !loaded || rl;

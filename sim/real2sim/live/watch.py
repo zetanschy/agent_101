@@ -47,7 +47,8 @@ def _warper(info: dict):
     return warp
 
 
-def _frame(sock, warp, st: dict, flip: bool = False) -> np.ndarray:
+def _frame(sock, warp, st: dict, flip: bool = False,
+           hint: str = "(r: new layout, f: flip, q: close)") -> np.ndarray:
     import cv2
 
     r = protocol.call(sock, "observe", images=list(CAMS), pinhole=warp is not None)
@@ -63,7 +64,7 @@ def _frame(sock, warp, st: dict, flip: bool = False) -> np.ndarray:
     cim = st.get("caps_in_mug") or []
     lay = (st.get("layout") or {}).get("kind", "?")
     text = (f"{st.get('engine', '?')}  t={r['t']:6.1f}s  layout {lay}  caps in mug {sum(cim)}/{len(cim)}"
-            f"{'  [flipped]' if flip else ''}  (r: new layout, f: flip, q: close)")
+            f"{'  [flipped]' if flip else ''}  {hint}")
     cv2.rectangle(out, (0, 0), (out.shape[1], 26), (0, 0, 0), -1)
     cv2.putText(out, text, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
     return out
