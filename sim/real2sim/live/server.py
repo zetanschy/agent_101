@@ -83,11 +83,14 @@ class Server:
         self._frames, self._frames_step, self._images_wanted_until, self._pinhole = None, -1, 0.0, False
 
     # --- the scene ---------------------------------------------------------------
-    def new_layout(self, spec: str | None = None, start: str | None = None) -> dict:
+    def new_layout(self, spec: str | None = None, start: str | None = None, seed: int | None = None) -> dict:
         """start 'rest' (default): the arm folded at rest, holding it. 'recorded' (real:N
         layouts only): episode N's first recorded state, holding its first recorded action,
         so a recording fed over the socket reproduces the offline replay (GoalStream's start)."""
-        self.layout = layouts.parse(spec or self.a.layout, self.scene, self.rng)
+        # seed: this one layout drawn from its own generator, so trial i of an eval is the
+        # same stage for every policy compared on it (sim_eval.py)
+        rng = self.rng if seed is None else np.random.default_rng(int(seed))
+        self.layout = layouts.parse(spec or self.a.layout, self.scene, rng)
         start = start or self.a.start
         rest_q, hold_q = self.rest_q, None
         if start == "recorded":
@@ -191,7 +194,7 @@ class Server:
                 self.step()
             return {"t": self.eng.t}
         if op == "reset":
-            return {"layout": self.new_layout(msg.get("layout"), msg.get("start"))}
+            return {"layout": self.new_layout(msg.get("layout"), msg.get("start"), msg.get("seed"))}
         if op == "status":
             return self.status()
         return {"error": f"unknown op {op!r}"}

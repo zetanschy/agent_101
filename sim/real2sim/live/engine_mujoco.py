@@ -279,8 +279,15 @@ class MujocoEngine(Engine):
         mp, mq = d.xpos[self._mug["body"]], d.xquat[self._mug["body"]]
         cim = [bool(cap_in_mug(d.xpos[c["body"]], d.xquat[c["body"]], mp, mq, sc.cap_dims(), sc.mug_dims()))
                for c in self._caps]
+        def up_z(q):  # z of the body's own +z axis in the world: 1 upright, 0 on its side
+            w, x, y, _ = q
+            return float(1.0 - 2.0 * (x * x + y * y))
+
         return {"caps": [c["name"] for c in self._caps], "caps_in_mug": cim,
-                "finite": bool(np.isfinite(d.qpos).all())}
+                "finite": bool(np.isfinite(d.qpos).all()),
+                # where things are now (world = URDF base frame, metres), for scoring a trial
+                "cap_xyz": [[round(float(v), 4) for v in d.xpos[c["body"]]] for c in self._caps],
+                "mug_xyz": [round(float(v), 4) for v in mp], "mug_up_z": round(up_z(mq), 4)}
 
     # --- viewer ------------------------------------------------------------------------
     def viewer_sync(self) -> bool:

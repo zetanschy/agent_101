@@ -297,6 +297,18 @@ case "$cmd" in
              port="${OPENPI_WEBUI_PORT:-8001}"; echo "openpi web UI -> http://localhost:${port}"
              $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" -p "${port}:8000" openpi \
                python webui/app.py ;;
+  sim-eval)             # score an openpi checkpoint on the live sim: N trials graded by the sim
+             needs_docker sim-eval
+             case " $* " in
+               *" --report "*|*" --compare "*)   # rebuild a report / compare runs: no sim needed
+                 $DC -f docker-compose.openpi.yml run --rm -e PYTHONPATH=/workspace/sim openpi \
+                   python scripts/openpi/sim_eval.py "$@" ;;
+               *)
+                 case " $* " in *" --sim"*) ;; *) set -- --sim mujoco "$@" ;; esac
+                 sim_up "$@"
+                 $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" openpi \
+                   python scripts/openpi/sim_eval.py "${REST[@]}" ;;
+             esac ;;
   openpi-build) if [ "$MODE" = native ]; then bash ./scripts/openpi/setup_cloud.sh
                 else $DC -f docker-compose.openpi.yml build "$@"; fi ;;
   rtc-parity)           # check openpi's RTC port against lerobot's, in both images
@@ -516,6 +528,10 @@ so rather than failing with "docker: command not found".
                                 the same command against the live sim instead of the arm
                                 (real leader; [--sim-layout real:N|random[:K]] [--sim-viewer];
                                 l = new object layout; see sim/real2sim/live/README.md)
+  ./robot sim-eval --policy /checkpoints/X [--episodes 100] [--timeout 45]
+                                score an openpi checkpoint on the MuJoCo sim: seeded trials
+                                graded by the sim, report + failure map + videos in
+                                outputs/sim_eval/ (--report DIR, --compare DIR_A DIR_B)
   ./robot openpi-train --exp-name=RUN [--overwrite|--resume]
                                 LoRA fine-tune, OPENPI stack (jax). An ALTERNATIVE to
                                 `train`, not a follow-up: pick one. Dataset comes from
