@@ -67,6 +67,11 @@ class Server:
         from .. import units as U
 
         self.eng, self.scene, self.a, self.rng = engine, scene, a, rng
+        self.a.dr = getattr(a, "dr", "off")
+        seed = getattr(a, "seed", None)
+        self.dr, self.dr_rng = None, np.random.default_rng(None if seed is None else [int(seed), 7])
+        if self.a.dr != "off" and not hasattr(engine, "apply_dr"):
+            raise SystemExit(f"--dr {self.a.dr}: domain randomization is MuJoCo only (live/dr.py)")
         self.units = scene.units()
         self.calib = U.calibration()
         self._lo, self._hi, _ = U._cal(self.calib)
@@ -91,6 +96,8 @@ class Server:
         # same stage for every policy compared on it (sim_eval.py)
         rng = self.rng if seed is None else np.random.default_rng(int(seed))
         self.layout = layouts.parse(spec or self.a.layout, self.scene, rng)
+        # the randomization's own stream: a seeded reset seeds it too, apart from the layout's
+        drng = self.dr_rng if seed is None else np.random.default_rng([int(seed), 7])
         start = start or self.a.start
         rest_q, hold_q = self.rest_q, None
         if start == "recorded":
@@ -101,6 +108,13 @@ class Server:
             ep = episodes.load(self.scene.ds, include_excluded=True)[int(self.layout["kind"].split(":")[1])]
             rest_q, hold_q = self.units.to_urdf(ep.state[0]), self.units.to_urdf(ep.action[0])
         self.eng.reset(self.layout, rest_q, hold_q)
+        if self.a.dr != "off":
+            from . import dr
+
+            self.dr = dr.draw(self.a.dr, drng)
+            self.eng.apply_dr(self.dr, np.random.default_rng(int(drng.integers(1 << 31))))
+            dr.log(default_socket().parent / "dr_log.jsonl", self.dr, self.layout, seed)
+            print(dr.summary(self.dr), flush=True)
         self._print_t0 = 0.0
         self._done_since = None
         self._frames, self._frames_step = None, -1
@@ -157,7 +171,7 @@ class Server:
     def status(self) -> dict:
         s = self.eng.status()
         s.update(t=round(self.eng.t, 3), layout=self.layout, engine=self.eng.name, clock=self.a.clock,
-                 steps=self.n_steps, behind_s=round(self._lag, 3))
+                 steps=self.n_steps, behind_s=round(self._lag, 3), dr_level=self.a.dr, dr=self.dr)
         return s
 
     def step(self) -> None:
@@ -291,6 +305,8 @@ def main(argv=None) -> int:
     ap.add_argument("--autoreset", type=float, default=0.0, metavar="S",
                     help="new layout S seconds after every cap is in the mug (0: never)")
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--dr", choices=("off", "visual", "physics", "all"), default="off",
+                    help="domain randomization, a fresh draw with every new layout (live/dr.py; MuJoCo only)")
     a = ap.parse_args(argv)
     if a.clock == "auto":
         a.clock = "realtime" if a.engine == "mujoco" else "lockstep"

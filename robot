@@ -67,11 +67,14 @@ openpi_run() {
 #   --sim-layout real:N|random[:K]   where the caps and the mug start (default random:1: one cap,
 #                                    placed afresh at every reset; random = 1-3 caps)
 #   --sim-viewer                     the engine's 3D window (R / Reset = new layout)
+#   --sim-dr off|visual|physics|all  domain randomization (MuJoCo): lighting, colours, camera
+#                                    mounts, servo, friction, masses drawn afresh with every new
+#                                    layout, i.e. every recorded episode (sim/real2sim/live/dr.py)
 #   --sim-clock auto|realtime|lockstep  auto (default): realtime for mujoco (the servo keeps
 #                                    running between commands, as on the bench), lockstep for
 #                                    isaac (0.19x real time: one step per command, so every
 #                                    recorded frame is exactly 1/30 s of sim)
-SIM_ENV=(); SIM_ENGINE=""; SIM_PID=""; REST=()
+SIM_ENV=(); SIM_ENGINE=""; SIM_PID=""; REST=(); SIM_DR=off
 sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
   REST=(); SIM_ENGINE=""
   local layout=random:1 clock=auto extra=() live=sim/outputs/real2sim/live t=0 limit=90
@@ -83,6 +86,7 @@ sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
       --sim-clock) clock="$2"; shift 2 ;;
       --sim-viewer) extra+=(--viewer); shift ;;
       --sim-seed) extra+=(--seed "$2"); shift 2 ;;
+      --sim-dr) SIM_DR="$2"; [ "$2" != off ] && extra+=(--dr "$2"); shift 2 ;;
       *) REST+=("$1"); shift ;;
     esac
   done
@@ -91,6 +95,7 @@ sim_up() {             # sim_up "$@": REST = the args without the --sim* flags
   mkdir -p "$live"
   if bash sim/real2sim/live/run.sh ping >/dev/null 2>&1; then
     echo "a live sim is already serving $live/sim.sock -- using it:"
+    [ "$SIM_DR" != off ] && echo "  NOTE: --sim-dr $SIM_DR is ignored; that sim keeps the randomization it was started with" >&2
   else
     grant_display
     echo "starting the $SIM_ENGINE sim ($layout, $clock clock; log $live/server.log) ..."
@@ -171,7 +176,8 @@ case "$cmd" in
           # a sim dataset is never filed under a real one's name: --name N -> sim_<engine>_N
           if [ -n "$SIM_ENGINE" ]; then
             for i in "${!REST[@]}"; do
-              [ "${REST[$i]}" = --name ] && REST[$((i + 1))]="sim_${SIM_ENGINE}_${REST[$((i + 1))]}"
+              # ... and a randomized one says so: sim_<engine>_dr_N
+              [ "${REST[$i]}" = --name ] && REST[$((i + 1))]="sim_${SIM_ENGINE}_$([ "$SIM_DR" != off ] && echo dr_)${REST[$((i + 1))]}"
             done
           fi
           $DC run --rm "${SIM_ENV[@]}" lerobot ./scripts/robot/record.sh "${REST[@]}" ;;

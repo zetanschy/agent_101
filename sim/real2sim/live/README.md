@@ -25,6 +25,7 @@ stop those services. That applies to the real arm as much as to the sim.
 | `--sim-viewer` | off | the engine's 3D window; `R` or Reset there = a new layout |
 | `--sim-clock auto\|realtime\|lockstep` | `auto` | realtime for MuJoCo, lockstep for Isaac (below) |
 | `--sim-seed S` | — | reproducible random layouts |
+| `--sim-dr off\|visual\|physics\|all` | `off` | MuJoCo domain randomization, drawn afresh with every new layout (so every recorded episode): key light, ambient, mat, cap/mug/arm colour, camera mounts (visual); servo stiffness, torque clamp, damping, stiction, dead time, dead band, sensor offset and noise, contact friction, cap/mug mass (physics). Ranges in `dr.py`; every draw goes to `dr_log.jsonl`. A recorded dataset is named `sim_mujoco_dr_<name>`. |
 
 **Watching it.** Two views, usable together:
 - `./robot real2sim live watch` in a second terminal, while the webui, a teleop or a

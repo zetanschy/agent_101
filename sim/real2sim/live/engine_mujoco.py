@@ -101,6 +101,8 @@ class MujocoEngine(Engine):
         self._t_mj = 0.0
         self._reset_flag = False
         self._look = None
+        # domain randomization (live/dr.py): none until the server applies a draw
+        self._dr, self._db, self._bias, self._noise, self._dr_rng = None, None, None, 0.0, None
         if look:  # the dataset-derived mat and key light (look_mujoco.py); plain colours without look build
             try:
                 from . import look_mujoco
@@ -233,7 +235,19 @@ class MujocoEngine(Engine):
         return self._k / self.fps
 
     def command(self, goal) -> None:
-        self.goals.push(self.t, goal)
+        # a sensor offset is in the encoder: the bus reports q + bias, so a goal in that
+        # frame is goal - bias in the joint's own
+        self.goals.push(self.t, goal if self._bias is None else np.asarray(goal, float) - self._bias)
+
+    def apply_dr(self, p: dict, rng: np.random.Generator) -> None:
+        """One episode's randomization (dr.draw), on this model, from its nominal values."""
+        from . import dr
+
+        if self._dr is None or self._dr.b is not self.b:
+            self._dr = dr.Applier(self.b)
+        extra = self._dr.apply(p)
+        self.goals.dead_time = (extra["dead_time"] / self.fps) if extra["dead_time"] else self.servo.dead_time
+        self._db, self._bias, self._noise, self._dr_rng = extra["deadband"], extra["bias"], extra["noise"], rng
 
     def step(self) -> None:
         import mujoco
@@ -243,7 +257,11 @@ class MujocoEngine(Engine):
         b, d, n = self.b, self.d, self.b.physics.substeps
         with self._viewer_lock():
             for s in range(n):  # the replay's substep clock: (k + s/n) / fps
-                d.ctrl[b.act] = self.goals.at((self._k + s / n) / self.fps)
+                u = self.goals.at((self._k + s / n) / self.fps)
+                if self._db is not None:  # servo dead zone: no torque while the error is inside it
+                    q = d.qpos[b.qadr]
+                    u = np.where(np.abs(u - q) < self._db, q, u)
+                d.ctrl[b.act] = u
                 mujoco.mj_step(b.model, d)
         self._k += 1
         self._t_mj = float(d.time)
@@ -251,7 +269,10 @@ class MujocoEngine(Engine):
     def state(self) -> np.ndarray:
         from ..mujoco import model as mdl
 
-        return mdl.arm_q(self.b, self.d)
+        q = mdl.arm_q(self.b, self.d)
+        if self._bias is not None:
+            q = q + self._bias + (self._dr_rng.normal(0.0, self._noise, q.shape) if self._noise else 0.0)
+        return q
 
     def render(self, cams) -> dict:
         with self._viewer_lock():  # a viewer click writes the same data

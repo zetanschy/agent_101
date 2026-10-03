@@ -159,10 +159,10 @@ def run(a) -> pathlib.Path:
         print(f"resuming {out}: {len(done)} trials already scored", flush=True)
     elif (out / "trials.jsonl").exists():
         (out / "trials.jsonl").unlink()
-    (out / "run.json").write_text(json.dumps({k: v for k, v in vars(a).items() if k not in ("report", "compare")},
-                                             indent=2))
-
     sim = Sim()
+    run_info = {k: v for k, v in vars(a).items() if k not in ("report", "compare")}
+    run_info["sim_dr"] = sim.status().get("dr_level", "off")  # ./robot sim-eval --sim-dr LEVEL
+    (out / "run.json").write_text(json.dumps(run_info, indent=2))
     cfg = pi0_config.get_config(a.config or ev.infer_config(a.policy))
     policy = ev.load_policy(cfg, a.policy)
     robot = Real2Sim(Real2SimConfig(port=os.environ["ROBOT_PORT"], id="sim_eval", cameras=None, use_degrees=True))
@@ -423,7 +423,8 @@ def report(d: pathlib.Path) -> None:
     L += ["", f"Setup: {len(trials)} trials of {run.get('episodes')}, seeds {run.get('seed')}–"
           f"{run.get('seed', 0) + run.get('episodes', 0) - 1}, timeout {run.get('timeout')} s, {graded}, "
           f"task \"{run.get('task')}\", RTC with {run.get('actions')} of 50 actions, degrees, "
-          f"{'the real arm' if real else run.get('where') or 'MuJoCo realtime'}."]
+          f"{'the real arm' if real else run.get('where') or 'MuJoCo realtime'}"
+          f"{'' if run.get('sim_dr', 'off') == 'off' else ', domain randomization ' + run['sim_dr']}."]
     (d / "report.md").write_text("\n".join(L) + "\n")
     print("\n".join(summary_lines(trials, title)[:4]))
     print(f"report: {d / 'report.md'}   map: {d / 'map.jpg'}")
