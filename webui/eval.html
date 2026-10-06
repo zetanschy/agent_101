@@ -78,7 +78,7 @@
 
   <div class="panel" id="progress" style="display:none">
     <div class="stats">
-      <div class="t"><div class="v" id="sTrial">—</div><div class="l">stage</div></div>
+      <div class="t"><div class="v" id="sTrial">—</div><div class="l">graded</div></div>
       <div class="t"><div class="v" id="sOk">—</div><div class="l">successes</div></div>
       <div class="t"><div class="v" id="sCi">—</div><div class="l">95% interval</div></div>
       <div class="t"><div class="v" id="sSkip">0</div><div class="l">skipped</div></div>
@@ -175,7 +175,8 @@ function render(s) {
   for (const id of ['progress', 'stagePanel', 'trialsPanel']) $(id).style.display = open ? '' : 'none';
   if (!open) return;
   const R = s.run;
-  $('sTrial').textContent = s.i === null ? 'done' : `${s.i + 1} / ${R.episodes}`;
+  // graded, not the current stage: "50 / 50" while stage 50 still waited read as finished
+  $('sTrial').textContent = `${s.n_done + s.n_skipped} / ${R.episodes}`;
   $('sOk').textContent = s.n_done ? `${s.n_ok}/${s.n_done}` : '—';
   $('sCi').textContent = s.n_done ? `${s.ci[0]}–${s.ci[1]}%` : '—';
   $('sSkip').textContent = s.n_skipped;
