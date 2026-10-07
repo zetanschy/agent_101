@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SO-ARM101 · placement</title>
+<style>
+  :root { color-scheme: dark; --bg:#0e1016; --panel:#171a22; --tile:#0b0d12; --line:#2b3140; --fg:#e8ebf1; --mut:#8b93a3; --acc:#4c8bf5; --ok:#2ecc71; --bad:#e5533c; --cap:#2a78d6; --mug:#eb6834; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:13px/1.45 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap { max-width: 1240px; margin:0 auto; padding:14px 16px; }
+  h1 { font-size:16px; margin:0 0 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; background:#232936; color:var(--mut); }
+  .pill.rec { background:#3d1c17; color:#ff8a76; }
+  .pill.drive { background:#173d26; color:var(--ok); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:12px; }
+  .views { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:900px){ .views { grid-template-columns:1fr; } }
+  .view h3 { font-size:12px; margin:0 0 6px; font-weight:600; }
+  .view h3 span { color:var(--mut); font-weight:400; }
+  .view img { width:100%; aspect-ratio:4/3; object-fit:contain; background:var(--tile); border:1px solid var(--line); border-radius:8px; display:block; }
+  .where { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin-top:10px; font-size:14px; }
+  .where .k { font-weight:700; }
+  .where .k.cap { color:var(--cap); } .where .k.mug { color:var(--mug); }
+  .ctl { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:#232936; color:var(--fg); padding:8px 12px; border-radius:8px; font-weight:600; }
+  button:hover { border-color:var(--acc); }
+  .hint { font-size:11.5px; color:var(--mut); margin-top:8px; }
+  .msg { font-size:12px; color:#f0b94a; min-height:16px; margin-top:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SO-ARM101 · DAgger placement <span id="ep" class="pill">—</span> <span id="phase" class="pill">—</span></h1>
+  <div class="panel">
+    <div class="views">
+      <div class="view"><h3>Target <span>· MuJoCo, same overhead camera</span></h3><img id="stageImg" alt="target stage" /></div>
+      <div class="view"><h3>Live overhead camera <span>· put each object inside its outline</span></h3><img id="liveImg" alt="live camera" /></div>
+    </div>
+    <div class="where" id="where"></div>
+    <div class="ctl">
+      <button id="btnFlip">↻ Flip</button>
+      <button id="btnSkip" title="this stage cannot be set up as drawn: draw another for this episode">⤼ Another stage</button>
+    </div>
+    <div class="msg" id="msg"></div>
+    <div class="hint">Set the stage while the session is paused, then press space in the terminal. Saving an episode
+      (→) moves to the next stage; discarding one (←) keeps it, so you set the same stage up again.
+      Training stages start at seed 5000, apart from the eval stages (1000–1099).</div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let flip = true; try { flip = localStorage.getItem('evalFlip') !== '0'; } catch (e) {}
+const F = () => flip ? 1 : 0;
+let stageKey = null;
+function showFlip() {
+  $('btnFlip').textContent = flip ? '↻ Flipped 180° (click: as mounted)' : '↻ As mounted (click: flip 180°)';
+  $('liveImg').src = '/api/place/live.mjpg?flip=' + F() + '&t=' + Date.now();
+  stageKey = null; poll();
+}
+$('btnFlip').onclick = () => { flip = !flip; try { localStorage.setItem('evalFlip', F() ? '1' : '0'); } catch (e) {} showFlip(); };
+$('btnSkip').onclick = async () => { await fetch('/api/place/skip', {method: 'POST'}); stageKey = null; poll(); };
+$('liveImg').onerror = () => setTimeout(() => { $('liveImg').src = '/api/place/live.mjpg?flip=' + F() + '&t=' + Date.now(); }, 2000);
+async function poll() {
+  try {
+    const s = await (await fetch('/api/place/state?flip=' + F())).json();
+    if (!s.ok) { $('msg').textContent = s.msg || 'no stage'; return; }
+    $('msg').textContent = s.session ? '' : 'no DAgger session has reported yet: stages follow its saved episodes once it runs';
+    $('ep').textContent = `episode ${s.episode} · seed ${s.seed}`;
+    const ph = s.phase || '—';
+    $('phase').textContent = s.recording ? `${ph} · recording` : ph;
+    $('phase').className = 'pill' + (s.recording ? ' rec' : ph === 'correcting' ? ' drive' : '');
+    const key = `${s.seed}:${F()}`;
+    if (key !== stageKey) { stageKey = key; $('stageImg').src = '/api/place/stage.jpg?flip=' + F() + '&s=' + s.seed + '&t=' + Date.now(); }
+    $('where').innerHTML = `<span class="k cap">Cap</span><span>${s.where.cap}</span><span class="k mug">Mug</span><span>${s.where.mug}</span>`;
+  } catch (e) {}
+}
+setInterval(poll, 1000);
+showFlip();
+</script>
+</body>
+</html>

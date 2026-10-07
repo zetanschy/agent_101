@@ -246,7 +246,16 @@ case "$cmd" in
              #
              # Its own compose service: this one needs the LEADER arm as well.
              needs_docker dagger
-             $DC -f docker-compose.openpi.yml run --rm openpi-dagger \
+             # --stages: the placement page (http://localhost:PORT/place) shows where to
+             # put the cap and mug for every episode, drawn by a MuJoCo stage renderer
+             place=()
+             case " $* " in
+               *" --stages "*)
+                 stage_up
+                 port="${OPENPI_WEBUI_PORT:-8001}"; echo "placement page -> http://localhost:${port}/place"
+                 place=(-e "STAGE_SOCK=/workspace/$STAGE_SOCK" -e PYTHONPATH=/workspace/sim -p "${port}:8000") ;;
+             esac
+             $DC -f docker-compose.openpi.yml run --rm "${place[@]}" openpi-dagger \
                python scripts/openpi/dagger.py "$@" ;;
   dagger-save-test)     # prove a recorded session survives being written: create,
                         # record, discard one episode, finalize, reopen, read it back.
@@ -663,6 +672,8 @@ so rather than failing with "docker: command not found".
                                                 (4x, identical output); --watch during a session
   ./robot dagger-video --dataset you/rollout_NAME   render its episodes to MP4, with the
                                                 handovers burnt in (green policy / amber you)
+  ./robot dagger --dataset you/rollout_NAME --stages   ... with a page showing where to place
+                                the cap and mug for each episode (seeds 5000+)
   ./robot dagger --dataset you/rollout_NAME     DAgger: the policy drives, you take over with the
                                                 leader; both segments recorded, yours tagged
                                                 intervention=True. space=pause, tab=take over,

@@ -944,9 +944,9 @@ def eval_stage_jpg(flip: int = 0):
     return Response(cv2.imencode(".jpg", img)[1].tobytes(), media_type="image/jpeg")
 
 
-@app.get("/api/eval/live.mjpg")
-def eval_live(hz: float = 8.0, flip: int = 0):
-    """The overhead camera (the worker's preview) with the stage's outlines on top."""
+def _live(layout_fn, label_fn, flip: int, hz: float):
+    """The overhead camera (outputs/eval_preview.jpg, kept fresh by whoever holds the
+    camera: the openpi worker, or `./robot dagger --stages`) with a stage's outlines."""
     import cv2
     import numpy as np
 
@@ -955,18 +955,24 @@ def eval_live(hz: float = 8.0, flip: int = 0):
         while True:
             t0 = time.monotonic()
             img = cv2.imread(str(PREVIEW)) if PREVIEW.exists() and time.time() - PREVIEW.stat().st_mtime < 3 else None
-            if img is not None and flip and not (_ev.get("layout") and _ev.get("phase") in ("place", "running", "grade")):
-                img = np.ascontiguousarray(img[::-1, ::-1])
+            layout = layout_fn()
             if img is None:
                 img = blank.copy()
-                cv2.putText(img, "no camera: load a model on the main page", (110, 240), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6, (200, 200, 200), 1, cv2.LINE_AA)
-            elif _ev.get("layout") and _ev.get("phase") in ("place", "running", "grade"):
-                img = eval_stage.draw_targets(img, _ev["layout"], label=_ev["phase"] == "place", flip=bool(flip))
+                cv2.putText(img, "no camera yet", (240, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
+            elif layout:
+                img = eval_stage.draw_targets(img, layout, label=label_fn(), flip=bool(flip))
+            elif flip:
+                img = np.ascontiguousarray(img[::-1, ::-1])
             yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + cv2.imencode(".jpg", img)[1].tobytes() + b"\r\n"
             time.sleep(max(0.0, 1.0 / hz - (time.monotonic() - t0)))
 
     return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.get("/api/eval/live.mjpg")
+def eval_live(hz: float = 8.0, flip: int = 0):
+    return _live(lambda: _ev.get("layout") if _ev.get("phase") in ("place", "running", "grade") else None,
+                 lambda: _ev.get("phase") == "place", flip, hz)
 
 
 @app.post("/api/eval/run")
@@ -1083,6 +1089,86 @@ def eval_report():
         return _err("no graded trials yet", 409)
     _sim_eval().report(_ev["dir"])
     return {"ok": True, "url": f"/eval/files/{_ev['dir'].name}/report.md"}
+
+
+# --- Placement page for `./robot dagger --stages` -------------------------------------
+# Episode k of a DAgger session is stage PLACE_SEED + k (the session's progress file says
+# how many are saved), drawn by the stage sim like the Eval page's. Training stages start
+# at 5000, far from the eval's 1000-1099, so no rollout is recorded on a scored stage.
+PLACE_SEED = int(os.environ.get("PLACE_SEED", "5000"))
+PROGRESS = ROOT / "outputs" / "dagger_progress.json"
+_place: dict = {"skip": 0, "episodes": None, "seed": None, "layout": None}
+_place_lock = threading.Lock()
+
+
+def _place_current() -> dict:
+    import cv2
+
+    prog = _json.loads(PROGRESS.read_text()) if PROGRESS.exists() else {}
+    eps = int(prog.get("episodes", 0))
+    with _place_lock:
+        if eps != _place["episodes"]:  # an episode was saved: a fresh stage, skips forgotten
+            _place.update(episodes=eps, skip=0)
+        seed = PLACE_SEED + eps + 1000 * _place["skip"]  # a skipped stage jumps far, never onto the next episode's
+        if seed != _place["seed"]:
+            d = ROOT / "outputs" / "dagger_stages"
+            js, jpg = d / f"seed_{seed}.json", d / f"seed_{seed}.jpg"
+            if not js.exists():
+                layout, img = eval_stage.prepare(seed)
+                d.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(str(jpg), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                js.write_text(_json.dumps(layout))
+            _place.update(seed=seed, layout=_json.loads(js.read_text()), jpg=jpg)
+        return {**prog, "episodes": eps, "seed": seed, "layout": _place["layout"]}
+
+
+@app.get("/place", response_class=HTMLResponse)
+def place_page():
+    return (WEBUI / "place.html").read_text()
+
+
+@app.get("/api/place/state")
+def place_state(flip: int = 0):
+    if eval_stage.sim_socket() is None:
+        return _err("no stage sim: start the session with `./robot dagger --stages`", 503)
+    try:
+        cur = _place_current()
+    except Exception as e:  # noqa: BLE001
+        return _err(f"could not draw the stage: {e}", 503)
+    fresh = PROGRESS.exists() and time.time() - PROGRESS.stat().st_mtime < 24 * 3600
+    return {"ok": True, "episode": cur["episodes"], "seed": cur["seed"], "phase": cur.get("phase"),
+            "recording": cur.get("recording"), "dataset": cur.get("dataset"), "session": fresh,
+            "where": eval_stage.describe(cur["layout"], bool(flip))}
+
+
+@app.post("/api/place/skip")
+def place_skip():
+    """This stage cannot be set up as drawn: draw another for the same episode."""
+    with _place_lock:
+        _place["skip"] += 1
+    return {"ok": True}
+
+
+@app.get("/api/place/stage.jpg")
+def place_stage_jpg(flip: int = 0):
+    import cv2
+
+    cur = _place_current()
+    img = cv2.imread(str(_place["jpg"]))
+    img = eval_stage.draw_targets(img, cur["layout"], flip=bool(flip))
+    return Response(cv2.imencode(".jpg", img)[1].tobytes(), media_type="image/jpeg")
+
+
+@app.get("/api/place/live.mjpg")
+def place_live(hz: float = 8.0, flip: int = 0):
+    def layout():
+        try:
+            return _place_current()["layout"]
+        except Exception:  # noqa: BLE001 - no stage yet: the bare camera
+            return None
+    # labels only while setting up (paused, nothing recorded yet); clean while it runs
+    return _live(layout, lambda: not (_json.loads(PROGRESS.read_text()).get("recording") if PROGRESS.exists() else False),
+                 flip, hz)
 
 
 @app.get("/eval/files/{run}/{path:path}")

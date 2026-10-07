@@ -5,6 +5,8 @@
     ./robot dagger --dataset ... --display_data          # the live rerun view, as in record
     ./robot dagger --dataset ... --corrections-only      # only your windows, one per episode
     ./robot dagger --dataset ... --mode sync             # no overlap, no RTC
+    ./robot dagger --dataset ... --stages                # a page shows where to put the cap
+                                                         # and mug for every episode
 
     space  pause / resume the policy       tab    take over / hand back
     right  task complete: save the episode  left   the attempt failed: throw it away
@@ -186,6 +188,58 @@ def follower_smooth_move_to(robot, current: dict, target: dict,
         time.sleep(1 / fps)
 
 
+class Placement:
+    """`--stages`: where to put the objects, for every episode, on a page.
+
+    The page is the web UI's own (webui/app.py, /place), run as a child of this process
+    in the same container, so it shares outputs/ with it. Two files are all it needs from
+    here: the overhead camera (outputs/eval_preview.jpg, the file the Eval page reads,
+    kept fresh by a thread that only PEEKS at the camera's latest frame, never the bus)
+    and the session's progress (outputs/dagger_progress.json: episodes saved, phase).
+    Episode k is stage stage_seed + k; a discarded attempt keeps its stage.
+    """
+
+    PREVIEW = ROOT / "outputs" / "eval_preview.jpg"
+    PROGRESS = ROOT / "outputs" / "dagger_progress.json"
+
+    def __init__(self, robot, args):
+        import subprocess
+
+        self.robot, self.args, self.stop = robot, args, threading.Event()
+        env = {**os.environ, "WEBUI_PORT": "8000", "PLACE_SEED": str(args.stage_seed), "PLACE_DATASET": args.dataset}
+        log = open(ROOT / "outputs" / "dagger_place.log", "ab", buffering=0)
+        self.server = subprocess.Popen([sys.executable, "webui/app.py"], cwd=str(ROOT), env=env,
+                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+        threading.Thread(target=self._preview, daemon=True).start()
+        print("placement: http://localhost:<OPENPI_WEBUI_PORT, 8011 by default>/place", flush=True)
+
+    def _preview(self) -> None:
+        import cv2
+
+        cam = self.robot.cameras.get("front")
+        tmp = self.PREVIEW.with_suffix(".tmp.jpg")
+        while not self.stop.wait(0.12):
+            try:
+                frame = cam.read_latest(max_age_ms=1000)
+                cv2.imwrite(str(tmp), cv2.cvtColor(frame, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 85])
+                os.replace(tmp, self.PREVIEW)
+            except Exception:  # noqa: BLE001 - a missed preview frame is not the session's problem
+                pass
+
+    def progress(self, episodes: int, phase, recording: bool) -> None:
+        import json
+
+        tmp = self.PROGRESS.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"dataset": self.args.dataset, "episodes": int(episodes),
+                                   "phase": getattr(phase, "value", str(phase)), "recording": bool(recording),
+                                   "seed": self.args.stage_seed + int(episodes), "updated": time.time()}))
+        os.replace(tmp, self.PROGRESS)
+
+    def close(self) -> None:
+        self.stop.set()
+        self.server.terminate()
+
+
 class Phase(enum.Enum):
     """The three observable states, named as in le101's DAgger strategy."""
 
@@ -261,6 +315,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="compress images before logging: less bandwidth, more CPU on the "
                         "control thread")
     p.add_argument("--push", action="store_true", help="push the dataset to the hub at the end")
+    p.add_argument("--stages", action="store_true",
+                   help="serve the placement page (http://localhost:PORT/place): a random stage per "
+                        "episode, drawn by MuJoCo and outlined on the live camera. Needs the stage "
+                        "renderer `./robot dagger --stages` starts")
+    p.add_argument("--stage-seed", type=int, default=5000,
+                   help="episode k uses seed stage_seed + k. Keep it away from the eval stages "
+                        "(1000-1099) so no rollout is collected on a stage you score on")
     return p
 
 
@@ -431,6 +492,10 @@ def main(argv: list[str] | None = None) -> int:
             "`./robot dagger` runs docker compose run, which gives one."
         )
 
+    placement = Placement(robot, args) if args.stages else None
+    if placement is not None:
+        placement.progress(dataset.num_episodes, Phase.PAUSED, False)
+
     def infer(obs, prefix_start: int, inference_delay: int):
         """Pure compute, safe on the worker thread: it touches no serial port."""
         t0 = time.perf_counter()
@@ -486,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
               f"({ep_interventions} corrections). Reset the scene and go again.", flush=True)
         recording = False
         ep_frames = ep_interventions = 0
+        if placement is not None:  # a failed attempt keeps its stage: set it up again
+            placement.progress(dataset.num_episodes, state["phase"], False)
 
     # Half a second. Below this an "episode" is an artefact of where a keypress landed,
     # not an attempt: the first real session ended with a 1-frame episode saved on the
@@ -509,6 +576,9 @@ def main(argv: list[str] | None = None) -> int:
               f"{ep_interventions} of them corrections", flush=True)
         recording = False
         ep_frames = ep_interventions = 0
+        if placement is not None:  # the next episode gets the next stage
+            placement.progress(dataset.num_episodes, state["phase"], False)
+            print(f"next stage: seed {args.stage_seed + dataset.num_episodes} (see the placement page)", flush=True)
 
     display = args.display_data
     if display:
@@ -600,6 +670,8 @@ def main(argv: list[str] | None = None) -> int:
                     if phase is Phase.CORRECTING:
                         print("recording your correction (c to stop)", flush=True)
                     previous = phase
+                    if placement is not None:
+                        placement.progress(dataset.num_episodes, phase, recording)
 
                 if state["save"] or state["discard"]:
                     if state["save"]:
@@ -690,6 +762,8 @@ def main(argv: list[str] | None = None) -> int:
                 closer.join(timeout=3.0)
                 if closer.is_alive():
                     print("display: shutdown did not return in 3 s, leaving it", flush=True)
+            if placement is not None:
+                placement.close()
             robot.disconnect()
             teleop.disconnect()
 
