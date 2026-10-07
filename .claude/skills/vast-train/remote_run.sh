@@ -19,7 +19,7 @@
 set -o pipefail
 cd /root/agent_101  # the clone (this file itself is copied to /root)
 
-exp=""; dataset=""; steps=""; teardown=destroy; finish_only=0
+exp=""; dataset=""; steps=""; teardown=destroy; finish_only=0; train_args=()
 log=/root/run.log
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -28,6 +28,7 @@ while [ $# -gt 0 ]; do
     --steps)       steps="$2"; shift 2 ;;
     --teardown)    teardown="$2"; shift 2 ;;
     --finish-only) finish_only=1; shift ;;
+    --train-arg)   train_args+=("$2"); shift 2 ;;   # passed to train.sh as is, e.g. --sirius
     --log)         log="$2"; shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
@@ -122,8 +123,15 @@ fi
     [ -n "$steps" ] && extra=(--steps "$steps" --lr-decay-steps "$steps")
     say "train $exp on $dataset ${steps:+($steps steps) }with $(python --version)"
     [ -n "${HF_TOKEN:-}" ] || export "$(grep -m1 '^HF_TOKEN=' .env.local 2>/dev/null || echo HF_TOKEN=)"
+    # --sirius / --dagger read the dataset's parquet BEFORE openpi would pull it
+    case " ${train_args[*]} " in
+      *" --sirius "*|*" --dagger "*)
+        say "pulling $dataset for the weighting"
+        python -c "import sys; from huggingface_hub import snapshot_download; snapshot_download(sys.argv[1], repo_type='dataset', local_dir=sys.argv[2])" \
+          "$dataset" "$HOME/.cache/huggingface/lerobot/$dataset" ;;
+    esac
     push_checkpoints & pusher=$!
-    bash scripts/openpi/train.sh --exp-name="$exp" --data.repo-id="$dataset" --overwrite "${extra[@]}"
+    bash scripts/openpi/train.sh --exp-name="$exp" --data.repo-id="$dataset" --overwrite "${extra[@]}" "${train_args[@]}"
     rc=$?
     kill "$pusher" 2>/dev/null
   fi

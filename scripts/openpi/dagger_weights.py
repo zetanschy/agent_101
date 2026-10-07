@@ -31,6 +31,23 @@ frame mapping to get wrong. The cost is that this opens the data shards -- but
 only three scalar columns of them (`index`, `episode_index`, `intervention`),
 never a video, so it stays a metadata-speed read.
 
+TWO SCHEMES. "ramp" (the default, below) weights a rollout set on its own and is what
+a warm-started round uses. "sirius" is the rule of Liu et al., RSS 2023 ("Robot Learning
+on the Job"): every frame is one of four classes -- demo, robot, intv, preintv (the
+robot frames in the `--preintv-s` before each intervention; the paper's 15 steps ~ 2 s
+reaction time) -- and is weighted by importance sampling toward a target class mix,
+w(c) = P*(c) / P(c), with P*(intv) = 0.5, P*(preintv) = 0, P*(demo) = P(demo) and robot
+taking the rest. It needs demonstrations in the same dataset (scripts/robot/
+sirius_build.py adds a `demonstration` column for them), and it retrains from scratch on
+everything gathered so far, as the paper does. One case the paper never met: when
+demonstrations are more than 1 - P*(intv) of the samples (200 demos against one round),
+P*(demo) = P(demo) leaves robot a negative share, so demo and robot split 1 - P*(intv) in
+their natural ratio instead, and the summary says so. Its memory management (--memory N,
+--memory-strategy lfi|mfi|fifo|filo|uniform) caps the deployment trajectories kept;
+here dropping one means it is never drawn, which costs no decode, so nothing is deleted.
+LFI (drop the least-intervened first) was the paper's best. Demonstrations are never
+dropped.
+
 THE DEFAULTS ARE NOT THE USUAL 2.0/0.3, which is tuned for SPARSE interventions.
 Measured over this bench's six DAgger sets the operator share runs 25-50% of
 frames, and at 2.0/0.3 that puts 78-86% of every batch on corrections with almost
@@ -75,6 +92,12 @@ SUPPORTED_CODEBASE_VERSIONS = ("v3.0",)
 
 _installed = False
 
+#: Sirius' class codes, in the order the summary prints them.
+DEMO, ROBOT, INTV, PREINTV = 0, 1, 2, 3
+CLASS_NAMES = ("demo", "robot", "intv", "preintv")
+#: Sirius section IV-C: which deployment trajectories a full memory rejects first.
+MEMORY_STRATEGIES = ("lfi", "mfi", "fifo", "filo", "uniform")
+
 
 @dataclasses.dataclass(frozen=True)
 class DaggerConfig:
@@ -101,8 +124,25 @@ class DaggerConfig:
     #: intent rather than a loss.
     epoch_scale: int = 8
     seed: int = 42
+    #: "ramp" (above) or "sirius" (class-balanced, see the module docstring).
+    scheme: str = "ramp"
+    #: sirius: the target share of intervention samples, P*(intv). The paper's 0.5.
+    sirius_intv: float = 0.5
+    #: sirius: the preintv window before each intervention (s). 15 steps ~ 2 s in the paper.
+    preintv_s: float = 2.0
+    #: sirius: deployment trajectories kept (0 = all), and which go first past that.
+    memory: int = 0
+    memory_strategy: str = "lfi"
 
     def __post_init__(self) -> None:
+        if self.scheme not in ("ramp", "sirius"):
+            raise ValueError(f"scheme must be ramp or sirius, not {self.scheme!r}")
+        if not 0.0 < self.sirius_intv < 1.0:
+            raise ValueError("sirius_intv is a share of the samples: strictly between 0 and 1")
+        if self.preintv_s < 0.0 or self.memory < 0:
+            raise ValueError("preintv_s and memory must be non-negative")
+        if self.memory_strategy not in MEMORY_STRATEGIES:
+            raise ValueError(f"memory_strategy must be one of {MEMORY_STRATEGIES}")
         if min(self.human_weight, self.auto_weight, self.pre_min_weight) < 0.0:
             raise ValueError("dagger weights must be non-negative")
         if self.human_weight <= 0.0 and self.auto_weight <= 0.0:
@@ -130,6 +170,9 @@ class Summary:
     index_len: int = 0
     never_drawn: int = 0
     human_share_of_draws: float = 0.0
+    #: sirius only: {class: {"frames", "share", "target", "weight", "draws"}}, and memory.
+    classes: dict | None = None
+    memory_dropped: int = 0
 
     @property
     def human_fraction(self) -> float:
@@ -164,6 +207,13 @@ def _read_info(root: Path) -> dict[str, Any]:
 
 
 def read_labels(root: Path) -> tuple[np.ndarray, np.ndarray, float]:
+    is_human, _, episode, fps = read_classes(root)
+    return is_human, episode, fps
+
+
+def read_classes(root: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """(operator mask, demonstration mask, episode index, fps) by GLOBAL frame. The
+    demonstration mask is all False for a plain rollout set (no such column)."""
     """(operator mask, episode index, fps), both arrays indexed by GLOBAL frame.
 
     Three scalar columns out of the parquet shards and nothing else: no video is
@@ -181,6 +231,8 @@ def read_labels(root: Path) -> tuple[np.ndarray, np.ndarray, float]:
     fps = float(info["fps"])
 
     is_human = np.zeros(total, dtype=bool)
+    is_demo = np.zeros(total, dtype=bool)
+    has_demo = "demonstration" in info.get("features", {})
     episode = np.full(total, -1, dtype=np.int64)
     seen = np.zeros(total, dtype=bool)
 
@@ -191,11 +243,14 @@ def read_labels(root: Path) -> tuple[np.ndarray, np.ndarray, float]:
             "here but its data is not. A partial `huggingface-cli download` looks "
             "exactly like this; re-run it.")
     for f in files:
-        table = pq.read_table(f, columns=["index", "episode_index", "intervention"])
+        table = pq.read_table(f, columns=["index", "episode_index", "intervention"]
+                              + (["demonstration"] if has_demo else []))
         idx = table.column("index").to_numpy()
         if idx.max(initial=-1) >= total or idx.min(initial=0) < 0:
             raise ValueError(f"{f} holds frame indices outside 0..{total - 1}")
         is_human[idx] = np.asarray(table.column("intervention").to_numpy(), dtype=bool)
+        if has_demo:
+            is_demo[idx] = np.asarray(table.column("demonstration").to_numpy(), dtype=bool)
         episode[idx] = table.column("episode_index").to_numpy()
         seen[idx] = True
 
@@ -204,7 +259,7 @@ def read_labels(root: Path) -> tuple[np.ndarray, np.ndarray, float]:
             f"{root}: {int((~seen).sum())} of {total} frames are missing from the "
             "shards, so the index would not line up with the dataset openpi opens."
         )
-    return is_human, episode, fps
+    return is_human, is_demo, episode, fps
 
 
 def _episode_weights(is_human: np.ndarray, fps: float, cfg: DaggerConfig) -> np.ndarray:
@@ -239,8 +294,89 @@ def _episode_weights(is_human: np.ndarray, fps: float, cfg: DaggerConfig) -> np.
     return weights
 
 
+def sirius_classes(is_human: np.ndarray, is_demo: np.ndarray, episode: np.ndarray,
+                   fps: float, preintv_s: float) -> np.ndarray:
+    """Each frame's Sirius class. preintv = the robot frames in the `preintv_s` before
+    each intervention STARTS, within the same episode (a takeover at the start of one
+    episode is not the end of the previous one's fault)."""
+    cls = np.full(is_human.shape[0], ROBOT, dtype=np.int8)
+    cls[is_demo] = DEMO
+    cls[is_human] = INTV
+    window = int(round(preintv_s * fps))
+    if window <= 0:
+        return cls
+    for ep in np.unique(episode):
+        where = np.flatnonzero(episode == ep)
+        where.sort()
+        h = is_human[where]
+        onsets = np.flatnonzero(h & ~np.r_[False, h[:-1]])
+        for o in onsets:
+            seg = where[max(0, o - window):o]
+            seg = seg[cls[seg] == ROBOT]
+            cls[seg] = PREINTV
+    return cls
+
+
+def memory_keep(cls: np.ndarray, is_human: np.ndarray, episode: np.ndarray, cfg: DaggerConfig) -> tuple[np.ndarray, int]:
+    """Frames kept by Sirius' memory management: at most cfg.memory deployment
+    trajectories (episodes with no demonstration frames); demonstrations always stay.
+    Episode order is arrival order (sirius_build.py appends rollouts oldest first)."""
+    keep = np.ones(cls.shape[0], dtype=bool)
+    deploy = [int(e) for e in np.unique(episode) if not np.any(cls[episode == e] == DEMO)]
+    excess = len(deploy) - cfg.memory
+    if cfg.memory <= 0 or excess <= 0:
+        return keep, 0
+    n_intv = {e: int(is_human[episode == e].sum()) for e in deploy}
+    order = {  # first in the list = first rejected
+        "lfi": sorted(deploy, key=lambda e: (n_intv[e], e)),
+        "mfi": sorted(deploy, key=lambda e: (-n_intv[e], e)),
+        "fifo": sorted(deploy),
+        "filo": sorted(deploy, reverse=True),
+        "uniform": list(np.random.default_rng(cfg.seed).permutation(deploy)),
+    }[cfg.memory_strategy]
+    for e in order[:excess]:
+        keep[episode == e] = False
+    return keep, excess
+
+
+def sirius_weights(root: Path, cfg: DaggerConfig) -> tuple[np.ndarray, np.ndarray, Summary]:
+    """w(c) = P*(c) / P(c) over the frames memory keeps (Sirius eq. and section IV-D)."""
+    is_human, is_demo, episode, fps = read_classes(root)
+    cls = sirius_classes(is_human, is_demo, episode, fps, cfg.preintv_s)
+    keep, dropped = memory_keep(cls, is_human, episode, cfg)
+    n = int(keep.sum())
+    P = {c: float(np.count_nonzero(keep & (cls == c))) / n for c in range(4)}
+    target = {PREINTV: 0.0, INTV: cfg.sirius_intv if P[INTV] > 0 else 0.0}
+    rest = 1.0 - target[INTV]
+    if P[INTV] == 0:
+        logger.warning("sirius: no intervention frames -- P*(intv) cannot be met")
+    if P[ROBOT] == 0:  # corrections-only rollouts: the demonstrations take the rest
+        target[DEMO], target[ROBOT] = (rest if P[DEMO] > 0 else 0.0), 0.0
+    elif P[DEMO] <= rest:  # the paper's case: demos keep their true share, robot the remainder
+        target[DEMO], target[ROBOT] = P[DEMO], rest - P[DEMO]
+    else:
+        # Demonstrations outnumber 1 - P*(intv) (the paper's 30-80 demos never did; 200
+        # demos against one round do). P*(demo) = P(demo) would leave robot a negative
+        # share. Keep P*(intv), and let demo and robot split the rest in their natural
+        # ratio, i.e. with equal per-frame weight.
+        tot = P[DEMO] + P[ROBOT]
+        target[DEMO], target[ROBOT] = rest * P[DEMO] / tot, rest * P[ROBOT] / tot
+        logger.warning("sirius: demonstrations are %.0f%% of the samples, more than 1 - P*(intv) = %.0f%%; "
+                       "demo and robot split that %.0f%% in their natural ratio", 100 * P[DEMO], 100 * rest, 100 * rest)
+    w_c = np.array([target[c] / P[c] if P[c] > 0 else 0.0 for c in range(4)], dtype=np.float32)
+    weights = w_c[cls] * keep
+    summary = Summary(frames_total=int(cls.shape[0]), frames_human=int(is_human.sum()),
+                      episodes=int(np.unique(episode).size), fps=fps, memory_dropped=dropped)
+    summary.classes = {CLASS_NAMES[c]: {"frames": int(np.count_nonzero(keep & (cls == c))), "share": P[c],
+                                        "target": target[c], "weight": float(w_c[c])} for c in range(4)}
+    summary._cls = cls  # for the per-class draw shares in summarize()
+    return weights, is_human, summary
+
+
 def frame_weights(root: Path, cfg: DaggerConfig) -> tuple[np.ndarray, np.ndarray, Summary]:
     """Per-frame weights over the whole dataset, plus the operator mask."""
+    if cfg.scheme == "sirius":
+        return sirius_weights(root, cfg)
     is_human, episode, fps = read_labels(root)
     weights = np.zeros(is_human.shape[0], dtype=np.float32)
     for ep in np.unique(episode):
@@ -292,6 +428,10 @@ def summarize(index: np.ndarray, is_human: np.ndarray, summary: Summary) -> Summ
     summary.human_share_of_draws = (
         float(drawn[is_human].sum() / summary.index_len) if summary.index_len else 0.0
     )
+    cls = getattr(summary, "_cls", None)
+    if summary.classes is not None and cls is not None and summary.index_len:
+        for c, name in enumerate(CLASS_NAMES):
+            summary.classes[name]["draws"] = float(drawn[cls == c].sum() / summary.index_len)
     return summary
 
 
@@ -308,6 +448,8 @@ def _dataset_fingerprint(root: Path, cfg: DaggerConfig, is_human: np.ndarray) ->
     digest.update(cfg.fingerprint().encode())
     digest.update(f"{info['total_frames']}:{info['total_episodes']}:{info['fps']}".encode())
     digest.update(np.packbits(is_human).tobytes())
+    if cfg.scheme == "sirius":  # the demonstration flags decide classes too
+        digest.update(np.packbits(read_classes(root)[1]).tobytes())
     return digest.hexdigest()
 
 
@@ -337,7 +479,7 @@ def build(root: Path, cfg: DaggerConfig, force: bool = False) -> tuple[np.ndarra
         np.save(index_path, index)
         meta_path.write_text(json.dumps(
             {"fingerprint": fingerprint, "config": dataclasses.asdict(cfg),
-             "summary": dataclasses.asdict(summary)}, indent=2) + "\n")
+             "summary": {k: v for k, v in dataclasses.asdict(summary).items()}}, indent=2) + "\n")
     except OSError as e:   # a read-only cache is not a reason to refuse to train
         logger.warning("could not cache the dagger index (%s); rebuilding each run", e)
     return index, summary
@@ -416,6 +558,13 @@ def format_summary(summary: Summary, root: Path) -> str:
         if summary.frames_total else "",
         f"  operator share       : {100.0 * summary.human_share_of_draws:.1f}% of draws",
     ]
+    if summary.classes is not None:
+        lines.append(f"sirius classes         : {'frames':>8s} {'P(c)':>7s} {'P*(c)':>7s} {'weight':>7s} {'draws':>7s}")
+        for name, c in summary.classes.items():
+            lines.append(f"  {name:20s} : {c['frames']:8d} {100 * c['share']:6.1f}% {100 * c['target']:6.1f}% "
+                         f"{c['weight']:7.2f} {100 * c.get('draws', 0.0):6.1f}%")
+        if summary.memory_dropped:
+            lines.append(f"  memory               : {summary.memory_dropped} deployment trajectories left out")
     return "\n".join(line for line in lines if line)
 
 
@@ -540,6 +689,11 @@ def config_from_env(environ: dict[str, str] | None = None) -> DaggerConfig | Non
         pre_min_weight=_f("DAGGER_PRE_MIN_WEIGHT", 0.0),
         epoch_scale=_i("DAGGER_EPOCH_SCALE", 8),
         seed=_i("DAGGER_SEED", 42),
+        scheme=env.get("DAGGER_SCHEME", "").strip() or "ramp",
+        sirius_intv=_f("DAGGER_SIRIUS_INTV", 0.5),
+        preintv_s=_f("DAGGER_PREINTV_S", 2.0),
+        memory=_i("DAGGER_MEMORY", 0),
+        memory_strategy=env.get("DAGGER_MEMORY_STRATEGY", "").strip() or "lfi",
     )
 
 
@@ -576,6 +730,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--pre-min-weight", type=float, default=0.0)
     p.add_argument("--epoch-scale", type=int, default=8)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--scheme", choices=("ramp", "sirius"), default="ramp")
+    p.add_argument("--sirius-intv", type=float, default=0.5, help="sirius: target share of intervention samples")
+    p.add_argument("--preintv-s", type=float, default=2.0, help="sirius: pre-intervention window (s)")
+    p.add_argument("--memory", type=int, default=0, help="sirius: deployment trajectories kept (0 = all)")
+    p.add_argument("--memory-strategy", choices=MEMORY_STRATEGIES, default="lfi")
     p.add_argument("--rebuild", action="store_true", help="ignore a cached index")
     p.add_argument("--per-episode", action="store_true",
                    help="one row per episode: length, operator share, takeover count")
@@ -587,7 +746,9 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = DaggerConfig(human_weight=a.human_weight, auto_weight=a.auto_weight,
                        pre_window_s=a.pre_window_s, pre_min_weight=a.pre_min_weight,
-                       epoch_scale=a.epoch_scale, seed=a.seed)
+                       epoch_scale=a.epoch_scale, seed=a.seed, scheme=a.scheme,
+                       sirius_intv=a.sirius_intv, preintv_s=a.preintv_s, memory=a.memory,
+                       memory_strategy=a.memory_strategy)
     _, summary = build(root, cfg, force=a.rebuild)
     print(format_summary(summary, root))
     if a.per_episode:

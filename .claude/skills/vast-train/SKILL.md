@@ -139,6 +139,9 @@ $SSH "tmux new-session -d -s train 'bash /root/remote_run.sh --exp-name <EXP> --
   would store them.
 - **`--steps N` below 30k** also shortens the learning-rate decay to N, so the run anneals
   over its own length.
+- **A Sirius round** (Liu et al. 2023, a dataset from `./robot sirius-build`): add
+  `--train-arg --sirius` (and e.g. `--train-arg --memory --train-arg 500`). The runner then
+  pulls the dataset before training, because the weighting reads it before openpi does.
 - **What `remote_run.sh` does:**
   1. `setup_cloud.sh`, which builds a Python 3.12 venv: the image has 3.11, and le101 needs 3.12.
   2. `train.sh`: normalization stats on this dataset, the training, the push to `<hf user>/<EXP>`.

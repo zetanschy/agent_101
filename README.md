@@ -148,6 +148,43 @@ openpi's loader is monkeypatched, because `create_torch_data_loader` hardcodes
 (`_check_openpi_seam`): a patch that silently stopped applying would train on unweighted
 data and look completely normal.
 
+### Sirius rounds
+
+[Sirius](https://arxiv.org/abs/2211.08416) (Liu et al., RSS 2023, "Robot Learning on the
+Job") is the alternative to a warm-started round. It **retrains each round on everything so
+far**, meaning the original demonstrations plus every rollout, and re-weights each frame
+by its class:
+
+| class | what | target share P*(c) |
+|---|---|---|
+| `demo` | the original demonstrations | their true share P(demo) |
+| `intv` | your takeovers | **0.5** (`--sirius-intv`) |
+| `preintv` | the policy's frames in the **2 s** before each takeover starts (`--preintv-s`; the paper's 15 steps of reaction time) | **0** |
+| `robot` | the rest of the policy's frames | what is left |
+
+Each frame's weight is w(c) = P*(c) / P(c), applied to sampling like the ramp above.
+
+```bash
+./robot dagger --policy /checkpoints/<current policy> --dataset zetanschy/rollout_cap_to_cup_sirius_r1
+./robot sirius-build --name cap_to_cup_sirius_r1 --demos zetanschy/cap_to_cup_200 \
+    --rollouts zetanschy/rollout_cap_to_cup_sirius_r1          # round 2: --rollouts r1,r2
+./robot openpi-dagger-stats --dataset soarm101/cap_to_cup_sirius_r1 --scheme sirius   # what it draws
+./robot openpi-sirius-train --data.repo-id=soarm101/cap_to_cup_sirius_r1 --exp-name=sirius_r1
+```
+
+- `sirius-build` adds a `demonstration` column, so demos and rollouts share one dataset. Missing
+  sources are pulled from the Hub first.
+- The paper ended a round when interventions reached about a third of the demo frames;
+  the builder prints that ratio.
+- **Memory management** (`--memory N --memory-strategy lfi|mfi|fifo|filo|uniform`) keeps at
+  most N deployment trajectories. LFI, which drops the least-intervened first, was the
+  paper's best. A dropped trajectory is simply never drawn, and demonstrations are never
+  dropped.
+- **One case the paper never met:** if demos are more than 1 - P*(intv) of the frames (200
+  demos against one round), P*(demo) = P(demo) would leave robot a negative share. Demo and
+  robot then split the remaining half in their natural ratio, and the stats say so.
+- On Vast.ai, pass `--train-arg --sirius` to the `vast-train` skill's runner.
+
 ### A round on another machine
 
 Two paths, and which one you get is decided for you: `./robot` detects Docker. A box

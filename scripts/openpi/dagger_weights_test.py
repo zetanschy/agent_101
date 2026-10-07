@@ -307,6 +307,113 @@ def test_the_wrapper_reads_the_base_through_the_index():
   assert [view[i] for i in range(3)] == ["c", "c", "a"]
 
 
+# --------------------------------------------------------------------------- #
+# Sirius (Liu et al., RSS 2023): classes, w = P*(c) / P(c), memory management
+# --------------------------------------------------------------------------- #
+
+
+def make_sirius_dataset(root: pathlib.Path, episodes: list[tuple[bool, list[bool]]], fps: float = 30.0):
+  """Like make_dataset, plus the `demonstration` column sirius_build.py adds.
+  `episodes` is one (is_demo, per-frame operator flags) per episode."""
+  import pyarrow as pa
+  import pyarrow.parquet as pq
+
+  make_dataset(root, [flags for _, flags in episodes], fps)
+  demo = [d for d, flags in episodes for _ in flags]
+  info = json.loads((root / "meta" / "info.json").read_text())
+  info["features"]["demonstration"] = {"dtype": "bool", "shape": [1]}
+  (root / "meta" / "info.json").write_text(json.dumps(info))
+  f = root / "data" / "chunk-000" / "file-000.parquet"
+  pq.write_table(pq.read_table(f).append_column("demonstration", pa.array(demo, pa.bool_())), f)
+  return root
+
+
+def test_sirius_classes_follow_the_paper():
+  """demo, intv, robot, and preintv = the robot frames in the window before an
+  intervention STARTS -- not before every operator frame, and not across episodes."""
+  episode = np.array([0] * 90 + [1] * 30)
+  is_human = np.array([False] * 60 + [True] * 10 + [False] * 20 + [True] * 30)
+  is_demo = np.array([False] * 90 + [False] * 30)
+  cls = dw.sirius_classes(is_human, is_demo, episode, fps=30.0, preintv_s=1.0)
+  assert (cls[:30] == dw.ROBOT).all() and (cls[30:60] == dw.PREINTV).all()
+  assert (cls[60:70] == dw.INTV).all() and (cls[70:90] == dw.ROBOT).all(), "after the takeover is robot again"
+  assert (cls[90:] == dw.INTV).all(), "episode 1 opens with a takeover: nothing in episode 0 becomes preintv"
+  demo = dw.sirius_classes(np.zeros(5, bool), np.ones(5, bool), np.zeros(5, int), 30.0, 1.0)
+  assert (demo == dw.DEMO).all()
+
+
+def test_sirius_draws_hit_the_target_mix():
+  """P*(intv) = 0.5, P*(preintv) = 0, P*(demo) = P(demo), robot the rest: measured on
+  the index itself, which is what training actually sees."""
+  root = make_sirius_dataset(tmpdir(), [(True, [False] * 300),
+                                        (False, [False] * 540 + [True] * 100 + [False] * 60)])
+  cfg = dw.DaggerConfig(scheme="sirius", preintv_s=1.0, epoch_scale=16)
+  index, summary = dw.build(root, cfg)
+  c = summary.classes
+  assert abs(c["intv"]["draws"] - 0.5) < 0.01, c["intv"]
+  assert c["preintv"]["draws"] == 0.0 and c["preintv"]["frames"] == 30
+  assert abs(c["demo"]["draws"] - c["demo"]["share"]) < 0.01, c["demo"]
+  assert abs(c["robot"]["draws"] - (1 - 0.5 - c["demo"]["share"])) < 0.01, c["robot"]
+  assert summary.never_drawn == 30, "exactly the preintv frames are never drawn"
+  shutil.rmtree(root)
+
+
+def test_sirius_memory_lfi_drops_the_least_intervened_and_never_a_demo():
+  eps = [(True, [False] * 50),                       # 0: demo
+         (False, [False] * 40 + [True] * 10),        # 1: 10 intervention frames
+         (False, [False] * 49 + [True] * 1),         # 2: 1  <- least intervened
+         (False, [False] * 20 + [True] * 30)]        # 3: 30
+  root = make_sirius_dataset(tmpdir(), eps)
+  for strategy, gone in (("lfi", 2), ("mfi", 3), ("fifo", 1), ("filo", 3)):
+    w, _, summary = dw.frame_weights(root, dw.DaggerConfig(scheme="sirius", memory=2, memory_strategy=strategy))
+    ep = np.repeat(np.arange(4), 50)
+    assert summary.memory_dropped == 1, strategy
+    assert (w[ep == gone] == 0).all(), f"{strategy} must drop episode {gone}"
+    assert (w[ep == 0] > 0).all(), f"{strategy} dropped the demonstrations"
+  shutil.rmtree(root)
+
+
+def test_sirius_without_demonstrations_still_balances_interventions():
+  """A plain `./robot dagger` set (no demonstration column) is all robot / intv /
+  preintv; the intervention target still holds."""
+  root = make_dataset(tmpdir(), [[False] * 400 + [True] * 100])
+  _, summary = dw.build(root, dw.DaggerConfig(scheme="sirius", epoch_scale=16))
+  assert abs(summary.classes["intv"]["draws"] - 0.5) < 0.01 and summary.classes["demo"]["frames"] == 0
+  shutil.rmtree(root)
+
+
+def test_sirius_when_demonstrations_outnumber_the_rest():
+  """200 demos vs one round: P(demo) > 1 - P*(intv). Interventions still get their 50%,
+  and demo and robot split the other half in their natural ratio (equal per frame)."""
+  root = make_sirius_dataset(tmpdir(), [(True, [False] * 900), (False, [False] * 150 + [True] * 100)])
+  _, summary = dw.build(root, dw.DaggerConfig(scheme="sirius", preintv_s=0.0, epoch_scale=16))
+  c = summary.classes
+  assert abs(c["intv"]["draws"] - 0.5) < 0.01, c["intv"]
+  assert abs(c["demo"]["draws"] / c["robot"]["draws"] - 900 / 150) < 0.15, (c["demo"], c["robot"])
+  assert abs(c["demo"]["weight"] - c["robot"]["weight"]) < 1e-6
+  shutil.rmtree(root)
+
+
+def test_the_scheme_is_part_of_the_cache_key():
+  root = make_sirius_dataset(tmpdir(), [(True, [False] * 100), (False, [False] * 80 + [True] * 20)])
+  a, _ = dw.build(root, dw.DaggerConfig())
+  b, _ = dw.build(root, dw.DaggerConfig(scheme="sirius"))
+  assert not np.array_equal(np.bincount(a, minlength=200), np.bincount(b, minlength=200))
+  shutil.rmtree(root)
+
+
+def test_the_environment_maps_onto_the_sirius_knobs():
+  cfg = dw.config_from_env({"DAGGER_ENABLED": "1", "DAGGER_SCHEME": "sirius", "DAGGER_SIRIUS_INTV": "0.4",
+                            "DAGGER_PREINTV_S": "1.5", "DAGGER_MEMORY": "300", "DAGGER_MEMORY_STRATEGY": "fifo"})
+  assert (cfg.scheme, cfg.sirius_intv, cfg.preintv_s, cfg.memory, cfg.memory_strategy) == ("sirius", 0.4, 1.5, 300, "fifo")
+  for bad in ({"scheme": "x"}, {"sirius_intv": 1.0}, {"memory_strategy": "lru"}):
+    try:
+      dw.DaggerConfig(**bad)
+    except ValueError:
+      continue
+    raise AssertionError(f"{bad} must be refused")
+
+
 def main() -> int:
   tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
   for test in tests:

@@ -61,6 +61,17 @@ while [ $# -gt 0 ]; do
     --dagger)           dagger=1; shift ;;
     --dry-run)          dry=1; shift ;;   # compose everything, print it, train nothing
     --dagger-rebuild)   dagger=1; dagger_rebuild=1; shift ;;
+    # Sirius (dagger_weights.py, scheme sirius): class-balanced weights over a set built
+    # by `./robot sirius-build`, demos + rollouts; a round retrains from scratch on it
+    --sirius)           dagger=1; export DAGGER_SCHEME=sirius; shift ;;
+    --sirius-intv)      export DAGGER_SIRIUS_INTV="$2"; shift 2 ;;
+    --sirius-intv=*)    export DAGGER_SIRIUS_INTV="${1#*=}"; shift ;;
+    --preintv-s)        export DAGGER_PREINTV_S="$2"; shift 2 ;;
+    --preintv-s=*)      export DAGGER_PREINTV_S="${1#*=}"; shift ;;
+    --memory)           export DAGGER_MEMORY="$2"; shift 2 ;;
+    --memory=*)         export DAGGER_MEMORY="${1#*=}"; shift ;;
+    --memory-strategy)  export DAGGER_MEMORY_STRATEGY="$2"; shift 2 ;;
+    --memory-strategy=*) export DAGGER_MEMORY_STRATEGY="${1#*=}"; shift ;;
     --human-weight)     export DAGGER_HUMAN_WEIGHT="$2"; shift 2 ;;
     --human-weight=*)   export DAGGER_HUMAN_WEIGHT="${1#*=}"; shift ;;
     --auto-weight)      export DAGGER_AUTO_WEIGHT="$2"; shift 2 ;;
@@ -230,20 +241,25 @@ if [ "$dagger" = 1 ]; then
   export DAGGER_ENABLED=1 DAGGER_REPO_ID="$repo_id"
   [ "$dagger_rebuild" = 1 ] && export DAGGER_REBUILD=1
   trainer="scripts/openpi/train_dagger.py"
-  echo "==> dagger sampling on ($repo_id)"
+  echo "==> ${DAGGER_SCHEME:-ramp} sampling on ($repo_id)"
   python scripts/openpi/dagger_weights.py --dataset "$repo_id" \
     ${DAGGER_HUMAN_WEIGHT:+--human-weight="$DAGGER_HUMAN_WEIGHT"} \
     ${DAGGER_AUTO_WEIGHT:+--auto-weight="$DAGGER_AUTO_WEIGHT"} \
     ${DAGGER_PRE_WINDOW_S:+--pre-window-s="$DAGGER_PRE_WINDOW_S"} \
     ${DAGGER_PRE_MIN_WEIGHT:+--pre-min-weight="$DAGGER_PRE_MIN_WEIGHT"} \
     ${DAGGER_EPOCH_SCALE:+--epoch-scale="$DAGGER_EPOCH_SCALE"} \
+    ${DAGGER_SCHEME:+--scheme="$DAGGER_SCHEME"} \
+    ${DAGGER_SIRIUS_INTV:+--sirius-intv="$DAGGER_SIRIUS_INTV"} \
+    ${DAGGER_PREINTV_S:+--preintv-s="$DAGGER_PREINTV_S"} \
+    ${DAGGER_MEMORY:+--memory="$DAGGER_MEMORY"} \
+    ${DAGGER_MEMORY_STRATEGY:+--memory-strategy="$DAGGER_MEMORY_STRATEGY"} \
     ${DAGGER_REBUILD:+--rebuild}
 fi
 
 if [ "$dry" = 1 ]; then
   echo "==> dry run, not training. The command would be:"
   printf '  %q' python "$trainer" "$cfg" "${args[@]}"; echo
-  [ "$dagger" = 1 ] && echo "  with DAGGER_ENABLED=1 DAGGER_REPO_ID=$repo_id"
+  [ "$dagger" = 1 ] && echo "  with DAGGER_ENABLED=1 DAGGER_REPO_ID=$repo_id${DAGGER_SCHEME:+ DAGGER_SCHEME=$DAGGER_SCHEME}"
   exit 0
 fi
 
