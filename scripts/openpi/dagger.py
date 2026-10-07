@@ -201,11 +201,14 @@ class Placement:
 
     PREVIEW = ROOT / "outputs" / "eval_preview.jpg"
     PROGRESS = ROOT / "outputs" / "dagger_progress.json"
+    COMMAND = ROOT / "outputs" / "dagger_command.json"  # the page's requests (Home)
 
     def __init__(self, robot, args):
         import subprocess
 
         self.robot, self.args, self.stop = robot, args, threading.Event()
+        self.note, self.homing, self._last = "", False, (0, False, "paused")
+        self.COMMAND.unlink(missing_ok=True)  # a request left from an earlier session is not this one's
         env = {**os.environ, "WEBUI_PORT": "8000", "PLACE_SEED": str(args.stage_seed), "PLACE_DATASET": args.dataset}
         log = open(ROOT / "outputs" / "dagger_place.log", "ab", buffering=0)
         self.server = subprocess.Popen([sys.executable, "webui/app.py"], cwd=str(ROOT), env=env,
@@ -226,14 +229,32 @@ class Placement:
             except Exception:  # noqa: BLE001 - a missed preview frame is not the session's problem
                 pass
 
-    def progress(self, episodes: int, phase, recording: bool) -> None:
+    def progress(self, episodes: int | None = None, phase=None, recording: bool | None = None) -> None:
         import json
 
+        e, r, ph = self._last
+        e = e if episodes is None else int(episodes)
+        r = r if recording is None else bool(recording)
+        ph = ph if phase is None else getattr(phase, "value", str(phase))
+        self._last = (e, r, ph)
         tmp = self.PROGRESS.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"dataset": self.args.dataset, "episodes": int(episodes),
-                                   "phase": getattr(phase, "value", str(phase)), "recording": bool(recording),
-                                   "seed": self.args.stage_seed + int(episodes), "updated": time.time()}))
+        tmp.write_text(json.dumps({"dataset": self.args.dataset, "episodes": e, "phase": ph, "recording": r,
+                                   "seed": self.args.stage_seed + e, "homing": self.homing, "note": self.note,
+                                   "updated": time.time()}))
         os.replace(tmp, self.PROGRESS)
+
+    def poll(self) -> str | None:
+        """A request from the page, once: 'home', or None. One stat a tick when idle."""
+        import json
+
+        if not self.COMMAND.exists():
+            return None
+        try:
+            cmd = json.loads(self.COMMAND.read_text()).get("cmd")
+        except (OSError, ValueError):
+            cmd = None
+        self.COMMAND.unlink(missing_ok=True)
+        return cmd
 
     def close(self) -> None:
         self.stop.set()
@@ -687,6 +708,31 @@ def main(argv: list[str] | None = None) -> int:
                     # autonomous frame into the episode that was just discarded -- which
                     # is exactly the stray 1-frame episode the first session ended with.
                     phase = state["phase"]
+
+                # --- the placement page's Home --------------------------------------------
+                # Only between episodes: paused, nothing recorded. Mid-episode it would put
+                # a jump into the trajectory, which is the one thing an episode must not have.
+                if placement is not None and placement.poll() == "home":
+                    if phase is not Phase.PAUSED or recording:
+                        placement.note = ("home refused: pause the policy (space) and save or discard "
+                                          "the episode first")
+                        placement.progress()
+                        print(f"\n{placement.note}", flush=True)
+                    else:
+                        placement.homing, placement.note = True, "homing..."
+                        placement.progress()
+                        try:
+                            _load("openpi_worker", "webui/openpi_worker.py").do_home(robot)
+                            raw = robot.get_observation()
+                            last_action = pose(raw)  # the pause now holds home
+                            if actuated:  # and the leader meets the arm there, as at any pause
+                                teleop_smooth_move_to(teleop, last_action, fps=fps)
+                            placement.note = "home done"
+                        except Exception as exc:  # noqa: BLE001 - a failed home leaves you paused
+                            placement.note = f"home failed: {exc}"
+                            print(f"\n{placement.note}", flush=True)
+                        placement.homing = False
+                        placement.progress()
 
                 # --- act ---------------------------------------------------------------
                 if phase is Phase.CORRECTING:

@@ -1138,7 +1138,26 @@ def place_state(flip: int = 0):
     fresh = PROGRESS.exists() and time.time() - PROGRESS.stat().st_mtime < 24 * 3600
     return {"ok": True, "episode": cur["episodes"], "seed": cur["seed"], "phase": cur.get("phase"),
             "recording": cur.get("recording"), "dataset": cur.get("dataset"), "session": fresh,
+            "homing": cur.get("homing", False), "note": cur.get("note", ""),
             "where": eval_stage.describe(cur["layout"], bool(flip))}
+
+
+@app.post("/api/place/home")
+def place_home():
+    """Ask the DAgger session to home the arm. It owns the bus, so it does the homing,
+    and only between episodes (paused, nothing recorded); it reports back in its progress."""
+    import uuid
+
+    if not (PROGRESS.exists() and time.time() - PROGRESS.stat().st_mtime < 24 * 3600):
+        return _err("no DAgger session running: start `./robot dagger --stages`", 409)
+    prog = _json.loads(PROGRESS.read_text())
+    if prog.get("phase") != "paused" or prog.get("recording"):
+        return _err("pause the policy (space) and save or discard the episode first", 409)
+    cmd = ROOT / "outputs" / "dagger_command.json"
+    tmp = cmd.with_suffix(".tmp")
+    tmp.write_text(_json.dumps({"cmd": "home", "id": uuid.uuid4().hex, "t": time.time()}))
+    os.replace(tmp, cmd)
+    return {"ok": True}
 
 
 @app.post("/api/place/skip")

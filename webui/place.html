@@ -24,7 +24,8 @@
   .where .k.cap { color:var(--cap); } .where .k.mug { color:var(--mug); }
   .ctl { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
   button { font:inherit; cursor:pointer; border:1px solid var(--line); background:#232936; color:var(--fg); padding:8px 12px; border-radius:8px; font-weight:600; }
-  button:hover { border-color:var(--acc); }
+  button:hover:not(:disabled) { border-color:var(--acc); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
   .hint { font-size:11.5px; color:var(--mut); margin-top:8px; }
   .msg { font-size:12px; color:#f0b94a; min-height:16px; margin-top:6px; }
 </style>
@@ -39,6 +40,7 @@
     </div>
     <div class="where" id="where"></div>
     <div class="ctl">
+      <button id="btnHome" title="home the arm between episodes (paused, nothing recorded)">🏠 Home</button>
       <button id="btnFlip">↻ Flip</button>
       <button id="btnSkip" title="this stage cannot be set up as drawn: draw another for this episode">⤼ Another stage</button>
     </div>
@@ -59,13 +61,19 @@ function showFlip() {
   stageKey = null; poll();
 }
 $('btnFlip').onclick = () => { flip = !flip; try { localStorage.setItem('evalFlip', F() ? '1' : '0'); } catch (e) {} showFlip(); };
+$('btnHome').onclick = async () => {
+  const r = await (await fetch('/api/place/home', {method: 'POST'})).json();
+  $('msg').textContent = r.ok ? 'homing…' : r.msg;
+};
 $('btnSkip').onclick = async () => { await fetch('/api/place/skip', {method: 'POST'}); stageKey = null; poll(); };
 $('liveImg').onerror = () => setTimeout(() => { $('liveImg').src = '/api/place/live.mjpg?flip=' + F() + '&t=' + Date.now(); }, 2000);
 async function poll() {
   try {
     const s = await (await fetch('/api/place/state?flip=' + F())).json();
     if (!s.ok) { $('msg').textContent = s.msg || 'no stage'; return; }
-    $('msg').textContent = s.session ? '' : 'no DAgger session has reported yet: stages follow its saved episodes once it runs';
+    $('msg').textContent = !s.session ? 'no DAgger session has reported yet: stages follow its saved episodes once it runs'
+      : (s.homing ? 'homing…' : (s.note || ''));
+    $('btnHome').disabled = !s.session || s.homing || s.recording || s.phase !== 'paused';
     $('ep').textContent = `episode ${s.episode} · seed ${s.seed}`;
     const ph = s.phase || '—';
     $('phase').textContent = s.recording ? `${ph} · recording` : ph;
