@@ -305,7 +305,10 @@ def main(argv: list[str] | None = None) -> int:
     fps = args.fps or int(ev.env("CAM_FPS", "30"))
     config_name = args.config or ev.infer_config(args.policy)
     print(f"loading {args.policy}  (config {config_name})", flush=True)
-    policy = policy_config.create_trained_policy(pi0_config.get_config(config_name), args.policy)
+    # ev.load_policy, as webui/openpi_worker.py: a checkpoint trained with --data.repo-id
+    # overridden (any DAgger, Sirius or sim round) files its norm stats under that dataset,
+    # not the config's, and create_trained_policy alone would not find them.
+    policy = ev.load_policy(pi0_config.get_config(config_name), args.policy)
 
     chunker = None
     if args.mode == "rtc":
