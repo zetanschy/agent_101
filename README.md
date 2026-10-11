@@ -408,6 +408,58 @@ resuming re-attaches to the same run. `--no-wandb` opts out per run,
 For a rented GPU box, [scripts/setup/setup_cloud.sh](scripts/setup/setup_cloud.sh) installs
 the same stack without Docker; then call `bash scripts/robot/train.sh` with identical flags.
 
+### openpi vs lerobot on the same dataset
+
+Both stacks fine-tune the same `pi05_base`, but their defaults train very different
+parts of it. These are the three runs for a comparison. Run them one at a time on a
+32 GB card: each run needs most of it.
+
+```bash
+D=zetanschy/cap_to_mug_real_50
+
+# 1. openpi: config pi05_soarm101_lora_cap_to_cup
+./robot openpi-train pi05_soarm101_lora_cap_to_cup --exp-name=openpi_pi05_lora_cap_to_mug_real_50 \
+    --data.repo-id=$D --overwrite
+
+# 2. lerobot with its own defaults
+./robot train --dataset $D --name lerobot_pi05_default_cap_to_mug_real_50 --push
+
+# 3. lerobot with openpi's recipe
+M=(--batch 16 --rank 16 --peft.lora_alpha=16
+   --peft.rank_pattern='{".*gemma_expert.*": 32}' --peft.alpha_pattern='{".*gemma_expert.*": 32}'
+   --peft.target_modules='.*(language_model|gemma_expert)\..*\.(self_attn\.(q|k|v|o)_proj|mlp\.(gate|up|down)_proj)'
+   --peft.full_training_modules='["vision_tower","multi_modal_projector","action_in_proj","action_out_proj","time_mlp_in","time_mlp_out"]'
+   --policy.optimizer_lr=5e-5 --policy.scheduler_warmup_steps=1000
+   --policy.scheduler_decay_steps=30000 --policy.scheduler_decay_lr=5e-6
+   --policy.optimizer_weight_decay=1e-10 --dataset.image_transforms.enable=true --seed=42)
+./robot train --dataset $D --name lerobot_smoke --steps 50 --no-wandb "${M[@]}"   # check first
+./robot train --dataset $D --name lerobot_pi05_openpi_recipe_cap_to_mug_real_50 --steps 30000 --push "${M[@]}"
+```
+
+| | 1. openpi | 2. lerobot defaults | 3. lerobot, openpi recipe |
+|---|---|---|---|
+| What trains | LoRA on the VLM (r16) and action expert (r32), plus the full SigLIP vision encoder, projector, action and time projections | LoRA r16 on the expert's q/v and the action projections | same as openpi |
+| Trainable params | ~450M | 1.29M | 450.4M |
+| LoRA scaling (alpha / rank) | 1.0 | 8/16 = 0.5 | 1.0 |
+| Steps × batch | 30k × 16 | 20k × 16 | 30k × 16 |
+| LR: peak → end, warmup | 5e-5 → 5e-6, 1000 | 2.5e-5 → 2.5e-6, 666 | 5e-5 → 5e-6, 1000 |
+| Weight decay | 1e-10 | 0.01 | 1e-10 |
+| Image augmentation | always on: crop, rotation, colour | off | on, lerobot's own set |
+| Same in all three | AdamW (0.9, 0.95), grad clip 1.0, chunk 50, 224 px, front → base and grip → left wrist, quantile normalization, absolute actions | | |
+
+**Check the smoke test before the long run.** The log's `num_learnable_params` should
+read about 450M; if it says 1.3M, the flags did not reach lerobot.
+
+The per-module ranks come from `--peft.rank_pattern` / `--peft.alpha_pattern`, which this
+repo's le101 fork adds to lerobot's PEFT config. Run 3 still differs from openpi in a few
+places that no flag reaches:
+- LoRA initialization;
+- the exact augmentation recipe;
+- how the quantile stats are computed (openpi: over the whole dataset; lerobot: averaged
+  per episode);
+- the loss, which openpi averages over all 32 padded action dims and lerobot over the 6
+  real ones. With AdamW this mainly changes when the 1.0 grad clip bites.
+
 ## Notes
 
 - **Prerequisite:** the host needs the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
