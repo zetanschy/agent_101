@@ -23,6 +23,23 @@ cd "$(dirname "$0")/../.."
 export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}"
 echo "XLA_PYTHON_CLIENT_MEM_FRACTION=$XLA_PYTHON_CLIENT_MEM_FRACTION"
 
+# HOST RAM, not VRAM, is what has killed long runs on the 5090 box. Every save copies the
+# whole checkpoint (7.2 GB params + 3.5 GB train_state) into RAM before writing it, which
+# lifts the trainer from ~5 GB to ~20 GB for half a minute, and the idle pages that pushes
+# out stay in swap -- so swap fills a little more with every save. With 30 GiB of RAM and
+# 8 GiB of swap, the sixth save, the final one, found both full and was OOM-killed twice
+# (cap_to_mug_dr_50, cap_to_mug_real_50) after 12 h of training, with nothing pushed.
+# A warning only: nothing about the run changes, and a cloud box has RAM to spare.
+min_mem_gib=44
+read -r mem_kib swap_kib < <(awk '/^MemTotal:/{m=$2} /^SwapTotal:/{s=$2} END{print m, s}' /proc/meminfo)
+mem_gib=$(( (mem_kib + swap_kib) / 1048576 ))
+if [ "$mem_gib" -lt "$min_mem_gib" ]; then
+  echo "WARNING: RAM + swap is ${mem_gib} GiB, under the ${min_mem_gib} GiB a long run's checkpoint" >&2
+  echo "  saves can need; the final save may be OOM-killed after the whole run has trained." >&2
+  echo "  Add swap first: sudo fallocate -l 8G /swapfile2 && sudo chmod 600 /swapfile2 &&" >&2
+  echo "  sudo mkswap /swapfile2 && sudo swapon /swapfile2, and add it to /etc/fstab." >&2
+fi
+
 # Credentials from .env / .env.local, same loader as train.sh. Needed because
 # `bash scripts/setup/login.sh` on a Docker-less box writes .env.local, and openpi's
 # train.py wants WANDB_API_KEY (wandb_enabled defaults True) while the dataset pull
