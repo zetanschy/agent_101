@@ -184,6 +184,7 @@ Each frame's weight is w(c) = P*(c) / P(c), applied to sampling like the ramp ab
   demos against one round), P*(demo) = P(demo) would leave robot a negative share. Demo and
   robot then split the remaining half in their natural ratio, and the stats say so.
 - On Vast.ai, pass `--train-arg --sirius` to the `vast-train` skill's runner.
+- **The cap-to-mug rounds**, with every command as it was run: [DAGGER.md](DAGGER.md).
 
 ### A round on another machine
 
