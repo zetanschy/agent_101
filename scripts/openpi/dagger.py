@@ -209,12 +209,13 @@ class Placement:
         self.robot, self.args, self.stop = robot, args, threading.Event()
         self.note, self.homing, self._last = "", False, (0, False, "paused")
         self.COMMAND.unlink(missing_ok=True)  # a request left from an earlier session is not this one's
-        env = {**os.environ, "WEBUI_PORT": "8000", "PLACE_SEED": str(args.stage_seed), "PLACE_DATASET": args.dataset}
+        env = {**os.environ, "WEBUI_PORT": "8000", "PLACE_SEED": str(args.stage_seed), "PLACE_DATASET": args.dataset,
+               "PLACE_ONLY": "1"}
         log = open(ROOT / "outputs" / "dagger_place.log", "ab", buffering=0)
         self.server = subprocess.Popen([sys.executable, "webui/app.py"], cwd=str(ROOT), env=env,
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         threading.Thread(target=self._preview, daemon=True).start()
-        print("placement: http://localhost:<OPENPI_WEBUI_PORT, 8011 by default>/place", flush=True)
+        print("placement: http://localhost:<OPENPI_WEBUI_PORT, 8001 by default>/place", flush=True)
 
     def _preview(self) -> None:
         import cv2

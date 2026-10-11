@@ -20,7 +20,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import Body, FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 
 ROOT = Path(__file__).resolve().parent.parent          # /workspace
 WEBUI = ROOT / "webui"
@@ -38,6 +38,21 @@ _FPS = float(os.environ.get("CAM_FPS", "30") or 30)
 _LAT_RE = re.compile(r"running slower \(([0-9.]+) Hz\)|real_delay=([0-9]+)|inference ([0-9]+) ms")
 
 app = FastAPI()
+
+# Under `./robot dagger --stages` this server is only the placement page. The DAgger session
+# owns the arm and the GPU, so the control panel's Load (a second policy: out of memory on a
+# 12 GB card) or Home would fight it for both. Everything but /place is refused.
+if os.environ.get("PLACE_ONLY") == "1":
+    @app.middleware("http")
+    async def _place_only(request, call_next):
+        path = request.url.path
+        if path == "/place" or path.startswith("/api/place/"):
+            return await call_next(request)
+        if path == "/":
+            return RedirectResponse("/place")
+        return JSONResponse({"ok": False, "msg": "this server is the DAgger placement page only: "
+                             "the session owns the arm and the GPU"}, status_code=403)
+
 _lock = threading.Lock()
 _worker: subprocess.Popen | None = None   # persistent inference worker
 _loaded: dict | None = None               # signature of what's loaded
