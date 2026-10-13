@@ -341,7 +341,8 @@ case "$cmd" in
              port="${OPENPI_WEBUI_PORT:-8001}"; echo "openpi web UI -> http://localhost:${port}"
              $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" -p "${port}:8000" openpi \
                python webui/app.py ;;
-  sim-eval)             # score an openpi checkpoint on the live sim: N trials graded by the sim
+  sim-eval)             # score a checkpoint on the live sim: N trials graded by the sim
+                        # (openpi /checkpoints/<run>, or a lerobot repo id / dir -> the lerobot image)
              needs_docker sim-eval
              case " $* " in
                *" --report "*|*" --compare "*)   # rebuild a report / compare runs: no sim needed
@@ -350,8 +351,19 @@ case "$cmd" in
                *)
                  case " $* " in *" --sim"*) ;; *) set -- --sim mujoco "$@" ;; esac
                  sim_up "$@"
-                 $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" openpi \
-                   python scripts/openpi/sim_eval.py "${REST[@]}" ;;
+                 # openpi checkpoints are /checkpoints/<run> dirs with params/; anything else is
+                 # a lerobot policy, which needs CUDA torch: the lerobot image (lerobot_chunker.py)
+                 pol=""; for ((i = 0; i < ${#REST[@]}; i++)); do
+                   [ "${REST[$i]}" = --policy ] && pol="${REST[$((i + 1))]}"
+                   case "${REST[$i]}" in --policy=*) pol="${REST[$i]#--policy=}" ;; esac
+                 done
+                 if [ -n "$pol" ] && [ "${pol#/}" = "$pol" ]; then
+                   echo "lerobot policy: $pol (lerobot image)"
+                   $DC run --rm "${SIM_ENV[@]}" lerobot python scripts/openpi/sim_eval.py "${REST[@]}"
+                 else
+                   $DC -f docker-compose.openpi.yml run --rm "${SIM_ENV[@]}" openpi \
+                     python scripts/openpi/sim_eval.py "${REST[@]}"
+                 fi ;;
              esac ;;
   real-eval)            # the Eval page on the REAL arm: seeded stages drawn by MuJoCo, operator grades
              needs_docker real-eval; stage_up
@@ -585,6 +597,7 @@ so rather than failing with "docker: command not found".
                                 (real leader; [--sim-layout real:N|random[:K]] [--sim-viewer];
                                 l = new object layout; see sim/real2sim/live/README.md)
   ./robot sim-eval --policy /checkpoints/X [--episodes 100] [--timeout 45]
+  ./robot sim-eval --policy U/lerobot_model ...   a lerobot policy (Hub id or dir): same stages and loop, lerobot image
                                 score an openpi checkpoint on the MuJoCo sim: seeded trials
                                 graded by the sim, report + failure map + videos in
                                 outputs/sim_eval/ (--report DIR, --compare DIR_A DIR_B)

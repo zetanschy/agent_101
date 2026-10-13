@@ -142,13 +142,12 @@ class Sim:
 
 
 def run(a) -> pathlib.Path:
-    ev = _load("openpi_evaluate", "scripts/openpi/evaluate.py")
     chunk_loop = _load("openpi_chunk_loop", "scripts/openpi/chunk_loop.py")
+    lc = _load("lerobot_chunker", "scripts/openpi/lerobot_chunker.py")
     import cv2
     from lerobot.utils.robot_utils import precise_sleep
     from lerobot_robot_real2sim import Real2Sim, Real2SimConfig
-    from openpi.policies.rtc import RealTimeChunker
-    from openpi.training import config as pi0_config
+    lerobot = lc.is_lerobot_checkpoint(a.policy)  # ./robot sim-eval runs that one in the lerobot image
 
     name = a.name or f"{pathlib.Path(a.policy.rstrip('/')).name}_seed{a.seed}_n{a.episodes}"
     out = OUT / name
@@ -162,21 +161,37 @@ def run(a) -> pathlib.Path:
     sim = Sim()
     run_info = {k: v for k, v in vars(a).items() if k not in ("report", "compare")}
     run_info["sim_dr"] = sim.status().get("dr_level", "off")  # ./robot sim-eval --sim-dr LEVEL
-    (out / "run.json").write_text(json.dumps(run_info, indent=2))
-    cfg = pi0_config.get_config(a.config or ev.infer_config(a.policy))
-    policy = ev.load_policy(cfg, a.policy)
+    run_info["stack"] = "lerobot" if lerobot else "openpi"
     robot = Real2Sim(Real2SimConfig(port=os.environ["ROBOT_PORT"], id="sim_eval", cameras=None, use_degrees=True))
     os.environ["R2S_NEW_LAYOUT_EACH_EPISODE"] = "0"  # this script places every stage itself
     robot.connect()
-    chunker = RealTimeChunker(policy, prefix_attention_schedule="exp", max_guidance_weight=5.0, jacobian="identity")
-    raw = robot.get_observation()
-    warm = ev.build_observation(robot, raw, a.task)
     t = time.perf_counter()
-    policy.infer(warm)
+    # Both stacks get the same RTC: exp schedule, max guidance 5, identity Jacobian,
+    # s = the whole overlap (see lerobot_chunker.py).
+    if lerobot:
+        chunker = lc.LerobotChunker(a.policy, robot, a.task)
+        run_info["policy_info"] = chunker.describe()
+        label = f"lerobot {chunker.config.type}"
+
+        def observe(raw):
+            return raw
+    else:
+        from openpi.policies.rtc import RealTimeChunker
+        from openpi.training import config as pi0_config
+        ev = _load("openpi_evaluate", "scripts/openpi/evaluate.py")
+        cfg = pi0_config.get_config(a.config or ev.infer_config(a.policy))
+        policy = ev.load_policy(cfg, a.policy)
+        chunker = RealTimeChunker(policy, prefix_attention_schedule="exp", max_guidance_weight=5.0, jacobian="identity")
+        label = f"config {cfg.name}"
+
+        def observe(raw):
+            return ev.build_observation(robot, raw, a.task)
+    (out / "run.json").write_text(json.dumps(run_info, indent=2))
+    warm = observe(robot.get_observation())
     chunker.infer(warm, prefix_start=0, inference_delay=1)
     chunker.infer(warm, prefix_start=1, inference_delay=1)
     chunker.reset()
-    print(f"loaded {a.policy} (config {cfg.name}); warm-up {time.perf_counter() - t:.0f} s", flush=True)
+    print(f"loaded {a.policy} ({label}); warm-up {time.perf_counter() - t:.0f} s", flush=True)
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     motors = list(robot.action_features)
     kept_successes = sum(1 for r in done.values() if r["success"] and r.get("video"))
@@ -220,7 +235,7 @@ def run(a) -> pathlib.Path:
             sched.set_horizon(a.actions, in_flight=pending is not None)
             plan = sched.plan(in_flight=pending is not None)
             if plan.action == "infer":
-                chunk, dt = infer_only(ev.build_observation(robot, robot.get_observation(), a.task),
+                chunk, dt = infer_only(observe(robot.get_observation()),
                                        plan.request.prefix_start, plan.request.inference_delay)
                 sched.adopt(len(chunk), delay=plan.request.inference_delay)
                 lat.append(dt)
@@ -232,7 +247,7 @@ def run(a) -> pathlib.Path:
             else:
                 if plan.request is not None:
                     promised = plan.request.inference_delay
-                    pending = pool.submit(infer_only, ev.build_observation(robot, robot.get_observation(), a.task),
+                    pending = pool.submit(infer_only, observe(robot.get_observation()),
                                           plan.request.prefix_start, promised)
                 act = chunk[sched.take()]
                 robot.send_action({m: float(act[k]) for k, m in enumerate(motors) if k < len(act)})
