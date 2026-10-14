@@ -102,26 +102,25 @@ later.
 
 ### On another machine
 
-The twin reads files that exist only on the workstation: the CoACD finger pieces and the
-mat look are under the gitignored `sim/outputs/`, and the rest pose comes from the
-calibration dataset in the local Hugging Face cache. Copy them first (`WS` = the
-workstation):
+The twin reads three inputs besides its code. Two are force-tracked under the
+gitignored `sim/outputs/`: the CoACD finger pieces (plain git) and the mat look (Git LFS).
+The third is the calibration dataset the rest pose comes from, on the Hub.
 
 ```bash
-git pull && git submodule update --init thirdparty/mjlab
+git pull && git lfs pull                      # needs git-lfs; the look is LFS
+git submodule update --init thirdparty/mjlab
 (cd thirdparty/mjlab && env -u PYTHONPATH uv sync --frozen)   # mjlab's own venv
-D=testingt_real2sim_20260927_152936; R=/mnt/storage/Desktop/agent_101
-mkdir -p sim/outputs/real2sim/$D/mujoco ~/.cache/huggingface/lerobot/soarm101
-rsync -a WS:$R/sim/outputs/real2sim/$D/mujoco/coacd sim/outputs/real2sim/$D/mujoco/    # 1.4 MB, required
-rsync -a WS:.cache/huggingface/lerobot/soarm101/$D ~/.cache/huggingface/lerobot/soarm101/   # 27 MB, required
-rsync -a WS:$R/sim/outputs/real2sim/$D/look sim/outputs/real2sim/$D/   # 62 MB, the mat texture (cameras)
+D=testingt_real2sim_20260927_152936
+huggingface-cli download --repo-type dataset zetanschy/$D \
+    --local-dir ~/.cache/huggingface/lerobot/soarm101/$D      # where the twin reads it
 cd thirdparty/mjlab
 env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python scripts/so101_twin/check_twin.py static
 ```
 
 `twin.py` finds the repo as the parent of `thirdparty/mjlab`; set `AGENT101_ROOT` if
-mjlab lives elsewhere. Every line of `check_twin.py static` must say `ok`. Without the
-look, the task still builds, with plain colours.
+mjlab lives elsewhere. Every line of `check_twin.py static` must say `ok`. Do not
+regenerate the finger pieces with `./robot real2sim mujoco fingers`: the decomposition
+is not reproducible, and the check compares them exactly.
 
 ### Training the teacher
 
