@@ -1,0 +1,6 @@
+sim/outputs/real2sim/testingt_real2sim_20260927_152936/look/**/*.npy filter=lfs diff=lfs merge=lfs -text
+sim/outputs/real2sim/testingt_real2sim_20260927_152936/look/**/*.npz filter=lfs diff=lfs merge=lfs -text
+sim/outputs/real2sim/testingt_real2sim_20260927_152936/look/**/*.png filter=lfs diff=lfs merge=lfs -text
+sim/outputs/real2sim/testingt_real2sim_20260927_152936/look/*.npy filter=lfs diff=lfs merge=lfs -text
+sim/outputs/real2sim/testingt_real2sim_20260927_152936/look/*.npz filter=lfs diff=lfs merge=lfs -text
+sim/outputs/real2sim/testingt_real2sim_20260927_152936/look/*.png filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,1761 @@
+{
+ "schema": "real2sim.look.samples/1",
+ "dataset": "testingt_real2sim_20260927_152936",
+ "scene_hash": "6f282e812cc585f5",
+ "labels": {
+  "background": 0,
+  "arm": 1,
+  "fingers": 2,
+  "cap": 3,
+  "mug": 4
+ },
+ "cameras": {
+  "front": {
+   "source": "real2sim.camera.Camera.to_config",
+   "width": 640,
+   "height": 480,
+   "intrinsics": {
+    "source": "unspecified",
+    "K": [
+     991.4,
+     991.4,
+     320.7,
+     303.3
+    ]
+   },
+   "distortion": {
+    "source": "unspecified",
+    "dist": [
+     -0.043316,
+     2.087879,
+     0.0,
+     0.0,
+     -0.0
+    ]
+   },
+   "pose": {
+    "source": "unspecified",
+    "parent": "world",
+    "T_parent_cam": [
+     [
+      -0.999205695,
+      0.019813113,
+      0.03457484,
+      0.001546395
+     ],
+     [
+      0.013854226,
+      0.986233555,
+      -0.164776931,
+      0.041776341
+     ],
+     [
+      -0.037363612,
+      -0.16416704,
+      -0.985724679,
+      1.110870321
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   }
+  },
+  "grip": {
+   "source": "real2sim.camera.Camera.to_config",
+   "width": 640,
+   "height": 480,
+   "intrinsics": {
+    "source": "unspecified",
+    "K": [
+     695.5121,
+     657.2072,
+     333.62,
+     220.9633
+    ]
+   },
+   "distortion": {
+    "source": "unspecified",
+    "dist": [
+     -0.455468,
+     0.271998,
+     0.0,
+     -0.0,
+     0.0
+    ]
+   },
+   "pose": {
+    "source": "unspecified",
+    "parent": "gripper",
+    "T_parent_cam": [
+     [
+      0.998833939,
+      -0.044296901,
+      0.0191976,
+      0.003100408
+     ],
+     [
+      -0.023718585,
+      -0.796602293,
+      -0.604038257,
+      0.073454093
+     ],
+     [
+      0.042049875,
+      0.602878571,
+      -0.796724066,
+      -0.004106627
+     ],
+     [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   }
+  }
+ },
+ "summary": {
+  "n": 24,
+  "phases": [
+   "rest",
+   "approach",
+   "descend",
+   "grasp",
+   "lift",
+   "carry",
+   "over_mug",
+   "release"
+  ],
+  "episodes": [
+   0,
+   1,
+   2
+  ],
+  "front_robot_model_vs_refined_iou_median": 0.8586,
+  "grip_fingers_model_vs_data_iou_median": 0.931,
+  "grip_fingers_model_vs_data_iou_min_max": [
+   0.7223,
+   0.977
+  ],
+  "front_duplicates": 6,
+  "speed_deg_s_median_max": [
+   0.0,
+   71.21
+  ]
+ },
+ "samples": [
+  {
+   "id": "e0_0003_rest",
+   "episode": 0,
+   "frame": 3,
+   "row": 3,
+   "phase": "rest",
+   "cap": null,
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": true,
+   "state": [
+    2.1538,
+    -98.6813,
+    95.7802,
+    74.9011,
+    -51.6483,
+    1.4474
+   ],
+   "front": {
+    "image": "e0_0003_rest_front.png",
+    "labels": "e0_0003_rest_front_labels.png",
+    "label_px": {
+     "background": 281276,
+     "arm": 16287,
+     "fingers": 874,
+     "cap": 531,
+     "mug": 8232
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8463
+    },
+    "white_balance_gain": [
+     1.0958000421524048,
+     0.998199999332428,
+     0.9078999757766724
+    ]
+   },
+   "grip": {
+    "image": "e0_0003_rest_grip.png",
+    "labels": "e0_0003_rest_grip_labels.png",
+    "label_px": {
+     "background": 229818,
+     "arm": 0,
+     "fingers": 77382,
+     "cap": 0,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9588,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9014999866485596,
+      1.0,
+      0.8224999904632568
+     ],
+     "sigma": 1.15,
+     "exposure": 1.3516,
+     "exposure_from_frame": 4,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e0_0146_approach",
+   "episode": 0,
+   "frame": 146,
+   "row": 146,
+   "phase": "approach",
+   "cap": "A",
+   "speed_deg_s": 1.32,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -24.8352,
+    4.1758,
+    30.022,
+    31.7363,
+    -90.2418,
+    24.4737
+   ],
+   "front": {
+    "image": "e0_0146_approach_front.png",
+    "labels": "e0_0146_approach_front_labels.png",
+    "label_px": {
+     "background": 273355,
+     "arm": 24554,
+     "fingers": 1027,
+     "cap": 32,
+     "mug": 8232
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8605
+    },
+    "white_balance_gain": [
+     1.0758999586105347,
+     0.9258000254631042,
+     0.8801000118255615
+    ]
+   },
+   "grip": {
+    "image": "e0_0146_approach_grip.png",
+    "labels": "e0_0146_approach_grip_labels.png",
+    "label_px": {
+     "background": 223321,
+     "arm": 0,
+     "fingers": 68520,
+     "cap": 15359,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9476,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9473000168800354,
+      1.0,
+      0.8205000162124634
+     ],
+     "sigma": 1.15,
+     "exposure": 1.3575,
+     "exposure_from_frame": 144,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e0_0206_descend",
+   "episode": 0,
+   "frame": 206,
+   "row": 206,
+   "phase": "descend",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -28.5275,
+    8.2198,
+    35.033,
+    21.8901,
+    -93.0549,
+    25.0
+   ],
+   "front": {
+    "image": "e0_0206_descend_front.png",
+    "labels": "e0_0206_descend_front_labels.png",
+    "label_px": {
+     "background": 273608,
+     "arm": 24179,
+     "fingers": 1139,
+     "cap": 42,
+     "mug": 8232
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8564
+    },
+    "white_balance_gain": [
+     1.069700002670288,
+     0.9244999885559082,
+     0.8808000087738037
+    ]
+   },
+   "grip": {
+    "image": "e0_0206_descend_grip.png",
+    "labels": "e0_0206_descend_grip_labels.png",
+    "label_px": {
+     "background": 214319,
+     "arm": 0,
+     "fingers": 69328,
+     "cap": 23553,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.977,
+     "finger_prior_spread_pct": 0.13,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9351999759674072,
+      1.0,
+      0.8105000257492065
+     ],
+     "sigma": 1.15,
+     "exposure": 1.2556,
+     "exposure_from_frame": 204,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e0_0242_grasp",
+   "episode": 0,
+   "frame": 242,
+   "row": 242,
+   "phase": "grasp",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -26.9451,
+    8.2198,
+    35.033,
+    21.6264,
+    -91.5604,
+    14.8026
+   ],
+   "front": {
+    "image": "e0_0242_grasp_front.png",
+    "labels": "e0_0242_grasp_front_labels.png",
+    "label_px": {
+     "background": 273823,
+     "arm": 24253,
+     "fingers": 892,
+     "cap": 0,
+     "mug": 8232
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8471
+    },
+    "white_balance_gain": [
+     1.0774999856948853,
+     0.9279999732971191,
+     0.8820000290870667
+    ]
+   },
+   "grip": {
+    "image": "e0_0242_grasp_grip.png",
+    "labels": "e0_0242_grasp_grip_labels.png",
+    "label_px": {
+     "background": 211058,
+     "arm": 0,
+     "fingers": 73265,
+     "cap": 22877,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9284,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9462000131607056,
+      1.0,
+      0.8312000036239624
+     ],
+     "sigma": 1.15,
+     "exposure": 1.2441,
+     "exposure_from_frame": 240,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e0_0271_lift",
+   "episode": 0,
+   "frame": 271,
+   "row": 271,
+   "phase": "lift",
+   "cap": "A",
+   "speed_deg_s": 52.75,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -14.5495,
+    -10.3297,
+    16.1319,
+    69.011,
+    -78.8132,
+    14.8026
+   ],
+   "front": {
+    "image": "e0_0271_lift_front.png",
+    "labels": "e0_0271_lift_front_labels.png",
+    "label_px": {
+     "background": 273066,
+     "arm": 24879,
+     "fingers": 792,
+     "cap": 231,
+     "mug": 8232
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.7961
+    },
+    "white_balance_gain": [
+     1.0809999704360962,
+     0.9377999901771545,
+     0.8888999819755554
+    ]
+   },
+   "grip": {
+    "image": "e0_0271_lift_grip.png",
+    "labels": "e0_0271_lift_grip_labels.png",
+    "label_px": {
+     "background": 212195,
+     "arm": 0,
+     "fingers": 71573,
+     "cap": 23432,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9254,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9365000128746033,
+      1.0,
+      0.8194000124931335
+     ],
+     "sigma": 1.15,
+     "exposure": 1.7147,
+     "exposure_from_frame": 272,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e0_0343_carry",
+   "episode": 0,
+   "frame": 343,
+   "row": 343,
+   "phase": "carry",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": true,
+   "grip_dup": false,
+   "state": [
+    50.8571,
+    -25.0989,
+    20.7912,
+    47.1209,
+    -10.4176,
+    14.8026
+   ],
+   "front": {
+    "image": "e0_0343_carry_front.png",
+    "labels": "e0_0343_carry_front_labels.png",
+    "label_px": {
+     "background": 274019,
+     "arm": 26641,
+     "fingers": 2739,
+     "cap": 68,
+     "mug": 3733
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8829
+    },
+    "white_balance_gain": [
+     1.093999981880188,
+     0.9573000073432922,
+     0.9082000255584717
+    ]
+   },
+   "grip": {
+    "image": "e0_0343_carry_grip.png",
+    "labels": "e0_0343_carry_grip_labels.png",
+    "label_px": {
+     "background": 166926,
+     "arm": 0,
+     "fingers": 75332,
+     "cap": 22901,
+     "mug": 42041
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9273,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": 0.2447,
+     "mug_px": 64935,
+     "mug_red_anchor_px": 11483
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9110999703407288,
+      1.0,
+      0.8309999704360962
+     ],
+     "sigma": 1.15,
+     "exposure": 0.7367,
+     "exposure_from_frame": 344,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e0_0344_over_mug",
+   "episode": 0,
+   "frame": 344,
+   "row": 344,
+   "phase": "over_mug",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    50.8571,
+    -25.0989,
+    20.7912,
+    47.1209,
+    -10.4176,
+    14.8026
+   ],
+   "front": {
+    "image": "e0_0344_over_mug_front.png",
+    "labels": "e0_0344_over_mug_front_labels.png",
+    "label_px": {
+     "background": 274025,
+     "arm": 26641,
+     "fingers": 2744,
+     "cap": 63,
+     "mug": 3727
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8828
+    },
+    "white_balance_gain": [
+     1.093999981880188,
+     0.9573000073432922,
+     0.9082000255584717
+    ]
+   },
+   "grip": {
+    "image": "e0_0344_over_mug_grip.png",
+    "labels": "e0_0344_over_mug_grip_labels.png",
+    "label_px": {
+     "background": 166302,
+     "arm": 0,
+     "fingers": 75244,
+     "cap": 22914,
+     "mug": 42740
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9269,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": 0.2467,
+     "mug_px": 65645,
+     "mug_red_anchor_px": 11656
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9225000143051147,
+      1.0,
+      0.8312000036239624
+     ],
+     "sigma": 1.15,
+     "exposure": 0.7367,
+     "exposure_from_frame": 344,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e0_0370_release",
+   "episode": 0,
+   "frame": 370,
+   "row": 370,
+   "phase": "release",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    49.6264,
+    -25.0989,
+    20.7912,
+    47.1209,
+    -3.7363,
+    16.6447
+   ],
+   "front": {
+    "image": "e0_0370_release_front.png",
+    "labels": "e0_0370_release_front_labels.png",
+    "label_px": {
+     "background": 273652,
+     "arm": 26550,
+     "fingers": 2772,
+     "cap": 113,
+     "mug": 4113
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8816
+    },
+    "white_balance_gain": [
+     1.1101000308990479,
+     0.9682000279426575,
+     0.92330002784729
+    ]
+   },
+   "grip": {
+    "image": "e0_0370_release_grip.png",
+    "labels": "e0_0370_release_grip_labels.png",
+    "label_px": {
+     "background": 185807,
+     "arm": 0,
+     "fingers": 74408,
+     "cap": 477,
+     "mug": 46508
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9558,
+     "finger_prior_spread_pct": 0.86,
+     "mug_model_vs_image_iou": 0.3168,
+     "mug_px": 46506,
+     "mug_red_anchor_px": 17394
+    },
+    "colour_model": {
+     "white_balance": [
+      0.8891000151634216,
+      1.0,
+      0.8504999876022339
+     ],
+     "sigma": 1.15,
+     "exposure": 1.9394,
+     "exposure_from_frame": 368,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0003_rest",
+   "episode": 1,
+   "frame": 3,
+   "row": 491,
+   "phase": "rest",
+   "cap": null,
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    11.2967,
+    -103.2527,
+    95.0769,
+    68.9231,
+    -79.7802,
+    1.3158
+   ],
+   "front": {
+    "image": "e1_0003_rest_front.png",
+    "labels": "e1_0003_rest_front_labels.png",
+    "label_px": {
+     "background": 279421,
+     "arm": 16660,
+     "fingers": 1329,
+     "cap": 1953,
+     "mug": 7837
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8641
+    },
+    "white_balance_gain": [
+     0.8863000273704529,
+     1.038100004196167,
+     1.1101000308990479
+    ]
+   },
+   "grip": {
+    "image": "e1_0003_rest_grip.png",
+    "labels": "e1_0003_rest_grip_labels.png",
+    "label_px": {
+     "background": 227403,
+     "arm": 0,
+     "fingers": 79797,
+     "cap": 0,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9757,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9416999816894531,
+      1.0,
+      0.7882000207901001
+     ],
+     "sigma": 1.15,
+     "exposure": 1.5208,
+     "exposure_from_frame": 4,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0157_approach",
+   "episode": 1,
+   "frame": 157,
+   "row": 645,
+   "phase": "approach",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    61.3187,
+    18.9451,
+    6.4615,
+    61.2747,
+    -74.7692,
+    25.6579
+   ],
+   "front": {
+    "image": "e1_0157_approach_front.png",
+    "labels": "e1_0157_approach_front_labels.png",
+    "label_px": {
+     "background": 271112,
+     "arm": 25920,
+     "fingers": 1012,
+     "cap": 1319,
+     "mug": 7837
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8576
+    },
+    "white_balance_gain": [
+     0.9075999855995178,
+     1.05239999294281,
+     1.1230000257492065
+    ]
+   },
+   "grip": {
+    "image": "e1_0157_approach_grip.png",
+    "labels": "e1_0157_approach_grip_labels.png",
+    "label_px": {
+     "background": 232040,
+     "arm": 0,
+     "fingers": 51392,
+     "cap": 23768,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.7377,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9768000245094299,
+      1.0,
+      0.777999997138977
+     ],
+     "sigma": 1.15,
+     "exposure": 1.277,
+     "exposure_from_frame": 156,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0425_descend",
+   "episode": 1,
+   "frame": 425,
+   "row": 913,
+   "phase": "descend",
+   "cap": "B",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    41.4506,
+    22.7253,
+    14.6374,
+    22.6813,
+    -97.3626,
+    36.4474
+   ],
+   "front": {
+    "image": "e1_0425_descend_front.png",
+    "labels": "e1_0425_descend_front_labels.png",
+    "label_px": {
+     "background": 270586,
+     "arm": 26388,
+     "fingers": 1702,
+     "cap": 687,
+     "mug": 7837
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8712
+    },
+    "white_balance_gain": [
+     1.0708999633789062,
+     1.02839994430542,
+     1.0006999969482422
+    ]
+   },
+   "grip": {
+    "image": "e1_0425_descend_grip.png",
+    "labels": "e1_0425_descend_grip_labels.png",
+    "label_px": {
+     "background": 221513,
+     "arm": 0,
+     "fingers": 57960,
+     "cap": 27727,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9406,
+     "finger_prior_spread_pct": 0.13,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9302999973297119,
+      1.0,
+      0.8245999813079834
+     ],
+     "sigma": 1.15,
+     "exposure": 2.7354,
+     "exposure_from_frame": 424,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0752_grasp",
+   "episode": 1,
+   "frame": 752,
+   "row": 1240,
+   "phase": "grasp",
+   "cap": "C",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -55.3407,
+    22.3736,
+    1.8022,
+    59.8681,
+    -107.1209,
+    14.2105
+   ],
+   "front": {
+    "image": "e1_0752_grasp_front.png",
+    "labels": "e1_0752_grasp_front_labels.png",
+    "label_px": {
+     "background": 273214,
+     "arm": 25963,
+     "fingers": 186,
+     "cap": 0,
+     "mug": 7837
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8538
+    },
+    "white_balance_gain": [
+     1.0182000398635864,
+     0.9782999753952026,
+     0.9642000198364258
+    ]
+   },
+   "grip": {
+    "image": "e1_0752_grasp_grip.png",
+    "labels": "e1_0752_grasp_grip_labels.png",
+    "label_px": {
+     "background": 217966,
+     "arm": 0,
+     "fingers": 65739,
+     "cap": 23495,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.8373,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.815500020980835,
+      1.0,
+      1.059399962425232
+     ],
+     "sigma": 1.15,
+     "exposure": 1.5221,
+     "exposure_from_frame": 752,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0279_lift",
+   "episode": 1,
+   "frame": 279,
+   "row": 767,
+   "phase": "lift",
+   "cap": "A",
+   "speed_deg_s": 13.19,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -11.2967,
+    0.2198,
+    -9.978,
+    77.8901,
+    -145.7143,
+    15.7895
+   ],
+   "front": {
+    "image": "e1_0279_lift_front.png",
+    "labels": "e1_0279_lift_front_labels.png",
+    "label_px": {
+     "background": 273418,
+     "arm": 27141,
+     "fingers": 1075,
+     "cap": 1389,
+     "mug": 4177
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.83
+    },
+    "white_balance_gain": [
+     1.000499963760376,
+     1.017799973487854,
+     1.0334999561309814
+    ]
+   },
+   "grip": {
+    "image": "e1_0279_lift_grip.png",
+    "labels": "e1_0279_lift_grip_labels.png",
+    "label_px": {
+     "background": 203382,
+     "arm": 0,
+     "fingers": 56317,
+     "cap": 24173,
+     "mug": 23328
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.7223,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": 0.2613,
+     "mug_px": 47482,
+     "mug_red_anchor_px": 194
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9553999900817871,
+      1.0,
+      0.7949000000953674
+     ],
+     "sigma": 1.15,
+     "exposure": 0.5309,
+     "exposure_from_frame": 280,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0541_carry",
+   "episode": 1,
+   "frame": 541,
+   "row": 1029,
+   "phase": "carry",
+   "cap": "B",
+   "speed_deg_s": 7.91,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -6.1099,
+    14.7253,
+    -37.9341,
+    78.2418,
+    -138.6813,
+    14.6711
+   ],
+   "front": {
+    "image": "e1_0541_carry_front.png",
+    "labels": "e1_0541_carry_front_labels.png",
+    "label_px": {
+     "background": 273518,
+     "arm": 29776,
+     "fingers": 1495,
+     "cap": 655,
+     "mug": 1756
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.869
+    },
+    "white_balance_gain": [
+     1.0715999603271484,
+     1.023900032043457,
+     1.0029000043869019
+    ]
+   },
+   "grip": {
+    "image": "e1_0541_carry_grip.png",
+    "labels": "e1_0541_carry_grip_labels.png",
+    "label_px": {
+     "background": 163287,
+     "arm": 0,
+     "fingers": 74573,
+     "cap": 28833,
+     "mug": 40507
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9337,
+     "finger_prior_spread_pct": 0.13,
+     "mug_model_vs_image_iou": 0.5795,
+     "mug_px": 69306,
+     "mug_red_anchor_px": 130
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9189000129699707,
+      1.0,
+      0.824999988079071
+     ],
+     "sigma": 1.15,
+     "exposure": 0.3857,
+     "exposure_from_frame": 540,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0804_over_mug",
+   "episode": 1,
+   "frame": 804,
+   "row": 1292,
+   "phase": "over_mug",
+   "cap": "C",
+   "speed_deg_s": 22.42,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -2.5934,
+    -3.2967,
+    -5.4066,
+    58.1099,
+    -117.6703,
+    14.2105
+   ],
+   "front": {
+    "image": "e1_0804_over_mug_front.png",
+    "labels": "e1_0804_over_mug_front_labels.png",
+    "label_px": {
+     "background": 274898,
+     "arm": 28154,
+     "fingers": 1869,
+     "cap": 325,
+     "mug": 1954
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8105
+    },
+    "white_balance_gain": [
+     1.0598000288009644,
+     1.013700008392334,
+     0.9914000034332275
+    ]
+   },
+   "grip": {
+    "image": "e1_0804_over_mug_grip.png",
+    "labels": "e1_0804_over_mug_grip_labels.png",
+    "label_px": {
+     "background": 182488,
+     "arm": 0,
+     "fingers": 73446,
+     "cap": 25307,
+     "mug": 25959
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9004,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": 0.384,
+     "mug_px": 49803,
+     "mug_red_anchor_px": 9468
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9383000135421753,
+      1.0,
+      0.800599992275238
+     ],
+     "sigma": 1.15,
+     "exposure": 0.473,
+     "exposure_from_frame": 804,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e1_0547_release",
+   "episode": 1,
+   "frame": 547,
+   "row": 1035,
+   "phase": "release",
+   "cap": "B",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -6.7253,
+    14.7253,
+    -38.1099,
+    78.2418,
+    -137.8022,
+    21.3158
+   ],
+   "front": {
+    "image": "e1_0547_release_front.png",
+    "labels": "e1_0547_release_front_labels.png",
+    "label_px": {
+     "background": 273859,
+     "arm": 29421,
+     "fingers": 1467,
+     "cap": 578,
+     "mug": 1875
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.871
+    },
+    "white_balance_gain": [
+     1.0683000087738037,
+     1.024999976158142,
+     0.9983999729156494
+    ]
+   },
+   "grip": {
+    "image": "e1_0547_release_grip.png",
+    "labels": "e1_0547_release_grip_labels.png",
+    "label_px": {
+     "background": 152741,
+     "arm": 0,
+     "fingers": 72394,
+     "cap": 21149,
+     "mug": 60916
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9566,
+     "finger_prior_spread_pct": 1.32,
+     "mug_model_vs_image_iou": 0.8087,
+     "mug_px": 82046,
+     "mug_red_anchor_px": 171
+    },
+    "colour_model": {
+     "white_balance": [
+      0.90829998254776,
+      1.0,
+      0.824999988079071
+     ],
+     "sigma": 1.15,
+     "exposure": 0.4405,
+     "exposure_from_frame": 548,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0003_rest",
+   "episode": 2,
+   "frame": 3,
+   "row": 1389,
+   "phase": "rest",
+   "cap": null,
+   "speed_deg_s": 0.0,
+   "front_dup": true,
+   "grip_dup": true,
+   "state": [
+    2.6813,
+    -103.0769,
+    95.956,
+    75.5165,
+    -92.0,
+    1.4474
+   ],
+   "front": {
+    "image": "e2_0003_rest_front.png",
+    "labels": "e2_0003_rest_front_labels.png",
+    "label_px": {
+     "background": 280408,
+     "arm": 16201,
+     "fingers": 1087,
+     "cap": 1170,
+     "mug": 8334
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8596
+    },
+    "white_balance_gain": [
+     0.9506000280380249,
+     1.0216000080108643,
+     1.0566999912261963
+    ]
+   },
+   "grip": {
+    "image": "e2_0003_rest_grip.png",
+    "labels": "e2_0003_rest_grip_labels.png",
+    "label_px": {
+     "background": 228182,
+     "arm": 0,
+     "fingers": 79018,
+     "cap": 0,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9708,
+     "finger_prior_spread_pct": 0.0,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.932200014591217,
+      1.0,
+      0.8230000138282776
+     ],
+     "sigma": 1.15,
+     "exposure": 1.8923,
+     "exposure_from_frame": 4,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0167_approach",
+   "episode": 2,
+   "frame": 167,
+   "row": 1553,
+   "phase": "approach",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": true,
+   "grip_dup": false,
+   "state": [
+    -25.1868,
+    -2.3297,
+    44.967,
+    26.4615,
+    -92.4396,
+    25.2632
+   ],
+   "front": {
+    "image": "e2_0167_approach_front.png",
+    "labels": "e2_0167_approach_front_labels.png",
+    "label_px": {
+     "background": 274464,
+     "arm": 22818,
+     "fingers": 1046,
+     "cap": 538,
+     "mug": 8334
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8513
+    },
+    "white_balance_gain": [
+     0.9210000038146973,
+     0.9817000031471252,
+     1.0087000131607056
+    ]
+   },
+   "grip": {
+    "image": "e2_0167_approach_grip.png",
+    "labels": "e2_0167_approach_grip_labels.png",
+    "label_px": {
+     "background": 214667,
+     "arm": 0,
+     "fingers": 69119,
+     "cap": 23414,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9659,
+     "finger_prior_spread_pct": 0.13,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9240000247955322,
+      1.0,
+      0.8511000275611877
+     ],
+     "sigma": 1.15,
+     "exposure": 1.6314,
+     "exposure_from_frame": 168,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0485_descend",
+   "episode": 2,
+   "frame": 485,
+   "row": 1871,
+   "phase": "descend",
+   "cap": "B",
+   "speed_deg_s": 0.0,
+   "front_dup": true,
+   "grip_dup": false,
+   "state": [
+    -9.3626,
+    44.4396,
+    -16.3956,
+    16.7033,
+    -95.0769,
+    33.75
+   ],
+   "front": {
+    "image": "e2_0485_descend_front.png",
+    "labels": "e2_0485_descend_front_labels.png",
+    "label_px": {
+     "background": 269089,
+     "arm": 27838,
+     "fingers": 1750,
+     "cap": 189,
+     "mug": 8334
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8641
+    },
+    "white_balance_gain": [
+     1.1526000499725342,
+     0.9836999773979187,
+     0.9383999705314636
+    ]
+   },
+   "grip": {
+    "image": "e2_0485_descend_grip.png",
+    "labels": "e2_0485_descend_grip_labels.png",
+    "label_px": {
+     "background": 224296,
+     "arm": 0,
+     "fingers": 60503,
+     "cap": 22401,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9528,
+     "finger_prior_spread_pct": 2.7,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9186999797821045,
+      1.0,
+      0.8252000212669373
+     ],
+     "sigma": 1.15,
+     "exposure": 0.8644,
+     "exposure_from_frame": 484,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0260_grasp",
+   "episode": 2,
+   "frame": 260,
+   "row": 1646,
+   "phase": "grasp",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    -26.6813,
+    -11.1209,
+    58.7692,
+    18.3736,
+    -99.033,
+    15.6579
+   ],
+   "front": {
+    "image": "e2_0260_grasp_front.png",
+    "labels": "e2_0260_grasp_front_labels.png",
+    "label_px": {
+     "background": 275373,
+     "arm": 21972,
+     "fingers": 975,
+     "cap": 546,
+     "mug": 8334
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8225
+    },
+    "white_balance_gain": [
+     0.9240999817848206,
+     0.9818000197410583,
+     1.0082999467849731
+    ]
+   },
+   "grip": {
+    "image": "e2_0260_grasp_grip.png",
+    "labels": "e2_0260_grasp_grip_labels.png",
+    "label_px": {
+     "background": 209096,
+     "arm": 0,
+     "fingers": 73085,
+     "cap": 25019,
+     "mug": 0
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9574,
+     "finger_prior_spread_pct": 0.07,
+     "mug_model_vs_image_iou": null,
+     "mug_px": 0,
+     "mug_red_anchor_px": 0
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9225000143051147,
+      1.0,
+      0.8414000272750854
+     ],
+     "sigma": 1.15,
+     "exposure": 1.4543,
+     "exposure_from_frame": 260,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0568_lift",
+   "episode": 2,
+   "frame": 568,
+   "row": 1954,
+   "phase": "lift",
+   "cap": "B",
+   "speed_deg_s": 71.21,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    35.6483,
+    -0.2198,
+    -16.4835,
+    76.3956,
+    -45.4066,
+    14.0789
+   ],
+   "front": {
+    "image": "e2_0568_lift_front.png",
+    "labels": "e2_0568_lift_front_labels.png",
+    "label_px": {
+     "background": 267749,
+     "arm": 29546,
+     "fingers": 1571,
+     "cap": 0,
+     "mug": 8334
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8022
+    },
+    "white_balance_gain": [
+     1.1282999515533447,
+     0.9628000259399414,
+     0.9172999858856201
+    ]
+   },
+   "grip": {
+    "image": "e2_0568_lift_grip.png",
+    "labels": "e2_0568_lift_grip_labels.png",
+    "label_px": {
+     "background": 204875,
+     "arm": 0,
+     "fingers": 73549,
+     "cap": 25714,
+     "mug": 3062
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.9162,
+     "finger_prior_spread_pct": 0.13,
+     "mug_model_vs_image_iou": 0.2578,
+     "mug_px": 3062,
+     "mug_red_anchor_px": 2930
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9304999709129333,
+      1.0,
+      0.8432999849319458
+     ],
+     "sigma": 1.15,
+     "exposure": 2.4122,
+     "exposure_from_frame": 572,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0352_carry",
+   "episode": 2,
+   "frame": 352,
+   "row": 1738,
+   "phase": "carry",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": false,
+   "grip_dup": false,
+   "state": [
+    72.3956,
+    -44.7912,
+    42.5934,
+    32.4396,
+    -44.7912,
+    13.9474
+   ],
+   "front": {
+    "image": "e2_0352_carry_front.png",
+    "labels": "e2_0352_carry_front_labels.png",
+    "label_px": {
+     "background": 272317,
+     "arm": 25984,
+     "fingers": 4009,
+     "cap": 1054,
+     "mug": 3836
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8945
+    },
+    "white_balance_gain": [
+     0.9067000150680542,
+     0.9883999824523926,
+     1.0176000595092773
+    ]
+   },
+   "grip": {
+    "image": "e2_0352_carry_grip.png",
+    "labels": "e2_0352_carry_grip_labels.png",
+    "label_px": {
+     "background": 172506,
+     "arm": 0,
+     "fingers": 77465,
+     "cap": 24157,
+     "mug": 33072
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.903,
+     "finger_prior_spread_pct": 0.26,
+     "mug_model_vs_image_iou": 0.4,
+     "mug_px": 57200,
+     "mug_red_anchor_px": 18201
+    },
+    "colour_model": {
+     "white_balance": [
+      0.932200014591217,
+      1.0,
+      0.8134999871253967
+     ],
+     "sigma": 1.15,
+     "exposure": 2.325,
+     "exposure_from_frame": 352,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0607_over_mug",
+   "episode": 2,
+   "frame": 607,
+   "row": 1993,
+   "phase": "over_mug",
+   "cap": "B",
+   "speed_deg_s": 2.64,
+   "front_dup": true,
+   "grip_dup": false,
+   "state": [
+    76.0879,
+    -7.3407,
+    -9.8022,
+    88.4396,
+    -45.2308,
+    14.8684
+   ],
+   "front": {
+    "image": "e2_0607_over_mug_front.png",
+    "labels": "e2_0607_over_mug_front_labels.png",
+    "label_px": {
+     "background": 275667,
+     "arm": 26882,
+     "fingers": 1534,
+     "cap": 0,
+     "mug": 3117
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8472
+    },
+    "white_balance_gain": [
+     1.1370999813079834,
+     0.9474999904632568,
+     0.8980000019073486
+    ]
+   },
+   "grip": {
+    "image": "e2_0607_over_mug_grip.png",
+    "labels": "e2_0607_over_mug_grip_labels.png",
+    "label_px": {
+     "background": 170509,
+     "arm": 0,
+     "fingers": 76847,
+     "cap": 24742,
+     "mug": 35102
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.921,
+     "finger_prior_spread_pct": 0.07,
+     "mug_model_vs_image_iou": 0.5293,
+     "mug_px": 58805,
+     "mug_red_anchor_px": 40
+    },
+    "colour_model": {
+     "white_balance": [
+      0.9336000084877014,
+      1.0,
+      0.8119999766349792
+     ],
+     "sigma": 1.15,
+     "exposure": 1.3803,
+     "exposure_from_frame": 608,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  },
+  {
+   "id": "e2_0369_release",
+   "episode": 2,
+   "frame": 369,
+   "row": 1755,
+   "phase": "release",
+   "cap": "A",
+   "speed_deg_s": 0.0,
+   "front_dup": true,
+   "grip_dup": false,
+   "state": [
+    73.0989,
+    -44.7912,
+    42.5934,
+    32.4396,
+    -44.7912,
+    18.0921
+   ],
+   "front": {
+    "image": "e2_0369_release_front.png",
+    "labels": "e2_0369_release_front_labels.png",
+    "label_px": {
+     "background": 272410,
+     "arm": 25982,
+     "fingers": 4137,
+     "cap": 1079,
+     "mug": 3592
+    },
+    "qa": {
+     "robot_model_vs_refined_iou": 0.8898
+    },
+    "white_balance_gain": [
+     0.906499981880188,
+     0.9922999739646912,
+     1.0221999883651733
+    ]
+   },
+   "grip": {
+    "image": "e2_0369_release_grip.png",
+    "labels": "e2_0369_release_grip_labels.png",
+    "label_px": {
+     "background": 176306,
+     "arm": 0,
+     "fingers": 73313,
+     "cap": 21435,
+     "mug": 36146
+    },
+    "qa": {
+     "fingers_model_vs_data_iou": 0.8962,
+     "finger_prior_spread_pct": 0.13,
+     "mug_model_vs_image_iou": 0.4028,
+     "mug_px": 57562,
+     "mug_red_anchor_px": 17201
+    },
+    "colour_model": {
+     "white_balance": [
+      0.932200014591217,
+      1.0,
+      0.8134999871253967
+     ],
+     "sigma": 1.15,
+     "exposure": 2.325,
+     "exposure_from_frame": 368,
+     "convention": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA)"
+    }
+   }
+  }
+ ]
+}

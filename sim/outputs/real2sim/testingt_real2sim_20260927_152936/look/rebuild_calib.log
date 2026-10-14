@@ -1,0 +1,18 @@
+look build: testingt_real2sim_20260927_152936, scene hash 6f282e812cc585f5 -> /mnt/storage/Desktop/agent_101/sim/outputs/real2sim/testingt_real2sim_20260927_152936/look
+  plate ep0: 163 frames, valid 0.956  (5.7 s)
+  plate ep1: 300 frames, valid 0.962  (16.0 s)
+  plate ep2: 261 frames, valid 0.959  (24.8 s)
+  plate ep3: 16 frames, valid 0.923  (25.3 s)
+  key light: az -120.45 el 49.43 deg, radius 12.348 deg, ambient fraction [0.385, 0.538, 0.479, 0.531], rms 0.0731
+  gloss ep0: alpha_ggx 0.02698 (roughness 0.164), rms 0.00894 vs 0.02547 flat
+  gloss ep2: alpha_ggx 0.02125 (roughness 0.146), rms 0.00939 vs 0.02241 flat
+  finger prior: 691 dark-background wrist frames of 1108 scanned
+  front white reference L_PLA [0.6013799905776978, 0.6853399872779846, 0.5982699990272522] (per-frame luminance p5/50/95 [0.63, 0.6543, 0.694])
+  wrist colour model: saturation sigma 1.15 (alone: {'cap': 1.59, 'fluor': 0.93, 'red': 1.11})
+  wrist mosaic: 529 frames, 0.380 of the grid, exposure measured on 500; exposure p5/50/95 [0.514, 1.499, 2.557] (41.4 s)
+  table: front 0.169, wrist 0.225, filled 0.605 of the grid; k_d [0.00559, 0.00777, 0.00834] k_s [0.0476, 0.0737, 0.089] (42.5 s)
+  wrist cap-top albedo through the full model: [0.0772, 0.3884, 0.428] (16 frames)
+  backdrop cylinder: 39 frames, 0.026 of the wall seen (2.6 s)
+  samples: 24 x 2 cameras; front robot IoU (model vs refined) median 0.8586, grip fingers IoU (model vs data) median 0.931
+look build done in 111.4 s -> /mnt/storage/Desktop/agent_101/sim/outputs/real2sim/testingt_real2sim_20260927_152936/look/look.json
+EXIT 0

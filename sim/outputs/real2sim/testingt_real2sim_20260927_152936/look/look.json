@@ -1,0 +1,1027 @@
+{
+ "schema": "real2sim.look/1",
+ "look_version": 1,
+ "dataset": "testingt_real2sim_20260927_152936",
+ "scene_hash": "6f282e812cc585f5",
+ "inputs_hash": "121e4b46ede6e02e",
+ "inputs": [
+  "cameras",
+  "table",
+  "robot",
+  "objects",
+  "episodes"
+ ],
+ "scene_layers": [
+  "testingt_real2sim_20260927_152936.json",
+  "testingt_real2sim_20260927_152936.calib.json",
+  "testingt_real2sim_20260927_152936.servo.json"
+ ],
+ "built": "2026-09-27T17:17:20",
+ "git": "ba90981-dirty",
+ "scene_units": "total horizontal irradiance at the table = 1; a horizontal Lambertian face of albedo rho has radiance rho / pi. Camera-linear = exposure * radiance, per channel.",
+ "cameras": {
+  "front": {
+   "response": "sRGB transfer (assumed; colour.py)",
+   "exposure_scene_to_camera_lin": [
+    2.36161,
+    2.69132,
+    2.3494
+   ],
+   "white_reference": {
+    "L_PLA_lin": [
+     0.6013799905776978,
+     0.6853399872779846,
+     0.5982699990272522
+    ],
+    "rho_PLA": 0.8,
+    "per_frame_luminance_p5_p50_p95": [
+     0.63,
+     0.6543,
+     0.694
+    ],
+    "source": "measured: FK printed parts, white, world normal within 26 deg of +z, rest frames of ep0-2, 60-90th luminance band; rho assumed"
+   },
+   "white_balance": {
+    "gain_episode": {
+     "0": [
+      1.0820000171661377,
+      0.9441999793052673,
+      0.8950999975204468
+     ],
+     "1": [
+      0.9729999899864197,
+      1.013100028038025,
+      1.0098999738693237
+     ],
+     "2": [
+      0.9869999885559082,
+      0.9830999970436096,
+      0.9815000295639038
+     ],
+     "3": [
+      0.9624000191688538,
+      1.0634000301361084,
+      1.1270999908447266
+     ]
+    },
+    "frame_gain_std": {
+     "0": [
+      0.014700000174343586,
+      0.018300000578165054,
+      0.018300000578165054
+     ],
+     "1": [
+      0.06920000165700912,
+      0.026000000536441803,
+      0.06390000134706497
+     ],
+     "2": [
+      0.11180000007152557,
+      0.017899999395012856,
+      0.04769999906420708
+     ],
+     "3": [
+      0.00139999995008111,
+      0.0008999999845400453,
+      0.0020000000949949026
+     ]
+    },
+    "frame_gain_p5_p95": {
+     "0": [
+      [
+       1.071,
+       0.925,
+       0.877
+      ],
+      [
+       1.109,
+       0.971,
+       0.924
+      ]
+     ],
+     "1": [
+      [
+       0.888,
+       0.976,
+       0.962
+      ],
+      [
+       1.07,
+       1.053,
+       1.128
+      ]
+     ],
+     "2": [
+      [
+       0.903,
+       0.949,
+       0.901
+      ],
+      [
+       1.168,
+       1.023,
+       1.057
+      ]
+     ],
+     "3": [
+      [
+       0.961,
+       1.063,
+       1.125
+      ],
+      [
+       0.967,
+       1.066,
+       1.131
+      ]
+     ]
+    },
+    "per_frame": "plates/plates.npz frame_gain (N, 3): camera = reference x gain",
+    "source": "measured: background pixels vs the episode / clean plates (plates.py)"
+   }
+  },
+  "grip": {
+   "response": "sRGB transfer (assumed)",
+   "model": "front_lin = colour.grip_to_front(grip_lin, white_balance, exposure, sigma, L_PLA); a render in front-reference units becomes the wrist camera's via colour.front_to_grip",
+   "sigma": 1.15,
+   "colour_model_fit": {
+    "sigma": 1.15,
+    "surfaces": {
+     "cap": {
+      "frames": 16,
+      "grip_white_normalised": [
+       0.03895,
+       0.37683,
+       0.41407
+      ],
+      "front_white_normalised": [
+       0.21642,
+       0.51517,
+       0.60952
+      ],
+      "best_sigma_alone": 1.59,
+      "chromaticity_rms_at_sigma": 0.0639,
+      "chromaticity_rms_at_1": 0.0816
+     },
+     "fluor": {
+      "frames": 104,
+      "grip_white_normalised": [
+       0.04283,
+       0.03986,
+       0.01728
+      ],
+      "front_white_normalised": [
+       0.02871,
+       0.03606,
+       0.01452
+      ],
+      "best_sigma_alone": 0.93,
+      "chromaticity_rms_at_sigma": 0.0589,
+      "chromaticity_rms_at_1": 0.0505
+     },
+     "red": {
+      "frames": 44,
+      "grip_white_normalised": [
+       0.06248,
+       0.00399,
+       0.00043
+      ],
+      "front_white_normalised": [
+       0.07403,
+       0.00546,
+       0.00351
+      ],
+      "best_sigma_alone": 1.11,
+      "chromaticity_rms_at_sigma": 0.0158,
+      "chromaticity_rms_at_1": 0.0321
+     }
+    },
+    "cap_exposure_front_over_grip": {
+     "median": 1.4914,
+     "p10_p90": [
+      1.4167,
+      1.6774
+     ],
+     "frames": 16
+    }
+   },
+   "white_balance": {
+    "p5_p50_p95": [
+     [
+      0.8615,
+      1.0,
+      0.777
+     ],
+     [
+      0.9295,
+      1.0,
+      0.8248
+     ],
+     [
+      0.9659,
+      1.0,
+      1.0433
+     ]
+    ],
+    "source": "measured: per frame, the static finger core (white PLA) to the front white's chromaticity"
+   },
+   "exposure": {
+    "p5_p50_p95": [
+     0.5137,
+     1.4988,
+     2.5571
+    ],
+    "source": "measured: per mosaic frame, plain-mat luminance vs the front texture"
+   },
+   "per_frame": "table/wrist_model.json; per sample: samples/index.json grip.colour_model"
+  }
+ },
+ "lights": {
+  "key": {
+   "type": "distant disk source",
+   "azimuth_deg": -120.45,
+   "elevation_deg": 49.43,
+   "direction_to_light": [
+    -0.32961,
+    -0.56072,
+    0.75957
+   ],
+   "angular_radius_deg": 12.348,
+   "ambient_fraction": {
+    "median": 0.505,
+    "per_episode": [
+     0.3854,
+     0.5383,
+     0.4787,
+     0.5313
+    ]
+   },
+   "ambient_over_key_horizontal": 1.0203,
+   "grid_start_deg": [
+    -120.0,
+    47.5
+   ],
+   "mug_height_if_free": 0.0935,
+   "elevation_if_height_free_deg": 42.37,
+   "rms": 0.0731,
+   "n_points": 32688,
+   "nfev": 17,
+   "per_episode": {
+    "0": {
+     "points": 7952,
+     "rms": 0.0785,
+     "shadow_iou_at_0.8": 0.6777,
+     "ambient_fraction": 0.3854
+    },
+    "1": {
+     "points": 10493,
+     "rms": 0.0509,
+     "shadow_iou_at_0.8": 0.6547,
+     "ambient_fraction": 0.5383
+    },
+    "2": {
+     "points": 6046,
+     "rms": 0.0914,
+     "shadow_iou_at_0.8": 0.6252,
+     "ambient_fraction": 0.4787
+    },
+    "3": {
+     "points": 8197,
+     "rms": 0.0766,
+     "shadow_iou_at_0.8": 0.6073,
+     "ambient_fraction": 0.5313
+    }
+   },
+   "normal_irradiance_scene_units": 0.65165,
+   "source": "fitted: the four mug shadows (lighting.fit_key_light)"
+  },
+  "ambient": {
+   "horizontal_irradiance_scene_units": 0.505,
+   "uniform_sky_radiance": 0.16075,
+   "environment_map": "backdrop/env.hdr carries it (fill radiance where unobserved)",
+   "source": "fitted: umbra depth of the mug shadows (median of 4 episodes)"
+  },
+  "mat_gloss": {
+   "0": {
+    "alpha_ggx": 0.02698,
+    "roughness": 0.1643,
+    "k_diffuse_lin": 0.006476,
+    "k_specular": 0.070822,
+    "rms_lin": 0.008937,
+    "rms_flat_lin": 0.025466,
+    "glare_top3pct_pred_vs_obs_lin": [
+     0.12981,
+     0.12586
+    ],
+    "pixels": 16239
+   },
+   "2": {
+    "alpha_ggx": 0.02125,
+    "roughness": 0.1458,
+    "k_diffuse_lin": 0.008195,
+    "k_specular": 0.06436,
+    "rms_lin": 0.009389,
+    "rms_flat_lin": 0.022414,
+    "glare_top3pct_pred_vs_obs_lin": [
+     0.10947,
+     0.10671
+    ],
+    "pixels": 16695
+   },
+   "source": "fitted: GGX lobe of the front glare (lighting.fit_gloss)"
+  }
+ },
+ "materials": {
+  "white_pla": {
+   "base_color_linear": [
+    0.8,
+    0.8,
+    0.8
+   ],
+   "source": "assumed: white PLA rho 0.80, the white reference of both cameras",
+   "roughness": 0.55,
+   "metallic": 0.0,
+   "specular_f0": 0.04
+  },
+  "servo_black": {
+   "base_color_linear": [
+    0.013100000098347664,
+    0.015399999916553497,
+    0.017400000244379044
+   ],
+   "source": "measured: front, FK servo faces (n_z > 0.7), PLA-referenced",
+   "roughness": 0.5,
+   "metallic": 0.0
+  },
+  "mount_black": {
+   "base_color_linear": [
+    0.017500000074505806,
+    0.021700000390410423,
+    0.027799999341368675
+   ],
+   "source": "measured: front, klip mount + webcam body pixels, PLA-referenced",
+   "roughness": 0.5,
+   "metallic": 0.0
+  },
+  "cap_teal": {
+   "base_color_linear": [
+    0.17309999465942383,
+    0.4120999872684479,
+    0.4875999987125397
+   ],
+   "source": "measured: front, closed cap tops at rest (horizontal), PLA-referenced",
+   "wrist_camera_albedo": [
+    0.0772,
+    0.3884,
+    0.428
+   ],
+   "cross_camera_max_log_ratio": 0.8075,
+   "roughness": 0.35,
+   "metallic": 0.0,
+   "specular_f0": 0.04,
+   "open_side_observed_albedo": [
+    0.05530000105500221,
+    0.21439999341964722,
+    0.22139999270439148
+   ]
+  },
+  "mug_enamel_red": {
+   "base_color_linear": [
+    0.0816,
+    0.0141,
+    0.0098
+   ],
+   "source": "measured: front, red enamel wall of the static mug, irradiance-corrected with the model normals and the light fit (E_rel > 0.3 only)",
+   "observed_albedo_if_horizontal": [
+    0.05920000001788139,
+    0.004399999976158142,
+    0.00279999990016222
+   ],
+   "roughness": 0.25,
+   "metallic": 0.0,
+   "specular_f0": 0.04
+  },
+  "mug_steel_interior": {
+   "base_color_linear": [
+    0.55,
+    0.56,
+    0.55
+   ],
+   "metallic": 1.0,
+   "roughness": 0.15,
+   "source": "spec: stainless F0; roughness estimated (cap reflections on the interior are sharp but not mirror-sharp, ep1/ep2 last frames)",
+   "observed_lin_median_front": [
+    0.12794999778270721,
+    0.14368000626564026,
+    0.11151999980211258
+   ]
+  },
+  "mat_black_glossy": {
+   "base_color_linear": [
+    0.006610000040382147,
+    0.00788000039756298,
+    0.009879999794065952
+   ],
+   "source": "measured: front clean plate, plain mat, specular removed, PLA-referenced; texture table/albedo.png",
+   "albedo_from_gloss_no_pla": [
+    0.00973,
+    0.00874,
+    0.00776
+   ],
+   "roughness": 0.15505000000000002,
+   "metallic": 0.0,
+   "specular_f0": 0.04,
+   "roughness_source": "fitted: GGX lobe of the front glare given the shadow-fitted source (lighting.fit_gloss)"
+  },
+  "fluorescent_marks": {
+   "base_color_linear": [
+    0.02410000003874302,
+    0.030300000682473183,
+    0.012199999764561653
+   ],
+   "source": "measured: front clean plate, yellow-green marks (H 20-45, S > 80), PLA-referenced",
+   "roughness": 0.6,
+   "metallic": 0.0
+  },
+  "desk_white": {
+   "base_color_linear": [
+    0.7792,
+    0.7495,
+    0.7668
+   ],
+   "source": "measured: wrist mosaic beyond the front view, 90th percentile (the white desk; the 50th is mostly mat)",
+   "roughness": 0.7,
+   "metallic": 0.0
+  }
+ },
+ "materials_measured": {
+  "front": {
+   "L_PLA_lin": [
+    0.6013799905776978,
+    0.6853399872779846,
+    0.5982699990272522
+   ],
+   "L_PLA_luminance_per_frame_p5_p50_p95": [
+    0.63,
+    0.6543,
+    0.694
+   ],
+   "L_PLA_frames": 30,
+   "servo_black": {
+    "n": 23387,
+    "lin_median": [
+     0.009879999794065952,
+     0.013199999928474426,
+     0.013020000420510769
+    ],
+    "albedo": [
+     0.013100000098347664,
+     0.015399999916553497,
+     0.017400000244379044
+    ]
+   },
+   "mount_black": {
+    "n": 46452,
+    "lin_median": [
+     0.013170000165700912,
+     0.018619999289512634,
+     0.020749999210238457
+    ],
+    "albedo": [
+     0.017500000074505806,
+     0.021700000390410423,
+     0.027799999341368675
+    ]
+   },
+   "cap_closed_top": {
+    "n": 662,
+    "lin_median": [
+     0.13015000522136688,
+     0.3530699908733368,
+     0.36465999484062195
+    ],
+    "albedo_if_horizontal": [
+     0.17309999465942383,
+     0.4120999872684479,
+     0.4875999987125397
+    ]
+   },
+   "cap_open_side": {
+    "n": 1549,
+    "lin_median": [
+     0.0415400005877018,
+     0.1836400032043457,
+     0.16554999351501465
+    ],
+    "albedo_if_horizontal": [
+     0.05530000105500221,
+     0.21439999341964722,
+     0.22139999270439148
+    ]
+   },
+   "mug_red": {
+    "n": 5088,
+    "lin_median": [
+     0.044520001858472824,
+     0.0037400000728666782,
+     0.002099999925121665
+    ],
+    "albedo_if_horizontal": [
+     0.05920000001788139,
+     0.004399999976158142,
+     0.00279999990016222
+    ],
+    "albedo_irradiance_corrected": [
+     0.0816,
+     0.0141,
+     0.0098
+    ],
+    "n_lit": 416
+   },
+   "steel": {
+    "n": 7152,
+    "lin_median": [
+     0.12794999778270721,
+     0.14368000626564026,
+     0.11151999980211258
+    ],
+    "albedo_if_horizontal": [
+     0.17020000517368317,
+     0.16769999265670776,
+     0.14910000562667847
+    ]
+   },
+   "mat_plain": {
+    "n": 256477,
+    "lin_median": [
+     0.005752000026404858,
+     0.007772999815642834,
+     0.008337000384926796
+    ],
+    "albedo": [
+     0.0076500000432133675,
+     0.009069999679923058,
+     0.011149999685585499
+    ]
+   },
+   "fluorescent_marks": {
+    "n": 2162,
+    "lin_median": [
+     0.017263999208807945,
+     0.024715999141335487,
+     0.008689000271260738
+    ],
+    "albedo": [
+     0.02297000028192997,
+     0.028850000351667404,
+     0.011620000004768372
+    ]
+   }
+  },
+  "grip": {
+   "frames": 16,
+   "cap_closed_top": {
+    "lin_median_front_ref": [
+     0.0580499991774559,
+     0.3327600061893463,
+     0.32010000944137573
+    ],
+    "albedo": [
+     0.0772,
+     0.3884,
+     0.428
+    ]
+   }
+  },
+  "table_albedo": {
+   "mat_median": [
+    0.006610000040382147,
+    0.00788000039756298,
+    0.009879999794065952
+   ],
+   "mat_plain_p5_p50_p95_green": [
+    0.00485,
+    0.00788,
+    0.01498
+   ],
+   "glare_texels_fraction_of_front": 0.1381,
+   "fluorescent_median": [
+    0.02410000003874302,
+    0.030300000682473183,
+    0.012199999764561653
+   ],
+   "wrist_region_p50_p90": [
+    [
+     0.0287,
+     0.0283,
+     0.0227
+    ],
+    [
+     0.7792,
+     0.7495,
+     0.7668
+    ]
+   ]
+  }
+ },
+ "textures": {
+  "table": {
+   "x0": -0.9,
+   "x1": 0.7,
+   "y0": -1.1,
+   "y1": 0.25,
+   "res": 0.001,
+   "z": 0.02399,
+   "shape": [
+    1350,
+    1600
+   ],
+   "layout": "row r, col c centre = (x0 + (c+.5) res, y1 - (r+.5) res); UV (0,0) at (x0, y0)",
+   "files": {
+    "radiance": "radiance.png",
+    "albedo": "albedo.png",
+    "albedo_preview": "albedo_preview.png",
+    "radiance_lin": "radiance_lin.npy",
+    "albedo_lin": "albedo_lin.npy",
+    "specular_front_lin": "specular_front_lin.npy",
+    "source": "source.png",
+    "wrist_model": "wrist_model.json"
+   },
+   "units": {
+    "radiance": "front camera-linear, reference white-balance state (sRGB-encoded PNG / linear npy)",
+    "albedo": "linear albedo (16-bit sRGB-encoded PNG / linear npy)",
+    "source.png": "0 filled, 1 front camera, 2 wrist mosaic"
+   },
+   "summary": {
+    "grid_fine": {
+     "x0": -0.9,
+     "x1": 0.7,
+     "y0": -1.1,
+     "y1": 0.25,
+     "res": 0.001,
+     "z": 0.02399,
+     "shape": [
+      1350,
+      1600
+     ],
+     "layout": "row r, col c centre = (x0 + (c+.5) res, y1 - (r+.5) res); UV (0,0) at (x0, y0)"
+    },
+    "grid_wrist": {
+     "x0": -0.9,
+     "x1": 0.7,
+     "y0": -1.1,
+     "y1": 0.25,
+     "res": 0.002,
+     "z": 0.02399,
+     "shape": [
+      675,
+      800
+     ],
+     "layout": "row r, col c centre = (x0 + (c+.5) res, y1 - (r+.5) res); UV (0,0) at (x0, y0)"
+    },
+    "fraction_front": 0.1694,
+    "fraction_wrist_only": 0.2251,
+    "fraction_filled": 0.6055,
+    "k_diffuse_lin": [
+     0.005588,
+     0.007773,
+     0.008339
+    ],
+    "k_specular": [
+     0.04759,
+     0.07367,
+     0.08904
+    ],
+    "alpha_ggx": 0.024115,
+    "wrist": {
+     "frames": 529,
+     "frames_with_measured_exposure": 500,
+     "coverage_fraction": 0.3805,
+     "exposure_p5_p50_p95": [
+      0.5137,
+      1.4988,
+      2.5571
+     ],
+     "white_balance_p5_p50_p95": [
+      [
+       0.8615,
+       1.0,
+       0.777
+      ],
+      [
+       0.9295,
+       1.0,
+       0.8248
+      ],
+      [
+       0.9659,
+       1.0,
+       1.0433
+      ]
+     ],
+     "seconds": 41.4
+    },
+    "seconds": 42.5
+   }
+  },
+  "backdrop_cylinder": {
+   "centre_xy": [
+    -0.1,
+    -0.3
+   ],
+   "radius": 0.8,
+   "z0": 0.02399,
+   "height": 0.6,
+   "res": 0.004,
+   "shape": [
+    150,
+    1257
+   ],
+   "units": "scene radiance (cylinder_lin.npy)",
+   "layout": "col = azimuth phi = atan2(y - cy, x - cx) from -pi to +pi; row 0 = top",
+   "files": {
+    "cylinder_preview": "cylinder_preview.png",
+    "cylinder_lin": "cylinder_lin.npy",
+    "env_hdr": "env.hdr",
+    "env_preview": "env_preview.png",
+    "cylinder_seen": "cylinder_seen.png",
+    "env_seen": "env_seen.png"
+   },
+   "summary": {
+    "frames": 39,
+    "coverage_fraction": 0.0263,
+    "seen_azimuth_deg": [
+     -179.9,
+     179.9
+    ],
+    "seconds": 2.6
+   }
+  },
+  "environment": {
+   "size": [
+    1024,
+    512
+   ],
+   "centre": [
+    -0.1,
+    -0.3,
+    0.124
+   ],
+   "observed_fraction": 0.4638,
+   "observed_fraction_upper_hemisphere": 0.0017,
+   "fill_radiance": 0.16076,
+   "horizontal_irradiance_from_observed": 2e-05,
+   "layout": "col = azimuth phi from -pi (left) to +pi, phi = atan2(y - cy, x - cx); row 0 = +z (up)",
+   "file": "backdrop/env.hdr",
+   "units": "scene radiance, key light excluded"
+  }
+ },
+ "plates": {
+  "files": {
+   "front_ep0": "front_ep0.png",
+   "front_ep1": "front_ep1.png",
+   "front_ep2": "front_ep2.png",
+   "front_ep3": "front_ep3.png",
+   "front_clean": "front_clean.png",
+   "clean_valid": "front_clean_valid.png",
+   "arrays": "plates.npz"
+  },
+  "summary": {
+   "frames_per_episode": {
+    "0": 163,
+    "1": 300,
+    "2": 261,
+    "3": 16
+   },
+   "valid_fraction": {
+    "0": 0.9565,
+    "1": 0.962,
+    "2": 0.9588,
+    "3": 0.9227
+   },
+   "clean_valid_fraction": 0.962,
+   "gain_episode": {
+    "0": [
+     1.0820000171661377,
+     0.9441999793052673,
+     0.8950999975204468
+    ],
+    "1": [
+     0.9729999899864197,
+     1.013100028038025,
+     1.0098999738693237
+    ],
+    "2": [
+     0.9869999885559082,
+     0.9830999970436096,
+     0.9815000295639038
+    ],
+    "3": [
+     0.9624000191688538,
+     1.0634000301361084,
+     1.1270999908447266
+    ]
+   },
+   "frame_gain_std": {
+    "0": [
+     0.014700000174343586,
+     0.018300000578165054,
+     0.018300000578165054
+    ],
+    "1": [
+     0.06920000165700912,
+     0.026000000536441803,
+     0.06390000134706497
+    ],
+    "2": [
+     0.11180000007152557,
+     0.017899999395012856,
+     0.04769999906420708
+    ],
+    "3": [
+     0.00139999995008111,
+     0.0008999999845400453,
+     0.0020000000949949026
+    ]
+   },
+   "frame_gain_p5_p95": {
+    "0": [
+     [
+      1.071,
+      0.925,
+      0.877
+     ],
+     [
+      1.109,
+      0.971,
+      0.924
+     ]
+    ],
+    "1": [
+     [
+      0.888,
+      0.976,
+      0.962
+     ],
+     [
+      1.07,
+      1.053,
+      1.128
+     ]
+    ],
+    "2": [
+     [
+      0.903,
+      0.949,
+      0.901
+     ],
+     [
+      1.168,
+      1.023,
+      1.057
+     ]
+    ],
+    "3": [
+     [
+      0.961,
+      1.063,
+      1.125
+     ],
+     [
+      0.967,
+      1.066,
+      1.131
+     ]
+    ]
+   },
+   "shadow_px": {
+    "0": 10510,
+    "1": 9636,
+    "2": 8242,
+    "3": 9635
+   },
+   "seconds": 26.1
+  }
+ },
+ "samples": {
+  "index": "samples/index.json",
+  "summary": {
+   "n": 24,
+   "phases": [
+    "rest",
+    "approach",
+    "descend",
+    "grasp",
+    "lift",
+    "carry",
+    "over_mug",
+    "release"
+   ],
+   "episodes": [
+    0,
+    1,
+    2
+   ],
+   "front_robot_model_vs_refined_iou_median": 0.8586,
+   "grip_fingers_model_vs_data_iou_median": 0.931,
+   "grip_fingers_model_vs_data_iou_min_max": [
+    0.7223,
+    0.977
+   ],
+   "front_duplicates": 6,
+   "speed_deg_s_median_max": [
+    0.0,
+    71.21
+   ]
+  }
+ },
+ "baselines": {
+  "front_episode_plate_as_render": {
+   "front": {
+    "background": {
+     "psnr": 29.067,
+     "ssim": 0.9465,
+     "delta_e_mean_colour": 0.9512,
+     "delta_e_pixels": 2.1273,
+     "rgb_bias": [
+      -0.00073,
+      -0.00038,
+      -0.00022
+     ],
+     "samples": 24
+    },
+    "arm": {
+     "psnr": 4.6462,
+     "ssim": 0.0863,
+     "delta_e_mean_colour": 62.1525,
+     "delta_e_pixels": 57.2761,
+     "rgb_bias": [
+      -0.35756,
+      -0.39164,
+      -0.33179
+     ],
+     "samples": 24
+    },
+    "fingers": {
+     "psnr": 6.1739,
+     "ssim": 0.0951,
+     "delta_e_mean_colour": 49.9777,
+     "delta_e_pixels": 50.6502,
+     "rgb_bias": [
+      -0.33304,
+      -0.37701,
+      -0.34018
+     ],
+     "samples": 23
+    },
+    "cap": {
+     "psnr": 11.6401,
+     "ssim": 0.2139,
+     "delta_e_mean_colour": 36.0902,
+     "delta_e_pixels": 38.0778,
+     "rgb_bias": [
+      -0.02719,
+      -0.16425,
+      -0.15263
+     ],
+     "samples": 16
+    },
+    "mug": {
+     "psnr": 27.3697,
+     "ssim": 0.8368,
+     "delta_e_mean_colour": 2.1842,
+     "delta_e_pixels": 5.518,
+     "rgb_bias": [
+      0.00972,
+      0.00605,
+      0.00418
+     ],
+     "samples": 24
+    },
+    "all": {
+     "psnr": 15.5206,
+     "ssim": 0.8619,
+     "delta_e_mean_colour": 13.2005,
+     "delta_e_pixels": 6.7473,
+     "rgb_bias": [
+      -0.02918,
+      -0.03188,
+      -0.02711
+     ],
+     "samples": 24
+    }
+   }
+  },
+  "note": "a perfect static background (the arm-free plate at the frame's white balance): the background row is the ceiling a renderer's background can reach; the arm/fingers rows are what a missing arm costs"
+ },
+ "seconds": {
+  "plates": 26.4,
+  "lighting": 3.7,
+  "white_reference": 22.1,
+  "table": 44.2,
+  "backdrop": 2.7,
+  "samples": 5.9,
+  "baselines": 5.6,
+  "total": 111.4
+ }
+}
