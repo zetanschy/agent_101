@@ -35,8 +35,9 @@ body in the right place, printing the exact command first. `./robot` with no ver
   - `le101`: the lerobot 0.6.1 fork `zetanschy/le101`. It is mounted live over `/opt/le101`, so
     an edit takes effect without a rebuild. Commit it in the fork and bump the pointer here.
   - `openpi`: fork, at `/opt/openpi`.
-  - `mjlab`: pinned to a commit that is not on its public remote, so **never
-    `git clone --recursive`**.
+  - `mjlab`: the fork `zetanschy/mjlab`, branch `feat/so101-push-t`. Fetch it only when
+    needed (`git submodule update --init thirdparty/mjlab`); **never
+    `git clone --recursive`**, which also pulls the large Isaac submodules.
   - `sim2real_so101`.
 
 ## Architecture worth knowing before editing
@@ -75,6 +76,76 @@ body in the right place, printing the exact command first. `./robot` with no ver
     - the 2 s before each takeover 0;
     - demos at their natural share.
   - `train.sh --sirius` retrains from scratch.
+
+## RL on the digital twin (mjlab)
+
+The cap-to-mug task as an RL environment, `Mjlab-CapToMug-So101-Twin`, in the mjlab fork.
+
+- **Twin entities:** `asset_zoo/robots/so_arm101/twin.py` builds mjlab entities from
+  `sim/real2sim` without editing it. The arm is the twin's own MjSpec, taken through
+  `build()`'s `spec_hook`.
+- **Task:** `tasks/manipulation/config/so101/cap_to_mug_{mdp,cfgs}.py`.
+- **Check:** `scripts/so101_twin/check_twin.py` shows the entities equal the twin:
+  - every physical parameter is identical;
+  - the twin's 6 recorded grasps are reproduced.
+
+**Measured settings** (`twin.RL_*`):
+- dt 1/900 s, so 30 substeps per 30 Hz action;
+- 20 solver iterations;
+- `nconmax` 96, `njmax` 1500.
+
+1/600 s and coarser go NaN with the twin's contacts.
+
+The current task is the **state teacher**: its actor and critic see privileged sim state,
+including finger-cap contact sensors. A two-camera student is to be distilled from it
+later.
+
+### On another machine
+
+The twin reads files that exist only on the workstation: the CoACD finger pieces and the
+mat look are under the gitignored `sim/outputs/`, and the rest pose comes from the
+calibration dataset in the local Hugging Face cache. Copy them first (`WS` = the
+workstation):
+
+```bash
+git pull && git submodule update --init thirdparty/mjlab
+(cd thirdparty/mjlab && env -u PYTHONPATH uv sync --frozen)   # mjlab's own venv
+D=testingt_real2sim_20260927_152936; R=/mnt/storage/Desktop/agent_101
+mkdir -p sim/outputs/real2sim/$D/mujoco ~/.cache/huggingface/lerobot/soarm101
+rsync -a WS:$R/sim/outputs/real2sim/$D/mujoco/coacd sim/outputs/real2sim/$D/mujoco/    # 1.4 MB, required
+rsync -a WS:.cache/huggingface/lerobot/soarm101/$D ~/.cache/huggingface/lerobot/soarm101/   # 27 MB, required
+rsync -a WS:$R/sim/outputs/real2sim/$D/look sim/outputs/real2sim/$D/   # 62 MB, the mat texture (cameras)
+cd thirdparty/mjlab
+env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python scripts/so101_twin/check_twin.py static
+```
+
+`twin.py` finds the repo as the parent of `thirdparty/mjlab`; set `AGENT101_ROOT` if
+mjlab lives elsewhere. Every line of `check_twin.py static` must say `ok`. Without the
+look, the task still builds, with plain colours.
+
+### Training the teacher
+
+Hand the user the command; don't launch it (see Gotchas). In tmux, from
+`thirdparty/mjlab`:
+
+```bash
+env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToMug-So101-Twin --env.scene.num-envs 4096
+```
+
+- **Run settings:** 3000 iterations, a checkpoint every 100, saved to
+  `logs/rsl_rl/so101_cap_to_mug_teacher/<date>/`. Logging goes to W&B project `mjlab`.
+- **Measured on the RTX 3060:**
+  - 15.4 s per iteration at 4096 envs;
+  - peak GPU memory 11.3 of 12.3 GB, so nothing else may use the GPU;
+  - about 13 h for 3000 iterations.
+- **On the RTX 5090:** not measured. Expect several times faster, and room for 8192 envs.
+- **Watch, in W&B:**
+  - `Episode_Reward/reach`, `grasp`, `lift` and `carry` should rise in that order;
+  - success is `Metrics/cap_in_mug` and `Metrics/cap_in_mug_and_home` (the cap
+    placed and the arm back at rest);
+  - `Sim/nan_env_recoveries` should stay small.
+- **Go/no-go:** if `grasp` is still flat at iteration 300–500, stop the run and retune
+  the reward stages rather than wait.
 
 ## Common commands
 
