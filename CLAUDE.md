@@ -98,13 +98,15 @@ The cap-to-mug task as an RL environment, `Mjlab-CapToMug-So101-Twin`, in the mj
 
 The current task is the **state teacher**: its actor and critic see privileged sim state,
 including finger-cap contact sensors. A two-camera student is to be distilled from it
-later.
+later. The trained teacher is `zetanschy/mjlab_so101_cap_to_mug_teacher` on the Hub:
+94.3% of 1024 episodes end with the cap in the mug and the arm home.
 
 ### On another machine
 
 The twin reads three inputs besides its code. Two are force-tracked under the
 gitignored `sim/outputs/`: the CoACD finger pieces (plain git) and the mat look (Git LFS).
-The third is the calibration dataset the rest pose comes from, on the Hub.
+The third is the calibration dataset the rest pose comes from, on the Hub; the task
+reads it as `episodes.npz`, which `real2sim core extract` builds (needs Docker).
 
 ```bash
 git pull && git lfs pull                      # needs git-lfs; the look is LFS
@@ -113,6 +115,7 @@ git submodule update --init thirdparty/mjlab
 D=testingt_real2sim_20260927_152936
 huggingface-cli download --repo-type dataset zetanschy/$D \
     --local-dir ~/.cache/huggingface/lerobot/soarm101/$D      # where the twin reads it
+./robot real2sim core extract                 # -> sim/outputs/real2sim/$D/episodes.npz
 cd thirdparty/mjlab
 env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python scripts/so101_twin/check_twin.py static
 ```
@@ -137,11 +140,12 @@ env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToMug-S
   - 15.4 s per iteration at 4096 envs;
   - peak GPU memory 11.3 of 12.3 GB, so nothing else may use the GPU;
   - about 13 h for 3000 iterations.
-- **On the RTX 5090:** not measured. Expect several times faster, and room for 8192 envs.
+- **Measured on the RTX 5090:** 3.0-4.4 s per iteration at 4096 envs, using about
+  12 of 32 GB, so 8192 envs should fit.
 - **Watch, in W&B:**
   - `Episode_Reward/reach`, `grasp`, `lift` and `carry` should rise in that order;
-  - success is `Metrics/cap_in_mug` and `Metrics/cap_in_mug_and_home` (the cap
-    placed and the arm back at rest);
+  - success is `Episode_Metrics/cap_in_mug` and `Episode_Metrics/cap_in_mug_and_home`
+    (the cap placed and the arm back at rest, at the episode's last step);
   - `Sim/nan_env_recoveries` should stay small.
 - **Go/no-go:** if `grasp` is still flat at iteration 300–500, stop the run and retune
   the reward stages rather than wait.
