@@ -99,7 +99,9 @@ The cap-to-mug task as an RL environment, `Mjlab-CapToMug-So101-Twin`, in the mj
 The current task is the **state teacher**: its actor and critic see privileged sim state,
 including finger-cap contact sensors. A two-camera student is to be distilled from it
 later. The trained teacher is `zetanschy/mjlab_so101_cap_to_mug_teacher` on the Hub:
-94.3% of 1024 episodes end with the cap in the mug and the arm home.
+89.2% of 1024 episodes end with the cap in the mug and the arm home. `Wrist_Roll`'s
+target is held to the operator's range, so the grip camera stays clear of the table;
+the earlier 94.3% teacher rolled the wrist ~180° and is kept in `previous_unsafe_wrist/`.
 
 ### On another machine
 
@@ -146,6 +148,7 @@ env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToMug-S
   - `Episode_Reward/reach`, `grasp`, `lift` and `carry` should rise in that order;
   - success is `Episode_Metrics/cap_in_mug` and `Episode_Metrics/cap_in_mug_and_home`
     (the cap placed and the arm back at rest, at the episode's last step);
+  - `Episode_Metrics/grip_cam_low` (the camera within 2 cm of the table) should stay ~0;
   - `Sim/nan_env_recoveries` should stay small.
 - **Go/no-go:** if `grasp` is still flat at iteration 300–500, stop the run and retune
   the reward stages rather than wait.
