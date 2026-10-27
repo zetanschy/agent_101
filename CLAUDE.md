@@ -97,8 +97,8 @@ The cap-to-mug task as an RL environment, `Mjlab-CapToMug-So101-Twin`, in the mj
 1/600 s and coarser go NaN with the twin's contacts.
 
 The current task is the **state teacher**: its actor and critic see privileged sim state,
-including finger-cap contact sensors. A two-camera student is to be distilled from it
-later. The trained teacher is `zetanschy/mjlab_so101_cap_to_mug_teacher` on the Hub:
+including finger-cap contact sensors. A two-camera student is distilled from it (see
+"Camera dataset and the BC student"). The trained teacher is `zetanschy/mjlab_so101_cap_to_mug_teacher` on the Hub:
 89.2% of 1024 episodes end with the cap in the mug and the arm home. `Wrist_Roll`'s
 target is held to the operator's range, so the grip camera stays clear of the table;
 the earlier 94.3% teacher rolled the wrist ~180° and is kept in `previous_unsafe_wrist/`.
@@ -152,6 +152,36 @@ env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToMug-S
   - `Sim/nan_env_recoveries` should stay small.
 - **Go/no-go:** if `grasp` is still flat at iteration 300–500, stop the run and retune
   the reward stages rather than wait.
+
+### Camera dataset and the BC student
+
+The student sees only what the real arm has: the front and grip RGB frames and the 6
+joint positions. It is distilled from the teacher in two steps, from `thirdparty/mjlab`,
+with `env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python` before each line:
+
+```bash
+scripts/so101_twin/collect.py --checkpoint <teacher>/model_2800.pt --out ../../sim/outputs/mjlab/cap_to_mug_teacher_2800
+scripts/so101_twin/student.py --data ../../sim/outputs/mjlab/cap_to_mug_teacher_2800 --out ../../sim/outputs/mjlab/students/bc_2800.pt
+scripts/so101_twin/eval_teacher.py --student ../../sim/outputs/mjlab/students/bc_2800.pt \
+    --stages ../../outputs/sim_eval/openpi_pi05_lora_cap_to_mug_sim_50/trials.jsonl --out ../../outputs/sim_eval/mjlab_student_bc_2800
+```
+
+- **Dataset** (`collect.py`, 7 min on the 3060):
+  - 2000 episodes, 181k frames, 309 MB;
+  - caps open/closed side up 50/50; action noise 0 / 0.1 / 0.3 per episode, while the
+    label stays the teacher's clean action;
+  - the twin's `live/dr.py` visual randomization.
+- **Student** (`student.py`, 7 min for 30 epochs):
+  - a CNN and a linear layer per camera, plus a linear layer on the joints;
+  - the three concatenated into an MLP that outputs the teacher's action.
+- **Benchmark** (`eval_teacher.py`): the 100 seeded stages, scored like sim-eval.
+  - Teacher 2800: 92/100. BC student: 57/100.
+  - Its failures are mostly never picking the cap up or dropping it: BC's compounding
+    error.
+  - `eval_teacher.py` runs the mjlab twin at dt 1/900, not sim-eval's live twin.
+- **Rendering:** mujoco_warp ignores material textures. `twin.py` gives each textured
+  material its texture's mean colour, so the mat renders dark as in MuJoCo's own
+  renderer.
 
 ## Common commands
 
