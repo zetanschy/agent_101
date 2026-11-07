@@ -107,9 +107,12 @@ Teacher 2800 was trained before this: 92/100 without the delay, 61/100 with it.
 The current task is the **state teacher**: its actor and critic see privileged sim state,
 including finger-cap contact sensors. A two-camera student is distilled from it (see
 "Camera dataset and the BC student"). The trained teacher is `zetanschy/mjlab_so101_cap_to_mug_teacher` on the Hub:
-89.2% of 1024 episodes end with the cap in the mug and the arm home. `Wrist_Roll`'s
-target is held to the operator's range, so the grip camera stays clear of the table;
-the earlier 94.3% teacher rolled the wrist ~180° and is kept in `previous_unsafe_wrist/`.
+`model_2800`, trained before the servo dead time was added. In 92.5% of 1024 episodes it ends with
+the cap in the mug and the arm home, with caps lying either side up. Its model card keeps the run's
+`params/` and `git/mjlab.diff`. `Wrist_Roll`'s target is held to the operator's range, so the grip
+camera stays clear of the table. Two earlier teachers are kept beside it:
+- `previous_upright_caps/`: 89.2%, caps always closed side up;
+- `previous_unsafe_wrist/`: 94.3%, wrist rolled ~180°.
 
 ### On another machine
 
