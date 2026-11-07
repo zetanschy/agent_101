@@ -96,6 +96,14 @@ The cap-to-mug task as an RL environment, `Mjlab-CapToMug-So101-Twin`, in the mj
 
 1/600 s and coarser go NaN with the twin's contacts.
 
+**Servo dead time and slew.** These live in the live twin's control path, not in the MjSpec, so
+the action term applies them as `OnlineGoals` does. The values come from `twin.servo_goal_path()`
+(servo.json: 1.0 frame = 33 ms, 5.29 rad/s):
+- training draws 1–3 frames per episode (`live/dr.py`);
+- play (`eval_teacher.py`, `collect.py`) uses the identified 1.0.
+
+Teacher 2800 was trained before this: 92/100 without the delay, 61/100 with it.
+
 The current task is the **state teacher**: its actor and critic see privileged sim state,
 including finger-cap contact sensors. A two-camera student is distilled from it (see
 "Camera dataset and the BC student"). The trained teacher is `zetanschy/mjlab_so101_cap_to_mug_teacher` on the Hub:
@@ -175,7 +183,8 @@ scripts/so101_twin/eval_teacher.py --student ../../sim/outputs/mjlab/students/bc
   - a CNN and a linear layer per camera, plus a linear layer on the joints;
   - the three concatenated into an MLP that outputs the teacher's action.
 - **Benchmark** (`eval_teacher.py`): the 100 seeded stages, scored like sim-eval.
-  - Teacher 2800: 92/100. BC student: 57/100.
+  - Teacher 2800: 92/100. BC student: 57/100. Both were measured before the action term had
+    the servo dead time; with it, the teacher gets 61/100.
   - Its failures are mostly never picking the cap up or dropping it: BC's compounding
     error.
   - `eval_teacher.py` runs the mjlab twin at dt 1/900, not sim-eval's live twin.
