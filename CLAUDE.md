@@ -173,35 +173,45 @@ env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToMug-S
 ### Camera dataset and the BC student
 
 The student sees only what the real arm has: the front and grip RGB frames and the 6
-joint positions. It is distilled from the teacher in two steps, from `thirdparty/mjlab`,
-with `env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python` before each line.
-The dataset and student below were built from `previous_no_dead_time/model_2800`; they have
-not been rebuilt from `model_3700` yet.
+joint positions. It is distilled from the teacher in two steps, from `thirdparty/mjlab`
+with `env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python` before each, and
+scored in the live twin from the repo root:
 
 ```bash
-scripts/so101_twin/collect.py --checkpoint <teacher>/model_2800.pt --out ../../sim/outputs/mjlab/cap_to_mug_teacher_2800
-scripts/so101_twin/student.py --data ../../sim/outputs/mjlab/cap_to_mug_teacher_2800 --out ../../sim/outputs/mjlab/students/bc_2800.pt
-scripts/so101_twin/eval_teacher.py --student ../../sim/outputs/mjlab/students/bc_2800.pt \
-    --stages ../../outputs/sim_eval/openpi_pi05_lora_cap_to_mug_sim_50/trials.jsonl --out ../../outputs/sim_eval/mjlab_student_bc_2800
+scripts/so101_twin/collect.py --checkpoint <teacher>/model_3700.pt --out ../../sim/outputs/mjlab/cap_to_mug_teacher_dead3700
+scripts/so101_twin/student.py --data ../../sim/outputs/mjlab/cap_to_mug_teacher_dead3700 --out ../../sim/outputs/mjlab/students/bc_dead3700.pt
+cd ../.. && ./robot sim-eval --policy /workspace/sim/outputs/mjlab/students/bc_dead3700.ts \
+    --episodes 100 --name mjlab_student_bc_dead3700_livetwin
 ```
 
-- **Dataset** (`collect.py`, 7 min on the 3060):
-  - 2000 episodes, 181k frames, 309 MB;
+- **Dataset** (`collect.py`, 25 min on the 3060):
+  - 2000 episodes, 869 MB;
   - caps open/closed side up 50/50; action noise 0 / 0.1 / 0.3 per episode, while the
     label stays the teacher's clean action;
-  - the twin's `live/dr.py` visual randomization.
-- **Student** (`student.py`, 7 min for 30 epochs):
-  - a CNN and a linear layer per camera, plus a linear layer on the joints;
-  - the three concatenated into an MLP that outputs the teacher's action.
-- **Benchmark** (`eval_teacher.py`): the 100 seeded stages, scored like sim-eval.
-  - Teacher 2800: 92/100. BC student: 57/100. Both were measured before the action term had
-    the servo dead time; with it, the teacher gets 61/100.
-  - Its failures are mostly never picking the cap up or dropping it: BC's compounding
-    error.
-  - `eval_teacher.py` runs the mjlab twin at dt 1/900, not sim-eval's live twin.
-- **Rendering:** mujoco_warp ignores material textures. `twin.py` gives each textured
-  material its texture's mean colour, so the mat renders dark as in MuJoCo's own
-  renderer.
+  - frames in the live twin's look. The physics runs in mujoco_warp with no cameras; each
+    finished episode is re-rendered from its `qpos` by MuJoCo's own renderer on a textured
+    copy of the scene, 4x supersampled, with one draw of the twin's `live/dr.py` visual
+    randomization. A student trained on warp's flat, shadowless frames scored 13/20 in
+    mjlab and 0/20 in the live twin.
+- **Student** (`student.py`, 6 min for 30 epochs):
+  - a CNN and a linear layer per camera, plus a linear layer on the joints, concatenated
+    into an MLP that outputs the teacher's action;
+  - writes `<out>.pt` and `<out>.ts`: TorchScript for the CPU with `contract.json` inside
+    (joint orders, the action's scale, clip and limits, lerobot <-> URDF units, each
+    camera's calibration).
+- **Benchmark:** the 100 seeded stages in the live twin through `./robot sim-eval` (57 min).
+  `eval_teacher.py` scores teachers only, in the mjlab twin at dt 1/900.
+  - `bc_dead3700`: 27/100. Its teacher `model_3700`: 88/100 in mjlab with the dead time.
+    pi0.5 (sim_50): 82/100 on the same stages.
+  - Its failures are mostly the approach and grasp (cap pushed away, mug knocked over,
+    never picked up): BC's compounding error.
+- **On the arm:** the web UI lists `sim/outputs/mjlab/students/*.ts`, and
+  `webui/student_worker.py` runs one at 30 Hz on the CPU through
+  `scripts/openpi/student_policy.py`. On the real arm it refuses to load a file the live
+  twin has not scored (same sha256) at >= 25% over >= 20 trials.
+- **Rendering:** mujoco_warp ignores material textures, so `twin.robot_spec()` gives each
+  textured material its texture's mean colour; `flat=False` keeps the textures for
+  MuJoCo's own renderer.
 
 ## Common commands
 

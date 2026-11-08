@@ -473,6 +473,9 @@ def list_models():
         out.append({"path": str(Path(p)), "kind": "rl", "goal": goal_term,
                     "label": rl_label(p)})
 
+    for p in sorted(glob.glob(str(ROOT / "sim/outputs/mjlab/students/*.ts")), key=os.path.getmtime, reverse=True):
+        out.append({"path": p, "kind": "student", "label": Path(p).name})
+
     seen, uniq = set(), []
     for m in out:
         if m["path"] not in seen:
@@ -532,6 +535,12 @@ def load(body: dict = Body(...)):
                         "(rebuild: ./robot build)", 400)
         args, sig = rl_args(body)
         worker_script = "webui/rl_worker.py"
+    elif policy_in.endswith(".ts"):
+        # The mjlab BC student (thirdparty/mjlab scripts/so101_twin/student.py): a 30 Hz
+        # closed loop on the CPU, everything it needs inside the export.
+        args, sig = [f"--policy={policy_in}"], {"stack": "student", "policy": policy_in,
+                                                "task": body.get("task"), "actions": "1"}
+        worker_script = "webui/student_worker.py"
     elif is_openpi_checkpoint(policy_in):
         if not OPENPI:
             return _err("this image cannot run openpi policies (rebuild: ./robot build)", 400)
@@ -919,8 +928,9 @@ def eval_state(flip: int = 0):
 
 @app.post("/api/eval/open")
 def eval_open(body: dict = Body(...)):
-    if not (_alive(_worker) and _loaded and _loaded.get("stack") == "openpi"):
-        return _err("load an openpi model on the main page first (the Eval page drives the loaded one)", 409)
+    if not (_alive(_worker) and _loaded and _loaded.get("stack") in ("openpi", "student")):
+        return _err("load an openpi model or an mjlab student on the main page first "
+                    "(the Eval page drives the loaded one)", 409)
     if eval_stage.sim_socket() is None:
         return _err("no sim to draw the stages: start the page with `./robot real-eval`", 400)
     policy = Path(_loaded["policy"].rstrip("/")).name

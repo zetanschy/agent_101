@@ -148,6 +148,7 @@ def run(a) -> pathlib.Path:
     from lerobot.utils.robot_utils import precise_sleep
     from lerobot_robot_real2sim import Real2Sim, Real2SimConfig
     lerobot = lc.is_lerobot_checkpoint(a.policy)  # ./robot sim-eval runs that one in the lerobot image
+    student = a.policy.endswith(".ts")  # the mjlab BC student: a closed loop, no chunks
 
     name = a.name or f"{pathlib.Path(a.policy.rstrip('/')).name}_seed{a.seed}_n{a.episodes}"
     out = OUT / name
@@ -161,14 +162,21 @@ def run(a) -> pathlib.Path:
     sim = Sim()
     run_info = {k: v for k, v in vars(a).items() if k not in ("report", "compare")}
     run_info["sim_dr"] = sim.status().get("dr_level", "off")  # ./robot sim-eval --sim-dr LEVEL
-    run_info["stack"] = "lerobot" if lerobot else "openpi"
+    run_info["stack"] = "student" if student else "lerobot" if lerobot else "openpi"
+    if student:  # the arm's gate (webui/student_worker.py) matches runs to the exact file
+        import hashlib
+
+        run_info["policy_sha256"] = hashlib.sha256(pathlib.Path(a.policy).read_bytes()).hexdigest()
     robot = Real2Sim(Real2SimConfig(port=os.environ["ROBOT_PORT"], id="sim_eval", cameras=None, use_degrees=True))
     os.environ["R2S_NEW_LAYOUT_EACH_EPISODE"] = "0"  # this script places every stage itself
     robot.connect()
     t = time.perf_counter()
     # Both stacks get the same RTC: exp schedule, max guidance 5, identity Jacobian,
     # s = the whole overlap (see lerobot_chunker.py).
-    if lerobot:
+    if student:
+        chunker = _load("student_policy", "scripts/openpi/student_policy.py").StudentPolicy(a.policy)
+        label = "mjlab BC student"
+    elif lerobot:
         chunker = lc.LerobotChunker(a.policy, robot, a.task)
         run_info["policy_info"] = chunker.describe()
         label = f"lerobot {chunker.config.type}"
@@ -187,10 +195,11 @@ def run(a) -> pathlib.Path:
         def observe(raw):
             return ev.build_observation(robot, raw, a.task)
     (out / "run.json").write_text(json.dumps(run_info, indent=2))
-    warm = observe(robot.get_observation())
-    chunker.infer(warm, prefix_start=0, inference_delay=1)
-    chunker.infer(warm, prefix_start=1, inference_delay=1)
-    chunker.reset()
+    if not student:
+        warm = observe(robot.get_observation())
+        chunker.infer(warm, prefix_start=0, inference_delay=1)
+        chunker.infer(warm, prefix_start=1, inference_delay=1)
+        chunker.reset()
     print(f"loaded {a.policy} ({label}); warm-up {time.perf_counter() - t:.0f} s", flush=True)
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     motors = list(robot.action_features)
@@ -232,25 +241,30 @@ def run(a) -> pathlib.Path:
                 if tick_n == 0 and not (out / "stage.jpg").exists():
                     cv2.imwrite(str(out / "stage.jpg"), cv2.cvtColor(obs["front"], cv2.COLOR_RGB2BGR))
                 frames.append(np.concatenate([cv2.resize(obs["front"], (320, 240)), cv2.resize(obs["grip"], (320, 240))], 1))
-            sched.set_horizon(a.actions, in_flight=pending is not None)
-            plan = sched.plan(in_flight=pending is not None)
-            if plan.action == "infer":
-                chunk, dt = infer_only(observe(robot.get_observation()),
-                                       plan.request.prefix_start, plan.request.inference_delay)
-                sched.adopt(len(chunk), delay=plan.request.inference_delay)
-                lat.append(dt)
-            elif plan.action == "collect":
-                chunk, dt = pending.result()
-                pending = None
-                sched.adopt(len(chunk), delay=promised)
-                lat.append(dt)
+            if student:  # one action per frame, from this frame's observation
+                t0 = time.perf_counter()
+                robot.send_action(chunker(robot.get_observation()))
+                lat.append(time.perf_counter() - t0)
             else:
-                if plan.request is not None:
-                    promised = plan.request.inference_delay
-                    pending = pool.submit(infer_only, observe(robot.get_observation()),
-                                          plan.request.prefix_start, promised)
-                act = chunk[sched.take()]
-                robot.send_action({m: float(act[k]) for k, m in enumerate(motors) if k < len(act)})
+                sched.set_horizon(a.actions, in_flight=pending is not None)
+                plan = sched.plan(in_flight=pending is not None)
+                if plan.action == "infer":
+                    chunk, dt = infer_only(observe(robot.get_observation()),
+                                           plan.request.prefix_start, plan.request.inference_delay)
+                    sched.adopt(len(chunk), delay=plan.request.inference_delay)
+                    lat.append(dt)
+                elif plan.action == "collect":
+                    chunk, dt = pending.result()
+                    pending = None
+                    sched.adopt(len(chunk), delay=promised)
+                    lat.append(dt)
+                else:
+                    if plan.request is not None:
+                        promised = plan.request.inference_delay
+                        pending = pool.submit(infer_only, observe(robot.get_observation()),
+                                              plan.request.prefix_start, promised)
+                    act = chunk[sched.take()]
+                    robot.send_action({m: float(act[k]) for k, m in enumerate(motors) if k < len(act)})
             tick_n += 1
             precise_sleep(max(1.0 / FPS - (time.perf_counter() - tick), 0.0))
         if pending is not None:

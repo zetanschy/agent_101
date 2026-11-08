@@ -238,7 +238,7 @@ async function loadModels() {
   $('model').innerHTML = d.models.map(m => {
     MODEL_KIND[m.path] = m.kind;
     if (m.goal) MODEL_GOAL[m.path] = m.goal;
-    const tag = m.kind === 'openpi' ? 'openpi: ' : (m.kind === 'rl' ? 'RL: ' : '');
+    const tag = m.kind === 'openpi' ? 'openpi: ' : (m.kind === 'rl' ? 'RL: ' : (m.kind === 'student' ? 'student: ' : ''));
     // The server labels what it can say more about than the path does — an RL export
     // is five directories deep and named after its own timestamp, so the path is the
     // one thing that does NOT identify it. Everything else is its own best label.
