@@ -107,10 +107,12 @@ Teacher 2800 was trained before this: 92/100 without the delay, 61/100 with it.
 The current task is the **state teacher**: its actor and critic see privileged sim state,
 including finger-cap contact sensors. A two-camera student is distilled from it (see
 "Camera dataset and the BC student"). The trained teacher is `zetanschy/mjlab_so101_cap_to_mug_teacher` on the Hub:
-`model_2800`, trained before the servo dead time was added. In 92.5% of 1024 episodes it ends with
-the cap in the mug and the arm home, with caps lying either side up. Its model card keeps the run's
-`params/` and `git/mjlab.diff`. `Wrist_Roll`'s target is held to the operator's range, so the grip
-camera stays clear of the table. Two earlier teachers are kept beside it:
+`model_3700`, trained with the servo dead time. With the identified 1.0 frame it ends with the
+cap in the mug and the arm home in 87.6% of 4096 episodes, with caps lying either side up. Its
+model card keeps the run's `params/` and `git/mjlab.diff`. `Wrist_Roll`'s target is held to the
+operator's range, so the grip camera stays clear of the table (0% under 2 cm). Three earlier
+teachers are kept beside it:
+- `previous_no_dead_time/`: `model_2800`, 92.5% without the dead time, 57.6% with it;
 - `previous_upright_caps/`: 89.2%, caps always closed side up;
 - `previous_unsafe_wrist/`: 94.3%, wrist rolled ~180°.
 
@@ -149,6 +151,10 @@ env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToMug-S
 
 - **Run settings:** 3000 iterations, a checkpoint every 100, saved to
   `logs/rsl_rl/so101_cap_to_mug_teacher/<date>/`. Logging goes to W&B project `mjlab`.
+- **Pick the checkpoint by scoring it, not by the training curve.** The Hub teacher is
+  iteration 3700 of a run given `--agent.max-iterations 6000` and stopped at 4300 on a
+  plateau. With the 1.0-frame dead time, its checkpoints 2600–4300 scored 83–89% on the
+  same 2048 layouts, and the last ones were not the best.
 - **Measured on the RTX 3060:**
   - 15.4 s per iteration at 4096 envs;
   - peak GPU memory 11.3 of 12.3 GB, so nothing else may use the GPU;
@@ -168,7 +174,9 @@ env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToMug-S
 
 The student sees only what the real arm has: the front and grip RGB frames and the 6
 joint positions. It is distilled from the teacher in two steps, from `thirdparty/mjlab`,
-with `env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python` before each line:
+with `env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync python` before each line.
+The dataset and student below were built from `previous_no_dead_time/model_2800`; they have
+not been rebuilt from `model_3700` yet.
 
 ```bash
 scripts/so101_twin/collect.py --checkpoint <teacher>/model_2800.pt --out ../../sim/outputs/mjlab/cap_to_mug_teacher_2800
