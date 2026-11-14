@@ -204,7 +204,22 @@ cd ../.. && ./robot sim-eval --policy /workspace/sim/outputs/mjlab/students/bc_d
   - `bc_dead3700`: 27/100. Its teacher `model_3700`: 88/100 in mjlab with the dead time.
     pi0.5 (sim_50): 82/100 on the same stages.
   - Its failures are mostly the approach and grasp (cap pushed away, mug knocked over,
-    never picked up): BC's compounding error.
+    never picked up).
+- **Where the student loses, measured** (2026-11-13, the same 100 stages): all of the
+  88 → 27 is distillation, none of it the live twin.
+  - Teacher `model_3700`: 88 in mjlab, 94 in the live twin (lockstep, its privileged
+    observation built by mjlab's own code from the live state).
+  - BC on the teacher's own 35-value observation, no images, same shards, recipe and
+    split as `bc_dead3700`: 77 in mjlab.
+  - `bc_dead3700`: 30 in mjlab (closed loop, on frames rendered as `collect.py` renders
+    them), 29 in the live twin in lockstep, 27 through sim-eval's real-time loop.
+  - So neither the live twin (p 0.15 for the teacher, 0.66 for the student) nor sim-eval's
+    loop latency (29 vs 27, p 0.82) costs anything: a student change can be judged in
+    mjlab. Offline cloning costs ~11 points (88 → 77, p 0.04). What the image student
+    sees, or how it reads it, costs ~47 (77 → 30; val loss 0.090 vs 0.016).
+  - The val loss jump from 0.053 (`bc_2800`) to 0.090 came from the twinlook frames, not
+    the dead time: `bc_2800_twinlook` already had 0.091 without it.
+  - These checks ran from scratch scripts that are not in the repo.
 - **On the arm:** the web UI lists `sim/outputs/mjlab/students/*.ts`, and
   `webui/student_worker.py` runs one at 30 Hz on the CPU through
   `scripts/openpi/student_policy.py`. On the real arm it refuses to load a file the live
