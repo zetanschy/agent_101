@@ -350,7 +350,7 @@ case "$cmd" in
                  $DC -f docker-compose.openpi.yml run --rm -e PYTHONPATH=/workspace/sim openpi \
                    python scripts/openpi/sim_eval.py "$@" ;;
                *)
-                 case " $* " in *" --sim"*) ;; *) set -- --sim mujoco "$@" ;; esac
+                 case " $* " in *" --sim "*|*" --sim="*) ;; *) set -- --sim mujoco "$@" ;; esac  # not --sim-layout etc.
                  sim_up "$@"
                  # openpi checkpoints are /checkpoints/<run> dirs with params/; anything else is
                  # a lerobot policy, which needs CUDA torch: the lerobot image (lerobot_chunker.py)
@@ -367,10 +367,27 @@ case "$cmd" in
                  fi ;;
              esac ;;
   real-eval)            # the Eval page on the REAL arm: seeded stages drawn by MuJoCo, operator grades
-             needs_docker real-eval; stage_up
+                        # --lerobot: lerobot models (a Hub id), in the lerobot image, instead of openpi's
+                        # --stage-layout organizer: the organizer task's stages
+                        # --sim mujoco: the same page on the live twin, no arm (stages reset the sim)
+             needs_docker real-eval; sim_up "$@"
+             lr=""; layout=random:1; set -- "${REST[@]}"
+             while [ $# -gt 0 ]; do
+               case "$1" in
+                 --lerobot) lr=1; shift ;;
+                 --stage-layout) layout="$2"; shift 2 ;;
+                 *) echo "real-eval: unknown option $1" >&2; exit 2 ;;
+               esac
+             done
+             ev=(-e "STAGE_LAYOUT=$layout" -e PYTHONPATH=/workspace/sim)
+             if [ -n "$SIM_ENGINE" ]; then ev=("${SIM_ENV[@]}" -e "STAGE_LAYOUT=$layout")
+             else stage_up; ev+=(-e "STAGE_SOCK=/workspace/$STAGE_SOCK"); fi
              port="${OPENPI_WEBUI_PORT:-8001}"; echo "eval page -> http://localhost:${port}/eval"
-             $DC -f docker-compose.openpi.yml run --rm -e "STAGE_SOCK=/workspace/$STAGE_SOCK" \
-               -e PYTHONPATH=/workspace/sim -p "${port}:8000" openpi python webui/app.py ;;
+             if [ -n "$lr" ]; then
+               $DC run --rm "${ev[@]}" -e LEROBOT_CHUNK_LOOP=1 -p "${port}:8000" lerobot python webui/app.py
+             else
+               $DC -f docker-compose.openpi.yml run --rm "${ev[@]}" -p "${port}:8000" openpi python webui/app.py
+             fi ;;
   openpi-build) if [ "$MODE" = native ]; then bash ./scripts/openpi/setup_cloud.sh
                 else $DC -f docker-compose.openpi.yml build "$@"; fi ;;
   rtc-parity)           # check openpi's RTC port against lerobot's, in both images

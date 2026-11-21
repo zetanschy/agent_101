@@ -67,7 +67,9 @@ body in the right place, printing the exact command first. `./robot` with no ver
   `thirdparty/openpi/src/openpi/training/config.py`): LoRA, batch 16, 30k steps, degrees units.
   - Norm stats are keyed by dataset repo id. `evaluate.load_policy` falls back to the single set
     a checkpoint carries, so always load through it.
-  - The benchmarks load openpi checkpoints only, not lerobot ones.
+  - `sim-eval` loads openpi or lerobot checkpoints (a Hub id: the lerobot image, `lerobot_chunker.py`).
+    `real-eval` loads openpi ones, or lerobot ones under `--lerobot` (the lerobot image, the same
+    loop); `--stage-layout organizer` gives the organizer stages, `--sim mujoco` the twin.
 - **DAgger / Sirius:**
   - `scripts/openpi/dagger.py` records takeovers with an `intervention` column.
   - `scripts/robot/sirius_build.py` merges demos and rollouts, adding a `demonstration` column.

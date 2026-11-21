@@ -54,19 +54,23 @@ def _load_eval_module():
     return mod
 
 
-def _load_chunk_loop():
-    """Import scripts/openpi/chunk_loop.py, the loop shared with evals/rtc.py.
+def _load_by_path(name: str, rel: str):
+    """Import ROOT/rel as module `name`.
 
     Registered in sys.modules BEFORE execution, unlike the loader above: @dataclass
     resolves its own module out of sys.modules, so a by-path import that skips this
     step dies on the first dataclass with an unrecognisable AttributeError.
     """
-    spec = importlib.util.spec_from_file_location(
-        "openpi_chunk_loop", ROOT / "scripts" / "openpi" / "chunk_loop.py")
+    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+def _load_chunk_loop():
+    """Import scripts/openpi/chunk_loop.py, the loop shared with evals/rtc.py."""
+    return _load_by_path("openpi_chunk_loop", "scripts/openpi/chunk_loop.py")
 
 
 PREVIEW = ROOT / "outputs" / "eval_preview.jpg"
@@ -228,28 +232,41 @@ def main() -> int:
 
     ev = _load_eval_module()
     chunk_loop = _load_chunk_loop()
-    from openpi.policies import policy_config
-    from openpi.training import config as pi0_config
-
     fps = args.fps or int(ev.env("CAM_FPS", "30"))
-    config_name = args.config or ev.infer_config(args.policy)
+    # A lerobot policy (a Hub repo id or a lerobot dir; `./robot real-eval --lerobot`, the
+    # lerobot image) runs this same loop through LerobotChunker, as `./robot sim-eval` does,
+    # so its real and sim scores come from one loop. It takes the raw lerobot observation.
+    lc = _load_by_path("lerobot_chunker", "scripts/openpi/lerobot_chunker.py")
+    lerobot = lc.is_lerobot_checkpoint(args.policy)
 
     print("LOADING", flush=True)
-    cfg = pi0_config.get_config(config_name)
-    # ev.load_policy, not create_trained_policy directly: a DAgger round's checkpoint
-    # files its norm stats under the round's dataset rather than the config's. Same
-    # reason evaluate.py imports one definition of an observation -- one place to be
-    # wrong rather than two.
-    policy = ev.load_policy(cfg, args.policy)
+    policy = chunker = None
+    if lerobot:
+        args.mode = "rtc"  # LerobotChunker always guides with the executing chunk's tail
+        robot = connect_robot(ev, fps, degrees=(args.units == "degrees"))
+        chunker = lc.LerobotChunker(args.policy, robot, args.task)
+        print(f"lerobot {chunker.config.type} units={args.units} mode=rtc fps={fps}", flush=True)
+    else:
+        from openpi.training import config as pi0_config
 
-    robot = connect_robot(ev, fps, degrees=(args.units == "degrees"))
-    print(f"config={config_name} horizon={cfg.model.action_horizon} units={args.units} "
-          f"mode={args.mode} fps={fps}", flush=True)
+        config_name = args.config or ev.infer_config(args.policy)
+        cfg = pi0_config.get_config(config_name)
+        # ev.load_policy, not create_trained_policy directly: a DAgger round's checkpoint
+        # files its norm stats under the round's dataset rather than the config's. Same
+        # reason evaluate.py imports one definition of an observation -- one place to be
+        # wrong rather than two.
+        policy = ev.load_policy(cfg, args.policy)
+
+        robot = connect_robot(ev, fps, degrees=(args.units == "degrees"))
+        print(f"config={config_name} horizon={cfg.model.action_horizon} units={args.units} "
+              f"mode={args.mode} fps={fps}", flush=True)
+
+    def observe(raw: dict):
+        return raw if lerobot else ev.build_observation(robot, raw, args.task)
 
     # In rtc mode every inference is guided by the tail of the chunk still executing.
     # The chunker only does the bookkeeping; the guidance itself is in the sampler.
-    chunker = None
-    if args.mode == "rtc":
+    if args.mode == "rtc" and not lerobot:
         from openpi.policies.rtc import RealTimeChunker
 
         # No prefix_attention_horizon: it defaults to the whole leftover of the
@@ -270,8 +287,9 @@ def main() -> int:
     # the arm at step 0. One throwaway inference on a real observation moves the whole
     # cost into Load. No action is sent, so the robot does not move.
     t = time.perf_counter()
-    warm_obs = ev.build_observation(robot, robot.get_observation(), args.task)
-    policy.infer(warm_obs)
+    warm_obs = observe(robot.get_observation())
+    if policy is not None:
+        policy.infer(warm_obs)
     if chunker is not None:
         # The guided sampler is a SECOND trace (the prefix changes the argument tree),
         # so compile it here too or the first replan of the run eats the compile
@@ -336,7 +354,7 @@ def main() -> int:
             the serial port ("Failed to sync write 'Goal_Position' ... Port is in use!").
             So the observation is captured here and only the model call is offloaded.
             """
-            return ev.build_observation(robot, robot.get_observation(), args.task)
+            return observe(robot.get_observation())
 
         def infer_only(obs, prefix_start: int, inference_delay: int):
             """Pure compute — safe on a worker thread, touches no hardware."""

@@ -42,8 +42,9 @@ from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
 # unchanged, so the original script's import path is the only thing that broke.
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.utils.robot_utils import precise_sleep
-from openpi.policies import policy_config
-from openpi.training import config as pi0_config
+
+# openpi is imported where it is used, so the lerobot image (no openpi) can import this
+# module for its cameras and env helpers: webui/openpi_worker.py driving a lerobot policy.
 
 STATE_DIM = 6
 
@@ -96,6 +97,8 @@ def infer_config(policy_path: str) -> str:
     if not assets.is_dir():
         raise SystemExit(f"no assets/ in {policy_path}; pass --config explicitly")
     # assets/<owner>/<name>/norm_stats.json -> "<owner>/<name>"
+    from openpi.training import config as pi0_config
+
     found = {f"{p.parent.name}/{p.name}" for p in assets.glob("*/*") if p.is_dir()}
     matches = [c.name for c in pi0_config._CONFIGS if getattr(c.data, "repo_id", None) in found]
     if not matches:
@@ -136,6 +139,7 @@ def load_policy(cfg, policy_path: str):
     decides the model shape and the transforms. It only unblocks the norm-stats lookup.
     """
     import openpi.training.checkpoints as _ckpt
+    from openpi.policies import policy_config
 
     assets = pathlib.Path(policy_path) / "assets"
     data_config = cfg.data.create(cfg.assets_dirs, cfg.model)
@@ -204,6 +208,8 @@ def main() -> int:
     p.add_argument("--rtc-max-guidance", type=float, default=5.0, help="beta_max")
     p.add_argument("--rtc-jacobian", choices=("identity", "full"), default="identity")
     args = p.parse_args()
+
+    from openpi.training import config as pi0_config
 
     fps = args.fps or int(env("CAM_FPS", "30"))
 

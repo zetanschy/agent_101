@@ -167,9 +167,9 @@ function grade(success, cause) { const note = $('note').value; act(async () => {
 function render(s) {
   $('mode').textContent = s.sim ? 'sim' : 'real arm';
   const L = s.loaded;
-  $('model').innerHTML = (L && L.stack === 'openpi')
+  $('model').innerHTML = (L && ['openpi', 'student', 'lerobot-rtc'].includes(L.stack))
     ? `model <b>${L.policy.split('/').filter(Boolean).pop()}</b> · task “${L.task}”`
-    : `<span class="warn">No openpi model loaded: load one on the <a href="/">inference panel</a>, then open a run.</span>`;
+    : `<span class="warn">No model the Eval page can drive: load one on the <a href="/">inference panel</a>, then open a run.</span>`;
   if (!s.stage_sim) $('model').innerHTML += ` · <span class="warn">no stage sim: start with <code>./robot real-eval</code></span>`;
   const open = s.open;
   for (const id of ['progress', 'stagePanel', 'trialsPanel']) $(id).style.display = open ? '' : 'none';
@@ -206,6 +206,7 @@ function render(s) {
     if (afterSrc && !$('afterImg').src.endsWith(afterSrc)) $('afterImg').src = afterSrc;
     $('auto').innerHTML = `Camera check: ${verdict} <span style="color:var(--mut)">(${a.detail || ''}). A hint; your grade counts.</span>`;
     $('gSuccess').className = s.t_success || a.verdict === 'in' ? 'good' : '';
+    $('gSuccess').textContent = '✓ Success: the cap ended in ' + (s.organizer ? 'the compartment the task names' : 'the mug');
     if (!$('causes').childElementCount) for (const c of s.causes) { const b = document.createElement('button'); b.textContent = '✗ ' + c; b.onclick = () => grade(false, c); $('causes').appendChild(b); }
   }
   $('rows').innerHTML = s.recent.map(t => `<tr><td class="num">${t.trial + 1}</td><td class="num">${t.seed}</td>

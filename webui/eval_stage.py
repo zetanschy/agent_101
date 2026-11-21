@@ -30,6 +30,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNS = ROOT / "outputs" / "real_eval"
 CAUSES = ["never picked up", "pushed the cap away", "dropped on the way", "missed the mug",
           "still holding at timeout", "mug knocked over", "cap fell off the table", "other"]
+# The organizer task's (STAGE_LAYOUT=organizer), named as sim_eval.py's organizer grader names them.
+ORG_CAUSES = ["never picked up", "pushed the cap away", "wrong compartment", "dropped outside the boxes",
+              "still holding at timeout", "organizer knocked over", "cap fell off the table", "other"]
+
+
+def causes(layout: dict) -> list[str]:
+    return ORG_CAUSES if "organizer" in layout else CAUSES
 CAP_COL, MUG_COL = (214, 120, 42), (52, 104, 235)  # BGR: blue cap, orange mug (as the reports)
 ORG_COL = (90, 225, 90)  # BGR: the organizer (layout STAGE_LAYOUT=organizer)
 
@@ -234,10 +241,16 @@ def describe(layout: dict, flip: bool = False) -> dict:
 def record_fields(layout: dict) -> dict:
     """The stage as sim_eval's trials.jsonl records it, so its report and map read real runs."""
     sc = scene()
-    cap, mug = layout["caps"][0], layout["mug"]
+    cap = layout["caps"][0]
     cz = sc.table_z() + (sc.cap_dims()["height"] if cap["up"] == "open" else 0.0)
-    return {"cap_xy": cap["xy"], "cap_up": cap["up"], "mug_xy": mug["xy"], "handle_yaw_deg": mug["handle_yaw_deg"],
-            "cap_xyz0": [*cap["xy"], round(cz, 4)], "mug_xyz0": [*mug["xy"], round(sc.table_z(), 4)]}
+    out = {"cap_xy": cap["xy"], "cap_up": cap["up"], "cap_xyz0": [*cap["xy"], round(cz, 4)]}
+    if "organizer" in layout:
+        o = layout["organizer"]
+        return {**out, "organizer_xy": o["xy"], "organizer_yaw_deg": o["yaw_deg"],
+                "org_xyz0": [*o["xy"], round(sc.table_z(), 4)]}
+    mug = layout["mug"]
+    return {**out, "mug_xy": mug["xy"], "handle_yaw_deg": mug["handle_yaw_deg"],
+            "mug_xyz0": [*mug["xy"], round(sc.table_z(), 4)]}
 
 
 def auto_check(end_jpg: pathlib.Path) -> dict:

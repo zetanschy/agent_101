@@ -125,6 +125,9 @@ def rl_available() -> bool:
 OPENPI = openpi_available()
 # `./robot webui|openpi-webui --sim mujoco|isaac` points the robot at the live sim's socket
 SIM = os.environ.get("ROBOT_TYPE") == "real2sim"
+# `./robot real-eval --lerobot`: lerobot policies run in openpi_worker.py's chunk loop (the
+# Eval page's trials, the same loop sim-eval scores), not in a lerobot-rollout worker.
+LEROBOT_CHUNK_LOOP = os.environ.get("LEROBOT_CHUNK_LOOP") == "1"
 
 # The SO-101's joints, in URDF names — the vocabulary mjlab's exporter writes into the
 # ONNX metadata. Sourced from kinematics.py so there is one definition of the arm.
@@ -541,6 +544,10 @@ def load(body: dict = Body(...)):
         args, sig = [f"--policy={policy_in}"], {"stack": "student", "policy": policy_in,
                                                 "task": body.get("task"), "actions": "1"}
         worker_script = "webui/student_worker.py"
+    elif LEROBOT_CHUNK_LOOP and not is_openpi_checkpoint(policy_in):
+        args, sig = openpi_args(body)
+        sig["stack"] = "lerobot-rtc"
+        worker_script = "webui/openpi_worker.py"
     elif is_openpi_checkpoint(policy_in):
         if not OPENPI:
             return _err("this image cannot run openpi policies (rebuild: ./robot build)", 400)
@@ -636,7 +643,7 @@ def action_steps(body: dict = Body(...)):
     # policy, openpi retunes how much of the predicted chunk the loop executes.
     # Same knob, different worker vocabulary. The loaded signature records which
     # stack is running, so this follows the model that is actually loaded.
-    is_op = bool(_loaded and _loaded.get("stack") == "openpi")
+    is_op = bool(_loaded and _loaded.get("stack") in ("openpi", "lerobot-rtc"))
     _send(f"actions {int(n)}" if is_op else f"actionsteps {int(n)}")
     _wait_new_marker("ACTION_STEPS_SET", since, 5)
     if _loaded is not None:          # keep the signature honest so Load isn't skipped later
@@ -875,6 +882,8 @@ def _ev_poll() -> None:
             shutil.copyfile(PREVIEW, after)
         cam = eval_stage.auto_check(after) if after.exists() else {"verdict": "unknown", "detail": "no frame"}
         sg = _ev.get("sim_grade")
+        if "organizer" in (_ev.get("layout") or {}):  # both checks look for the mug
+            cam, sg = {"verdict": "unknown", "detail": "no automatic check for the organizer task"}, None
         _ev.update(phase="grade", after=after.name if after.exists() else None,
                    auto=({"verdict": "in" if sg else "out", "detail": f"the sim's own check; camera after homing: "
                           f"{cam['verdict']} ({cam['detail']})"} if sg is not None else cam))
@@ -894,7 +903,8 @@ def _ev_public(flip: bool = False) -> dict:
            "t_success": _ev.get("t_success"), "recent": trials[-10:][::-1], "after": _ev.get("after"),
            "n_skipped": len(_jsonl(_ev["dir"] / "skipped.jsonl")),
            "elapsed": round(time.time() - _ev["t_run"], 1) if _ev["phase"] == "running" else None,
-           "report": (_ev["dir"] / "report.md").exists(), "causes": eval_stage.CAUSES}
+           "report": (_ev["dir"] / "report.md").exists(), "causes": eval_stage.causes(_ev.get("layout") or {}),
+           "organizer": "organizer" in (_ev.get("layout") or {})}
     if _ev.get("layout"):
         out["where"] = eval_stage.describe(_ev["layout"], flip)
     return out
@@ -928,9 +938,9 @@ def eval_state(flip: int = 0):
 
 @app.post("/api/eval/open")
 def eval_open(body: dict = Body(...)):
-    if not (_alive(_worker) and _loaded and _loaded.get("stack") in ("openpi", "student")):
-        return _err("load an openpi model or an mjlab student on the main page first "
-                    "(the Eval page drives the loaded one)", 409)
+    if not (_alive(_worker) and _loaded and _loaded.get("stack") in ("openpi", "student", "lerobot-rtc")):
+        return _err("load an openpi model, an mjlab student, or (under `./robot real-eval --lerobot`) a "
+                    "lerobot model on the main page first (the Eval page drives the loaded one)", 409)
     if eval_stage.sim_socket() is None:
         return _err("no sim to draw the stages: start the page with `./robot real-eval`", 400)
     policy = Path(_loaded["policy"].rstrip("/")).name
@@ -1044,7 +1054,7 @@ def eval_stop():
 def eval_grade(body: dict = Body(...)):
     success = bool(body.get("success"))
     cause = "success" if success else (body.get("cause") or "")
-    if not success and cause not in eval_stage.CAUSES:
+    if not success and cause not in eval_stage.causes(_ev.get("layout") or {}):
         return _err("pick what went wrong", 400)
     with _ev_lock:
         if _ev.get("phase") != "grade":
