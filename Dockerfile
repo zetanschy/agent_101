@@ -36,9 +36,9 @@ RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu12
 
 # Editable install of the fork with the extras we use:
 #   feetech      -> SO-ARM motors        core_scripts -> dataset+hardware+viz (teleop/record/calibrate)
-#   training     -> trainer deps         pi -> pi0/pi05    peft -> LoRA adapters
+#   training     -> trainer deps         pi -> pi0/pi05    peft -> LoRA adapters    smolvla -> SmolVLA (num2words)
 COPY thirdparty/le101 /opt/le101
-RUN pip install --no-cache-dir -e "/opt/le101[feetech,core_scripts,training,pi,peft]"
+RUN pip install --no-cache-dir -e "/opt/le101[feetech,core_scripts,training,pi,peft,smolvla]"
 
 # Web UI backend (small; last layer so it doesn't invalidate the lerobot layer).
 # onnxruntime runs the mjlab-trained RL policies (webui/rl_worker.py). CPU build on
