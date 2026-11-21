@@ -82,13 +82,67 @@ MATERIALS = {
     "finger": (0.40, 0.001, 0.0),  # PLA on PP/HDPE 0.3-0.5
     "mat": (0.60, 0.001, 0.0),  # black glossy mat (vinyl/silicone) 0.4-0.9
     "mug": (0.30, 0.001, 0.0),  # enamel outside, polished stainless inside 0.2-0.4
+    "organizer": (0.35, 0.001, 0.0),  # clear PP/PS moulding 0.3-0.4
+}
+# The clear compartment organizer, built only for a layout with an "organizer" key (layouts
+# 'organizer'). Its frame: origin at the bottom centre, x along its length, +y toward its
+# front (the latches, which face the robot at yaw 0), z up. MEASURED by the operator
+# 2026-11-20: outer size, wall, floor and divider thickness (the front camera's estimate
+# had been 22.5 x 14.8 cm). ESTIMATED: equal compartments, dividers to the rim, the lid as
+# deep as the box, the mass.
+ORGANIZER = {
+    "length": 0.222, "depth": 0.1515, "height": 0.050,  # outer
+    "wall": 0.005, "floor": 0.0015, "divider": 0.002,
+    "cols": 4, "rows": 3,  # compartments along x and along y, equal sizes
+    "lid_depth": 0.1515, "lid_wall": 0.0015,  # open, hinged at the back rim, far edge on the table
+    "mass": 0.12,
 }
 COLORS = {
     "printed": (0.93, 0.93, 0.95, 1.0), "servo": (0.05, 0.05, 0.05, 1.0), "mount": (0.45, 0.45, 0.47, 1.0),
     "webcam": (0.02, 0.02, 0.02, 1.0), "cap": (105 / 255, 160 / 255, 159 / 255, 1.0),  # episodes report cap top RGB
     "mug": (0.55, 0.04, 0.03, 1.0), "steel": (0.49, 0.49, 0.43, 1.0),  # episodes report: steel RGB (126,126,110)
     "mat": (0.063, 0.082, 0.078, 1.0), "desk": (0.80, 0.80, 0.78, 1.0),  # mat RGB (16, 21, 20)
+    # Fitted to the 2026-11-20 front frame (mean RGB inside the organizer: through the floor
+    # ~(42, 47, 43) over the mat's (21, 22, 15), the lid ~(110, 115, 115)). Not the printed
+    # white: live/dr.py takes that colour as arm.
+    "clear_floor": (0.82, 0.86, 0.90, 0.08), "clear_wall": (0.85, 0.88, 0.90, 0.50),
+    "clear_lid": (0.72, 0.77, 0.77, 0.30), "divider": (0.14, 0.39, 0.68, 0.90),  # blue: real (33, 64, 95)
 }
+
+
+def organizer_boxes(o: dict = ORGANIZER) -> list[tuple]:
+    """[(name, half sizes, pos, quat, colour)] in the organizer frame (see ORGANIZER):
+    floor, four walls, the column (clear) and row (blue) dividers, and the open lid."""
+    L, D, H, w, f, dv = o["length"], o["depth"], o["height"], o["wall"], o["floor"], o["divider"]
+    li, di, hi = L - 2 * w, D - 2 * w, (H - f) / 2
+    q0 = (1.0, 0.0, 0.0, 0.0)
+    out = [("floor", (L / 2, D / 2, f / 2), (0, 0, f / 2), q0, "clear_floor"),
+           ("wall_front", (L / 2, w / 2, H / 2), (0, D / 2 - w / 2, H / 2), q0, "clear_wall"),
+           ("wall_back", (L / 2, w / 2, H / 2), (0, -D / 2 + w / 2, H / 2), q0, "clear_wall"),
+           ("wall_left", (w / 2, di / 2, H / 2), (L / 2 - w / 2, 0, H / 2), q0, "clear_wall"),
+           ("wall_right", (w / 2, di / 2, H / 2), (-L / 2 + w / 2, 0, H / 2), q0, "clear_wall")]
+    for k in range(1, o["cols"]):
+        out.append((f"col{k}", (dv / 2, di / 2, hi), (li / 2 - k * li / o["cols"], 0, f + hi), q0, "clear_wall"))
+    for k in range(1, o["rows"]):
+        out.append((f"row{k}", (li / 2, dv / 2, hi), (0, di / 2 - k * di / o["rows"], f + hi), q0, "divider"))
+    # the lid hangs from the back rim (y = -D/2, z = H) down to the table, tilted by asin(H / lid)
+    ld, lw = o["lid_depth"], o["lid_wall"]
+    th = np.arcsin(min(1.0, H / ld))
+    c = (0, -D / 2 - ld / 2 * np.cos(th), H - ld / 2 * np.sin(th) + lw / 2)
+    out.append(("lid", (L / 2, ld / 2, lw / 2), c, (np.cos(th / 2), np.sin(th / 2), 0.0, 0.0), "clear_lid"))
+    return out
+
+
+def organizer_cell(local, o: dict = ORGANIZER):
+    """(row, col) of the compartment holding a point given in the organizer frame, or None
+    outside the cavity. Row 0 is the front row (nearest the robot at yaw 0), col 0 the +x
+    end (the robot's left: base -y is forward)."""
+    li, di = o["length"] - 2 * o["wall"], o["depth"] - 2 * o["wall"]
+    x, y, z = (float(v) for v in local)
+    if not (abs(x) < li / 2 and abs(y) < di / 2 and o["floor"] - 1e-4 <= z <= o["height"]):
+        return None
+    return (min(int((di / 2 - y) / (di / o["rows"])), o["rows"] - 1),
+            min(int((li / 2 - x) / (li / o["cols"])), o["cols"] - 1))
 
 
 @dataclass(frozen=True)
@@ -533,6 +587,20 @@ def _add_objects(spec, scene, episode: int, phys: Physics, perturb: Perturbation
             _contact(g, phys, "cap", perturb)
             b.add_geom(name=f"{ob['name']}_visual", type=mujoco.mjtGeom.mjGEOM_MESH, meshname="cap_visual",
                        group=VISUAL_GROUP, contype=0, conaffinity=0, mass=0, rgba=COLORS["cap"])
+        elif ob["kind"] == "organizer":
+            pos[2] = float(top(*pos[:2]))
+            b = spec.worldbody.add_body(name="organizer", pos=pos.tolist(), quat=quat.tolist())
+            b.add_freejoint(name="organizer_free")
+            boxes = organizer_boxes()
+            vol = sum(8 * np.prod(h) for _, h, *_ in boxes)
+            for name, h, p, q, col in boxes:  # mass by volume share: MuJoCo infers the inertia
+                g = b.add_geom(name=f"organizer_{name}", type=mujoco.mjtGeom.mjGEOM_BOX, size=list(h), pos=list(p),
+                               quat=list(q), group=COLLISION_GROUP, contype=1, conaffinity=1,
+                               mass=ORGANIZER["mass"] * 8 * np.prod(h) / vol, rgba=COLORS[col])
+                _contact(g, phys, "organizer", perturb)
+                b.add_geom(name=f"organizer_{name}_visual", type=mujoco.mjtGeom.mjGEOM_BOX, size=list(h),
+                           pos=list(p), quat=list(q), group=VISUAL_GROUP, contype=0, conaffinity=0, mass=0,
+                           rgba=COLORS[col])
         else:
             pos[:2] += np.asarray(perturb.mug_dxy, dtype=float)
             pos[2] = float(top(*pos[:2]))

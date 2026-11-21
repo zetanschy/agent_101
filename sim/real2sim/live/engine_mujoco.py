@@ -146,7 +146,8 @@ class MujocoEngine(Engine):
         except ImportError:  # no torch: FastRemap inside Renderer.render
             self._warp = None
         self._caps = [o for o in b.objects if o["kind"] == "cap"]
-        self._mug = next(o for o in b.objects if o["kind"] == "mug")
+        self._mug = next((o for o in b.objects if o["kind"] == "mug"), None)  # none in an organizer layout
+        self._org = next((o for o in b.objects if o["kind"] == "organizer"), None)
         if self.want_viewer:
             self._open_viewer()
 
@@ -295,20 +296,34 @@ class MujocoEngine(Engine):
 
     def status(self) -> dict:
         from ..metrics import cap_in_mug
+        from ..mujoco.model import organizer_cell
+        from ..objects import cap_centre
+        from ..transforms import quat_to_mat
 
         d, sc = self.d, self.layout_scene
-        mp, mq = d.xpos[self._mug["body"]], d.xquat[self._mug["body"]]
-        cim = [bool(cap_in_mug(d.xpos[c["body"]], d.xquat[c["body"]], mp, mq, sc.cap_dims(), sc.mug_dims()))
-               for c in self._caps]
+
         def up_z(q):  # z of the body's own +z axis in the world: 1 upright, 0 on its side
             w, x, y, _ = q
             return float(1.0 - 2.0 * (x * x + y * y))
 
-        return {"caps": [c["name"] for c in self._caps], "caps_in_mug": cim,
-                "finite": bool(np.isfinite(d.qpos).all()),
-                # where things are now (world = URDF base frame, metres), for scoring a trial
-                "cap_xyz": [[round(float(v), 4) for v in d.xpos[c["body"]]] for c in self._caps],
-                "mug_xyz": [round(float(v), 4) for v in mp], "mug_up_z": round(up_z(mq), 4)}
+        out = {"caps": [c["name"] for c in self._caps], "caps_in_mug": [],
+               "finite": bool(np.isfinite(d.qpos).all()),
+               # where things are now (world = URDF base frame, metres), for scoring a trial
+               "cap_xyz": [[round(float(v), 4) for v in d.xpos[c["body"]]] for c in self._caps],
+               "mug_xyz": None, "mug_up_z": None}
+        if self._mug is not None:
+            mp, mq = d.xpos[self._mug["body"]], d.xquat[self._mug["body"]]
+            out["caps_in_mug"] = [bool(cap_in_mug(d.xpos[c["body"]], d.xquat[c["body"]], mp, mq, sc.cap_dims(),
+                                                  sc.mug_dims())) for c in self._caps]
+            out.update(mug_xyz=[round(float(v), 4) for v in mp], mug_up_z=round(up_z(mq), 4))
+        if self._org is not None:  # caps_cell: the (row, col) compartment holding each cap, or None
+            op, R = d.xpos[self._org["body"]], quat_to_mat(d.xquat[self._org["body"]])
+            out.update(organizer_xyz=[round(float(v), 4) for v in op],
+                       organizer_yaw_deg=round(float(np.degrees(np.arctan2(R[1, 0], R[0, 0]))), 2),
+                       organizer_up_z=round(up_z(d.xquat[self._org["body"]]), 4),
+                       caps_cell=[organizer_cell(R.T @ (cap_centre(d.xpos[c["body"]], d.xquat[c["body"]],
+                                                                   sc.cap_dims()) - op)) for c in self._caps])
+        return out
 
     # --- viewer ------------------------------------------------------------------------
     def viewer_sync(self) -> bool:

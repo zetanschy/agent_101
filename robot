@@ -64,8 +64,9 @@ openpi_run() {
 # for the arm, with ROBOT_TYPE=real2sim and ROBOT_PORT = the sim's socket, which the
 # real2sim lerobot plugin (sim/real2sim/lerobot_plugin) answers. The leader stays real,
 # on its serial port in the container.
-#   --sim-layout real:N|random[:K]   where the caps and the mug start (default random:1: one cap,
-#                                    placed afresh at every reset; random = 1-3 caps)
+#   --sim-layout real:N|random[:K]|organizer   where the objects start (default random:1: one cap,
+#                                    placed afresh at every reset; random = 1-3 caps; organizer =
+#                                    the compartment organizer and one cap, no mug)
 #   --sim-viewer                     the engine's 3D window (R / Reset = new layout)
 #   --sim-dr off|visual|physics|all  domain randomization (MuJoCo): lighting, colours, camera
 #                                    mounts, servo, friction, masses drawn afresh with every new
@@ -594,7 +595,7 @@ so rather than failing with "docker: command not found".
   ./robot infer --policy R --task "..." [--rtc|--async] [--duration 60]   run a trained policy
   ./robot teleop|record|infer|infer-remote|openpi-eval|webui|openpi-webui ... --sim mujoco|isaac
                                 the same command against the live sim instead of the arm
-                                (real leader; [--sim-layout real:N|random[:K]] [--sim-viewer];
+                                (real leader; [--sim-layout real:N|random[:K]|organizer] [--sim-viewer];
                                 l = new object layout; see sim/real2sim/live/README.md)
   ./robot sim-eval --policy /checkpoints/X [--episodes 100] [--timeout 45]
   ./robot sim-eval --policy U/lerobot_model ...   a lerobot policy (Hub id or dir): same stages and loop, lerobot image

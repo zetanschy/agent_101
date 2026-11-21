@@ -4,6 +4,8 @@
                  orientations and mug pose the real episode started from
     random[:K]   K caps (default 1-3) and the mug drawn in the reachable, camera-visible
                  part of the mat -- what data collection varies between episodes
+    organizer    the clear compartment organizer near where it sits on the bench, and one
+                 cap beside it, always closed side up (cavity down); no mug (ORG_* below)
 
 A layout is {"caps": [{id, xy, yaw, up}], "mug": {xy, handle_yaw_deg}} in the URDF base
 frame, the same shape as an episode entry in the scene, so the engines place it with
@@ -31,6 +33,14 @@ X_MIN = -0.27
 CAP_MUG_CLEARANCE = 0.10
 CAP_CAP_CLEARANCE = 0.05
 REST_CLEARANCE = 0.07
+# 'organizer': the clear compartment organizer (mujoco/model.py ORGANIZER) and one cap, no
+# mug. Its pose is drawn around where it sat in the 2026-11-20 front frame (centre x, y in
+# m, yaw in deg; yaw 0 = its length along base x, latches toward the robot), kept with its
+# rim in the overhead view, every compartment within ORG_REACH of the base and ORG_REST_
+# CLEARANCE from the resting fingertips. The cap keeps ORG_CAP_CLEARANCE from it and its lid,
+# and lies closed side up only, to keep the task about the prompt, not the grasp.
+ORG_POSE, ORG_DX, ORG_DY, ORG_DYAW = (-0.029, -0.311, 2.0), 0.06, 0.04, 20.0  # pose: its rim at 5 cm
+ORG_REACH, ORG_REST_CLEARANCE, ORG_CAP_CLEARANCE = 0.40, 0.015, 0.03
 
 
 def rest_state(scene) -> np.ndarray:
@@ -85,14 +95,67 @@ def random(scene, rng: np.random.Generator, n_caps: int | None = None) -> dict:
     raise RuntimeError(f"could not place {n} caps and the mug")
 
 
+def organizer_local(xy, org: dict) -> np.ndarray:
+    """Base-frame table points (..., 2) in the organizer's frame (x along it, +y its front)."""
+    a = np.radians(org["yaw_deg"])
+    d = np.asarray(xy, dtype=float) - np.asarray(org["xy"], dtype=float)
+    return np.stack([d[..., 0] * np.cos(a) + d[..., 1] * np.sin(a), -d[..., 0] * np.sin(a) + d[..., 1] * np.cos(a)], -1)
+
+
+def organizer_gap(xy, org: dict, lid: bool = True) -> np.ndarray:
+    """Distance on the table from points (..., 2) to the organizer's footprint (0 inside),
+    with or without the open lid behind it."""
+    from ..mujoco.model import ORGANIZER as O
+
+    loc = organizer_local(xy, org)
+    back = O["depth"] / 2 + (np.sqrt(max(O["lid_depth"] ** 2 - O["height"] ** 2, 0.0)) if lid else 0.0)
+    dx = np.maximum(np.abs(loc[..., 0]) - O["length"] / 2, 0.0)
+    dy = np.maximum(np.maximum(-back - loc[..., 1], loc[..., 1] - O["depth"] / 2), 0.0)
+    return np.hypot(dx, dy)
+
+
+def organizer(scene, rng: np.random.Generator) -> dict:
+    """The organizer near ORG_POSE and one cap beside it (see ORG_* above)."""
+    from .. import kinematics
+    from ..mujoco.model import ORGANIZER as O
+
+    rest_q = scene.units().to_urdf(rest_state(scene))
+    rest_xy = np.asarray(kinematics.fingertips(rest_q)["mid"][:2], dtype=float)
+    L, D = O["length"], O["depth"]
+    li, di = L - 2 * O["wall"], D - 2 * O["wall"]
+    cells = np.array([[li / 2 - (c + 0.5) * li / O["cols"], di / 2 - (r + 0.5) * di / O["rows"]]
+                      for r in range(O["rows"]) for c in range(O["cols"])])
+    rim = np.array([[sx * L / 2, sy * D / 2] for sx in (-1, 1) for sy in (-1, 1)])
+    cap_r = scene.cap_dims()["diameter"] / 2
+    for _ in range(2000):
+        org = {"xy": [round(float(ORG_POSE[0] + rng.uniform(-ORG_DX, ORG_DX)), 4),
+                      round(float(ORG_POSE[1] + rng.uniform(-ORG_DY, ORG_DY)), 4)],
+               "yaw_deg": round(float(ORG_POSE[2] + rng.uniform(-ORG_DYAW, ORG_DYAW)), 1)}
+        a = np.radians(org["yaw_deg"])
+        R = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+        corners, centres = rim @ R.T + org["xy"], cells @ R.T + org["xy"]
+        if (corners[:, 0].min() < X_MIN or corners[:, 1].min() < -0.50
+                or np.linalg.norm(centres, axis=1).max() > ORG_REACH
+                or organizer_gap(rest_xy, org, lid=False) < ORG_REST_CLEARANCE):
+            continue
+        for _ in range(200):
+            c = _polar(rng, CAP_R)
+            if organizer_gap(c, org) >= cap_r + ORG_CAP_CLEARANCE and np.linalg.norm(c - rest_xy) >= REST_CLEARANCE:
+                cap = {"id": "A", "xy": [round(float(c[0]), 4), round(float(c[1]), 4)], "yaw": 0.0, "up": "closed"}
+                return {"kind": "organizer", "caps": [cap], "organizer": org}
+    raise RuntimeError("could not place the organizer and a cap")
+
+
 def parse(spec: str, scene, rng: np.random.Generator) -> dict:
-    """'real:N' | 'random' | 'random:K'."""
+    """'real:N' | 'random' | 'random:K' | 'organizer'."""
     kind, _, arg = spec.partition(":")
     if kind == "real":
         return real(scene, int(arg or scene.used_episodes()[0]))
     if kind == "random":
         return random(scene, rng, int(arg) if arg else None)
-    raise ValueError(f"layout {spec!r}: expected real:N or random[:K]")
+    if kind == "organizer":
+        return organizer(scene, rng)
+    raise ValueError(f"layout {spec!r}: expected real:N, random[:K] or organizer")
 
 
 def scene_with_layout(scene, layout: dict):
@@ -103,7 +166,7 @@ def scene_with_layout(scene, layout: dict):
     data = copy.deepcopy(dict(scene))
     data["episodes"][str(LIVE_EPISODE)] = {
         "source": f"live layout {layout.get('kind', '?')}", "use": True, "length": 0, "picks": [],
-        "caps": copy.deepcopy(layout["caps"]), "mug": copy.deepcopy(layout["mug"])}
+        **{k: copy.deepcopy(layout[k]) for k in ("caps", "mug", "organizer") if k in layout}}
     out = Scene(data, scene.ds, scene.layers, scene.origin)
     out.overrides = getattr(scene, "overrides", {})
     return out, LIVE_EPISODE

@@ -1,6 +1,6 @@
 """The live sim, served on a Unix socket to the `real2sim` lerobot robot.
 
-    ./robot real2sim live serve --engine mujoco|isaac [--layout real:N|random[:K]]
+    ./robot real2sim live serve --engine mujoco|isaac [--layout real:N|random[:K]|organizer]
                                 [--clock auto|realtime|lockstep] [--start rest|recorded]
                                 [--viewer] [--autoreset S] [--seed S]
     ./robot real2sim live reset [--layout ...]   # new layout now (another terminal)
@@ -118,8 +118,11 @@ class Server:
         self._print_t0 = 0.0
         self._done_since = None
         self._frames, self._frames_step = None, -1
-        print(f"layout {self.layout['kind']}: mug at {self.layout['mug']['xy']}, "
-              + ", ".join(f"cap {c['id']} at {c['xy']} ({c['up']} up)" for c in self.layout["caps"]), flush=True)
+        L = self.layout
+        where = ([f"mug at {L['mug']['xy']}"] if "mug" in L else []) + (
+            [f"organizer at {L['organizer']['xy']} yaw {L['organizer']['yaw_deg']} deg"] if "organizer" in L else [])
+        print(f"layout {L['kind']}: " + ", ".join(where + [f"cap {c['id']} at {c['xy']} ({c['up']} up)"
+                                                           for c in L["caps"]]), flush=True)
         return self.layout
 
     # --- bus units: degrees (use_degrees=True, this bench) or lerobot's RANGE_M100_100 ------

@@ -178,6 +178,10 @@ def episode_objects(scene, episode: int) -> list[dict]:
            for c in ep["caps"]]
     if "mug" in ep:
         out.append({"name": "mug", "kind": "mug", **dict(zip(("pos", "quat"), mug_pose(scene, episode)))})
+    if "organizer" in ep:  # live 'organizer' layouts only (live/layouts.py); no real episode has one
+        o = ep["organizer"]
+        out.append({"name": "organizer", "kind": "organizer", "pos": np.array([*o["xy"], scene.table_z()]),
+                    "quat": axis_angle_quat([0, 0, 1], np.radians(o["yaw_deg"]))})
     return out
 
 
