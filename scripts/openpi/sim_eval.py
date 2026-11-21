@@ -28,6 +28,25 @@ and height inside the mug), held for --settle seconds. A trial ends at that poin
     missed the mug            lifted, released within 6 cm of the mug, not inside it
     cap fell off the table    the cap ended 5 cm below where it started
 
+THE ORGANIZER TASK (--cell R,C). The stages come from the live sim's `organizer` layout
+(the compartment organizer and one cap, closed side up), and --task names a compartment.
+--cell gives that compartment as the sim counts them: row 0 is the row nearest the robot,
+col 0 the robot's left (image left in the overhead view); so a prompt's "first row" (the
+row by the lid) is row 2. Success = the cap resting in that compartment (below the rim,
+not lifted) for --settle seconds. Failure causes as above, the mug's replaced by:
+    wrong compartment         the cap ended in another compartment
+    right compartment, not settled   in the right one at the end, but still moving or held
+    dropped outside the boxes lifted, released, and ended outside every compartment
+    organizer knocked over    the organizer's up-axis z fell below 0.8
+
+THE IN-HAND START (--in-hand DATASET, organizer task): the steering alone, without the
+grasp. Stage S takes the real demo DATASET[S mod n]: the cap stands where that demo's
+grasp closes on it, the organizer is drawn clear of it, and the demo's own actions up to
+just after its lift are replayed inside the reset, so the policy starts with the cap held.
+A stage whose replayed grasp drops the cap or whose reach moves the organizer is skipped
+(setup_failed.jsonl), not scored. Each trial records the demo and the compartment it went
+on to, and the report counts how often the policy followed the prompt and how often the demo.
+
 OUTPUT: outputs/sim_eval/<run>/
     trials.jsonl     one line per trial: stage, outcome, cause, timings, latencies
     report.md        success rate (95% Wilson interval), by cause, by where things started
@@ -67,6 +86,10 @@ CAUSE_COLORS = {  # BGR
     "still holding at timeout": (255, 160, 40),
     "mug knocked over": (160, 160, 160),
     "cap fell off the table": (90, 90, 140),
+    "wrong compartment": (0, 220, 255),
+    "right compartment, not settled": (255, 160, 40),
+    "dropped outside the boxes": (220, 80, 220),
+    "organizer knocked over": (160, 160, 160),
     "other": (255, 255, 255),
 }
 
@@ -108,6 +131,45 @@ def classify(trace: list[dict], success: bool) -> tuple[str, dict]:
     return ("missed the mug" if d_mug[-1] <= NEAR_MUG else "dropped on the way"), f
 
 
+ROWS = {"first": 2, "second": 1, "third": 0}  # the prompts' rows: "first" is the row by the lid
+COLS = {"first": 0, "second": 1, "third": 2, "fourth": 3}
+
+
+def prompt_cell(task: str) -> tuple | None:
+    """'... the first row, second column box' -> the sim's (row, col) = (2, 1)."""
+    import re
+
+    m = re.search(r"(\w+) row, (\w+) column", task)
+    return (ROWS[m[1]], COLS[m[2]]) if m and m[1] in ROWS and m[2] in COLS else None
+
+
+def classify_organizer(trace: list[dict], success: bool, target: tuple, z0: float | None = None) -> tuple[str, dict]:
+    """classify() for the organizer task (see the module doc). z0: the cap's height on the
+    table, when the trial starts with it already lifted (--in-hand)."""
+    cap = np.array([t["cap"] for t in trace])
+    org = np.array([t["org"] for t in trace])
+    up = np.array([t["org_up"] for t in trace])
+    lift = cap[:, 2] - (cap[0, 2] if z0 is None else z0)
+    moved = np.linalg.norm(cap[:, :2] - cap[0, :2], axis=1)
+    lifted = np.where(lift > LIFT)[0]
+    last = trace[-1]["cell"]
+    f = {"max_lift_cm": round(float(lift.max()) * 100, 1), "max_moved_cm": round(float(moved.max()) * 100, 1),
+         "final_cell": last, "organizer_moved_cm": round(float(np.linalg.norm(org[-1, :2] - org[0, :2])) * 100, 1),
+         "organizer_up_min": round(float(up.min()), 3),
+         "t_first_lift": round(float(trace[lifted[0]]["t"]), 2) if len(lifted) else None}
+    if success:
+        return "success", f
+    if up.min() < 0.8:
+        return "organizer knocked over", f
+    if lift[-1] < -FELL:
+        return "cap fell off the table", f
+    if not len(lifted):
+        return ("pushed the cap away" if moved.max() >= MOVED else "never picked up"), f
+    if last is not None:
+        return ("right compartment, not settled" if tuple(last) == target else "wrong compartment"), f
+    return ("still holding at timeout" if lift[-1] > LIFT else "dropped outside the boxes"), f
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     if n == 0:
         return 0.0, 0.0
@@ -118,6 +180,33 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
 
 
 # --- running -------------------------------------------------------------------------
+def in_hand_starts(repo: str) -> list[dict]:
+    """--in-hand: per recorded episode of `repo`, its state at the grasp (the gripper's first
+    close, real2sim.metrics.gripper_events) and its actions until 10 frames after the arm
+    starts to lift (a joint 8 deg off the grasp pose; ~0.7 s after the close, median)."""
+    import pandas as pd
+    from lerobot.utils.constants import HF_LEROBOT_HOME
+    from real2sim.metrics import gripper_events
+
+    root = HF_LEROBOT_HOME / repo
+    files = sorted(root.glob("data/*/*.parquet"))
+    if not files:
+        raise SystemExit(f"--in-hand {repo}: no dataset at {root}")
+    cols = ["observation.state", "action", "episode_index", "frame_index", "task_index"]
+    df = pd.concat([pd.read_parquet(f, columns=cols) for f in files]).sort_values(["episode_index", "frame_index"])
+    tasks = pd.read_parquet(root / "meta" / "tasks.parquet")
+    names = {int(i): t for t, i in zip(tasks.index, tasks["task_index"])}
+    out = []
+    for e, d in df.groupby("episode_index"):
+        st, act = np.stack(d["observation.state"].to_numpy()), np.stack(d["action"].to_numpy())
+        close = next((x for x in gripper_events(st[:, 5]) if x["kind"] == "close"), None)
+        lift = np.nonzero(np.abs(st[close["stop"]:, :5] - st[close["stop"], :5]).max(1) > 8.0)[0] if close else []
+        if len(lift):
+            out.append({"episode": int(e), "task": names[int(d["task_index"].iloc[0])], "grasp": st[close["stop"]],
+                        "prelude": act[:close["stop"] + int(lift[0]) + 10]})
+    return out
+
+
 class Sim:
     """Control requests on a socket of their own (reset with a seed, status), next to the
     robot plugin's: the server takes several clients."""
@@ -134,8 +223,8 @@ class Sim:
         if st.get("clock") != "realtime":
             raise SystemExit(f"sim clock is {st.get('clock')}; the eval needs realtime (MuJoCo's default)")
 
-    def reset(self, seed: int) -> dict:
-        return self.p.call(self.sock, "reset", layout="random:1", seed=int(seed))["layout"]
+    def reset(self, seed: int, layout: str = "random:1", **start) -> dict:
+        return self.p.call(self.sock, "reset", layout=layout, seed=int(seed), **start)["layout"]
 
     def status(self) -> dict:
         return self.p.call(self.sock, "status")
@@ -157,8 +246,11 @@ def run(a) -> pathlib.Path:
     if (out / "trials.jsonl").exists() and not a.overwrite:
         done = {r["trial"]: r for r in map(json.loads, (out / "trials.jsonl").read_text().splitlines()) if r}
         print(f"resuming {out}: {len(done)} trials already scored", flush=True)
+    if (out / "setup_failed.jsonl").exists() and not a.overwrite:
+        done.update({r["trial"]: None for r in map(json.loads, (out / "setup_failed.jsonl").read_text().splitlines()) if r})
     elif (out / "trials.jsonl").exists():
         (out / "trials.jsonl").unlink()
+        (out / "setup_failed.jsonl").unlink(missing_ok=True)
     sim = Sim()
     run_info = {k: v for k, v in vars(a).items() if k not in ("report", "compare")}
     run_info["sim_dr"] = sim.status().get("dr_level", "off")  # ./robot sim-eval --sim-dr LEVEL
@@ -201,10 +293,15 @@ def run(a) -> pathlib.Path:
         chunker.infer(warm, prefix_start=1, inference_delay=1)
         chunker.reset()
     print(f"loaded {a.policy} ({label}); warm-up {time.perf_counter() - t:.0f} s", flush=True)
+    target = tuple(int(v) for v in a.cell.split(",")) if a.cell else None  # the organizer task's compartment
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     motors = list(robot.action_features)
-    kept_successes = sum(1 for r in done.values() if r["success"] and r.get("video"))
-    n_ok, n_run = sum(r["success"] for r in done.values()), len(done)
+    starts = in_hand_starts(a.in_hand) if a.in_hand else None
+    if starts:
+        print(f"in-hand start: {len(starts)} recorded grasps from {a.in_hand}", flush=True)
+    scored = [r for r in done.values() if r]
+    kept_successes = sum(1 for r in scored if r["success"] and r.get("video"))
+    n_ok, n_run = sum(r["success"] for r in scored), len(scored)
 
     def infer_only(obs, prefix_start, delay):
         t0 = time.perf_counter()
@@ -214,20 +311,42 @@ def run(a) -> pathlib.Path:
         if i in done:
             continue
         seed = a.seed + i
-        layout = sim.reset(seed)
+        start = starts[seed % len(starts)] if starts else None
+        if start:  # a real demo's reach, grasp and lift, replayed in the reset (server.new_layout)
+            layout = sim.reset(seed, "organizer", grasp=start["grasp"], prelude=start["prelude"])
+        else:
+            layout = sim.reset(seed, "organizer" if target else "random:1")
         chunker.reset()
         sched = chunk_loop.ChunkSchedule(a.actions, overlap=True, rtc=True)
         chunk, pending, promised, lat = None, None, 0, []
         trace, frames, in_since, success, t_success = [], [], None, False, None
         st0 = sim.status()
         t_start, tick_n = st0["t"], 0
+        z0 = layout["prelude_from"]["cap_xyz"][2] if start else st0["cap_xyz"][0][2]  # the cap on the table
+        if start:  # the replayed grasp must hold the cap and leave the organizer where it stood
+            org0 = layout["prelude_from"]["organizer_xyz"]
+            why = ("not in the hand after the replayed grasp" if st0["cap_xyz"][0][2] - z0 <= LIFT else
+                   "organizer moved by the replayed reach" if math.dist(st0["organizer_xyz"][:2], org0[:2]) > 0.01
+                   or st0["organizer_up_z"] < 0.99 else None)
+            if why:
+                with open(out / "setup_failed.jsonl", "a") as fh:
+                    fh.write(json.dumps({"trial": i, "seed": seed, "demo_episode": start["episode"], "why": why}) + "\n")
+                print(f"trial {i:3d} seed {seed}: SKIP {why} (demo episode {start['episode']})", flush=True)
+                continue
         while True:
             tick = time.perf_counter()
             if tick_n % TRACE_EVERY == 0:
                 st = sim.status()
                 ts = st["t"] - t_start
-                trace.append({"t": round(ts, 2), "cap": st["cap_xyz"][0], "mug": st["mug_xyz"], "mug_up": st["mug_up_z"],
-                              "in": bool(all(st["caps_in_mug"]))})
+                cap = st["cap_xyz"][0]
+                if target is None:
+                    trace.append({"t": round(ts, 2), "cap": cap, "mug": st["mug_xyz"], "mug_up": st["mug_up_z"],
+                                  "in": bool(all(st["caps_in_mug"]))})
+                else:  # resting in the named compartment: there, and not lifted off its floor
+                    cell = st["caps_cell"][0]
+                    trace.append({"t": round(ts, 2), "cap": cap, "org": st["organizer_xyz"], "org_up": st["organizer_up_z"],
+                                  "cell": cell, "in": cell is not None and tuple(cell) == target
+                                  and cap[2] - z0 < LIFT})
                 if trace[-1]["in"]:
                     in_since = ts if in_since is None else in_since
                     if ts - in_since >= a.settle:
@@ -269,12 +388,16 @@ def run(a) -> pathlib.Path:
             precise_sleep(max(1.0 / FPS - (time.perf_counter() - tick), 0.0))
         if pending is not None:
             pending.result()  # let it land: the next trial's chunker.reset() must not race it
-        cause, feats = classify(trace, success)
+        cause, feats = classify(trace, success) if target is None else classify_organizer(trace, success, target, z0)
         rec = {"trial": i, "seed": seed, "success": success, "cause": cause,
                "t_success": round(t_success, 2) if t_success is not None else None,
                "duration": trace[-1]["t"], "cap_xy": layout["caps"][0]["xy"], "cap_up": layout["caps"][0]["up"],
-               "mug_xy": layout["mug"]["xy"], "handle_yaw_deg": layout["mug"]["handle_yaw_deg"],
-               "cap_xyz0": trace[0]["cap"], "mug_xyz0": trace[0]["mug"],
+               "cap_xyz0": layout["prelude_from"]["cap_xyz"] if start else trace[0]["cap"],
+               **({"demo_episode": start["episode"], "demo_task": start["task"]} if start else {}),
+               **({"mug_xy": layout["mug"]["xy"], "handle_yaw_deg": layout["mug"]["handle_yaw_deg"],
+                   "mug_xyz0": trace[0]["mug"]} if target is None else
+                  {"target_cell": list(target), "organizer_xy": layout["organizer"]["xy"],
+                   "organizer_yaw_deg": layout["organizer"]["yaw_deg"], "org_xyz0": trace[0]["org"]}),
                "inferences": len(lat), "latency_ms_mean": round(statistics.mean(lat) * 1000) if lat else None,
                "latency_ms_p95": round(float(np.percentile(lat, 95)) * 1000) if lat else None, **feats}
         if not success or kept_successes < a.keep_successes:
@@ -373,7 +496,7 @@ def draw_map(trials, path: pathlib.Path, title: str) -> None:
         cv2.circle(img, px((0, 0, 0)), 6, (200, 200, 200), -1)
     for t in trials:
         col = CAUSE_COLORS.get(t["cause"], (255, 255, 255))
-        c, m = px(t["cap_xyz0"]), px(t["mug_xyz0"])
+        c, m = px(t["cap_xyz0"]), px(t.get("mug_xyz0") or t["org_xyz0"])
         cv2.line(img, c, m, col, 1, cv2.LINE_AA)
         cv2.circle(img, m, 9, col, 2, cv2.LINE_AA)
         cv2.circle(img, c, 5, col, -1, cv2.LINE_AA)
@@ -386,7 +509,8 @@ def draw_map(trials, path: pathlib.Path, title: str) -> None:
     pad = 18 * (len(legend) + 3)
     canvas = np.concatenate([img, np.full((pad, img.shape[1], 3), 16, np.uint8)], 0)
     cv2.putText(canvas, title, (8, img.shape[0] + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "dot = cap start, ring = mug start, line joins them; failures numbered by trial",
+    cv2.putText(canvas, f"dot = cap start, ring = {'mug' if 'mug_xyz0' in trials[0] else 'organizer centre'} at the start, "
+                "line joins them; failures numbered by trial",
                 (8, img.shape[0] + 34), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (170, 170, 170), 1, cv2.LINE_AA)
     for k, (cause, n) in enumerate(legend):
         y = img.shape[0] + 52 + 18 * k
@@ -421,10 +545,26 @@ def summary_lines(trials, title: str) -> list[str]:
     L += bins_table(trials, lambda t: polar(t["cap_xy"])[1], [-71, -25, 25, 71],
                     [f"{neg} (25–70° off centre)", "centre (±25°)", f"{pos} (25–70° off centre)"],
                     "cap direction (overhead view)") + [""]
-    L += bins_table(trials, lambda t: polar(t["mug_xy"])[0], [0.15, 0.21, 0.26, 0.31],
-                    ["near (16–21 cm)", "mid (21–26 cm)", "far (26–30 cm)"], "mug distance from the base") + [""]
-    L += bins_table(trials, lambda t: math.dist(t["cap_xy"], t["mug_xy"]), [0.0, 0.2, 0.3, 1.0],
-                    ["< 20 cm", "20–30 cm", "> 30 cm"], "cap-to-mug distance") + [""]
+    if "mug_xy" in trials[0]:
+        L += bins_table(trials, lambda t: polar(t["mug_xy"])[0], [0.15, 0.21, 0.26, 0.31],
+                        ["near (16–21 cm)", "mid (21–26 cm)", "far (26–30 cm)"], "mug distance from the base") + [""]
+        L += bins_table(trials, lambda t: math.dist(t["cap_xy"], t["mug_xy"]), [0.0, 0.2, 0.3, 1.0],
+                        ["< 20 cm", "20–30 cm", "> 30 cm"], "cap-to-mug distance") + [""]
+    elif "target_cell" in trials[0]:  # the organizer task in sim: where the cap ended, by compartment
+        ends = {}
+        for t in trials:
+            ends[tuple(t["final_cell"]) if t.get("final_cell") else None] = ends.get(tuple(t["final_cell"]) if t.get("final_cell") else None, 0) + 1
+        tgt = tuple(trials[0]["target_cell"])
+        L += [f"| where the cap ended (sim row, col; row 0 nearest the robot, col 0 its left) | trials |", "|---|---|"]
+        L += [f"| {'outside every compartment' if c is None else f'row {c[0]}, col {c[1]}'}"
+              f"{' (the target)' if c == tgt else ''} | {n} |" for c, n in sorted(ends.items(), key=lambda kv: -kv[1])] + [""]
+        if "demo_task" in trials[0]:  # --in-hand: did it follow the prompt, or the demo it was handed over from?
+            other = [t for t in trials if prompt_cell(t["demo_task"]) not in (None, tgt)]
+            end = lambda t: tuple(t["final_cell"]) if t.get("final_cell") else None
+            L += [f"Started in the hand (a real demo's reach, grasp and lift, replayed). In {len(other)} trials that "
+                  f"demo had gone on to another compartment; the cap ended in the prompt's compartment in "
+                  f"{sum(end(t) == tgt for t in other)} of them and in the demo's in "
+                  f"{sum(end(t) == prompt_cell(t['demo_task']) for t in other)}.", ""]
     L += bins_table(trials, lambda t: 0 if t["cap_up"] == "open" else 1, [0, 1, 2],
                     ["open side up", "closed side up"], "cap orientation") + [""]
     return L
@@ -441,6 +581,10 @@ def report(d: pathlib.Path) -> None:
              f"{title}: the {len(trials) - k} failures, by cause")
     chown_like_repo(d)
     L = summary_lines(trials, title)
+    if (d / "setup_failed.jsonl").exists():
+        bad = [json.loads(x) for x in (d / "setup_failed.jsonl").read_text().splitlines() if x.strip()]
+        L += [f"{len(bad)} stages were skipped, not scored: the in-hand start failed "
+              f"({', '.join(sorted({b['why'] for b in bad}))}).", ""]
     L += ["## Maps", "", "Where each trial started, on the overhead camera:", "",
           "![every trial](map.jpg)", "", "![failures only](map_failures.jpg)", "",
           "## Failure videos", ""]
@@ -515,6 +659,12 @@ def main() -> int:
     ap.add_argument("--settle", type=float, default=1.0, help="seconds the cap must stay in the mug")
     ap.add_argument("--actions", type=int, default=15, help="actions executed per 50-action chunk (the web UI's)")
     ap.add_argument("--keep-successes", type=int, default=3, help="success videos to keep (all failures are kept)")
+    ap.add_argument("--cell", default=None, metavar="R,C",
+                    help="the organizer task: the compartment --task names, as the sim's (row, col): row 0 nearest "
+                         "the robot, col 0 the robot's left (see the module doc)")
+    ap.add_argument("--in-hand", default=None, metavar="DATASET",
+                    help="the organizer task: start each trial with the cap already in the hand, from a real "
+                         "demo of DATASET (its reach, grasp and lift replayed), to score the steering alone")
     ap.add_argument("--config", default=None)
     ap.add_argument("--name", default=None, help="run directory under outputs/sim_eval/")
     ap.add_argument("--overwrite", action="store_true", help="start over instead of resuming the run directory")
@@ -526,6 +676,8 @@ def main() -> int:
     elif a.compare:
         compare(*map(pathlib.Path, a.compare))
     elif a.policy:
+        if a.in_hand and not a.cell:
+            ap.error("--in-hand needs --cell (the organizer task)")
         run(a)
     else:
         ap.error("need --policy, --report or --compare")

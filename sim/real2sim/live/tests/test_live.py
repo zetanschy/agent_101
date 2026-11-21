@@ -125,6 +125,11 @@ def test_organizer_layouts_keep_their_clearances(sc):
     assert s2.episode(ep)["organizer"] == L["organizer"] and "mug" not in s2.episode(ep)
     assert layouts.parse("organizer", sc, np.random.default_rng(0))["kind"] == "organizer"
     assert O["cols"] * O["rows"] == 12
+    # the in-hand start: the cap stays where it is put, the organizer is drawn clear of it
+    for xy in ([0.12, -0.09], [-0.15, -0.15], [0.20, -0.13]):
+        L = layouts.organizer(sc, rng, cap_xy=xy)
+        assert L["caps"][0]["xy"] == xy
+        assert layouts.organizer_gap(np.array(xy), L["organizer"]) >= sc.cap_dims()["diameter"] / 2 + layouts.ORG_CAP_CLEARANCE - 1e-9
 
 
 def test_cap_dropped_into_a_compartment_is_reported_there(sc):

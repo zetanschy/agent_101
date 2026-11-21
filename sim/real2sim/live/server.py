@@ -88,14 +88,28 @@ class Server:
         self._frames, self._frames_step, self._images_wanted_until, self._pinhole = None, -1, 0.0, False
 
     # --- the scene ---------------------------------------------------------------
-    def new_layout(self, spec: str | None = None, start: str | None = None, seed: int | None = None) -> dict:
+    def new_layout(self, spec: str | None = None, start: str | None = None, seed: int | None = None,
+                   grasp=None, prelude=None) -> dict:
         """start 'rest' (default): the arm folded at rest, holding it. 'recorded' (real:N
         layouts only): episode N's first recorded state, holding its first recorded action,
-        so a recording fed over the socket reproduces the offline replay (GoalStream's start)."""
+        so a recording fed over the socket reproduces the offline replay (GoalStream's start).
+
+        THE IN-HAND START (organizer layouts, sim_eval.py --in-hand): grasp = a recorded
+        state at a real grasp (6 values, degrees + gripper %) puts the cap where that grasp
+        closes on it (layouts.grasp_cap_xy) and draws the organizer clear of it; prelude =
+        that recording's actions up to just after the lift, stepped here before the clock
+        runs on, so the episode starts with the cap in the hand. The pre-prelude cap and
+        organizer positions are kept in the layout as `prelude_from`."""
         # seed: this one layout drawn from its own generator, so trial i of an eval is the
         # same stage for every policy compared on it (sim_eval.py)
         rng = self.rng if seed is None else np.random.default_rng(int(seed))
-        self.layout = layouts.parse(spec or self.a.layout, self.scene, rng)
+        if grasp is not None:
+            if (spec or self.a.layout) != "organizer":
+                raise ValueError("an in-hand start (grasp=) needs the organizer layout")
+            xy = layouts.grasp_cap_xy(self.scene, self.units.to_urdf(np.asarray(grasp, dtype=float)))
+            self.layout = layouts.organizer(self.scene, rng, cap_xy=xy)
+        else:
+            self.layout = layouts.parse(spec or self.a.layout, self.scene, rng)
         # the randomization's own stream: a seeded reset seeds it too, apart from the layout's
         drng = self.dr_rng if seed is None else np.random.default_rng([int(seed), 7])
         start = start or self.a.start
@@ -115,7 +129,14 @@ class Server:
             self.eng.apply_dr(self.dr, np.random.default_rng(int(drng.integers(1 << 31))))
             dr.log(default_socket().parent / "dr_log.jsonl", self.dr, self.layout, seed)
             print(dr.summary(self.dr), flush=True)
-        self._print_t0 = 0.0
+        if prelude is not None:
+            st = self.eng.status()
+            self.layout["prelude_from"] = {"cap_xyz": st["cap_xyz"][0], "organizer_xyz": st.get("organizer_xyz")}
+            for a in np.asarray(prelude, dtype=float):  # the plugin's own path, in lockstep
+                self.command(dict(zip(MOTORS, a)), "degrees")
+                self.eng.step()
+            print(f"in-hand start: {len(prelude)} recorded frames replayed", flush=True)
+        self._print_t0 = self.eng.t  # past the prelude, if there was one
         self._done_since = None
         self._frames, self._frames_step = None, -1
         L = self.layout
@@ -211,7 +232,8 @@ class Server:
                 self.step()
             return {"t": self.eng.t}
         if op == "reset":
-            return {"layout": self.new_layout(msg.get("layout"), msg.get("start"), msg.get("seed"))}
+            return {"layout": self.new_layout(msg.get("layout"), msg.get("start"), msg.get("seed"),
+                                              msg.get("grasp"), msg.get("prelude"))}
         if op == "status":
             return self.status()
         return {"error": f"unknown op {op!r}"}

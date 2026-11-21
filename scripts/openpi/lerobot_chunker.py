@@ -27,9 +27,16 @@ import pathlib
 
 import numpy as np
 
-# The rename every pi05 run in this repo trains with (scripts/robot/train.sh).
-RENAME = {"observation.images.front": "observation.images.base_0_rgb",
-          "observation.images.grip": "observation.images.left_wrist_0_rgb"}
+# The camera renames this repo trains with, picked by the image keys a checkpoint expects:
+# every pi05 run (scripts/robot/train.sh), and SmolVLA runs on lerobot/smolvla_base.
+RENAMES = ({"observation.images.front": "observation.images.base_0_rgb",
+            "observation.images.grip": "observation.images.left_wrist_0_rgb"},
+           {"observation.images.front": "observation.images.camera1",
+            "observation.images.grip": "observation.images.camera2"})
+
+
+def rename_for(image_keys) -> dict:
+    return next((r for r in RENAMES if set(r.values()) <= set(image_keys)), {})
 
 
 def is_lerobot_checkpoint(policy: str) -> bool:
@@ -79,7 +86,7 @@ class LerobotChunker:
         self.pre, self.post = make_pre_post_processors(
             policy_cfg=cfg, pretrained_path=policy_path,
             preprocessor_overrides={"device_processor": {"device": device},
-                                    "rename_observations_processor": {"rename_map": RENAME}})
+                                    "rename_observations_processor": {"rename_map": rename_for(cfg.image_features)}})
         self.config, self.device, self.task, self.robot = cfg, device, task, robot
         self.hw = hw_to_dataset_features(robot.observation_features, "observation", use_video=True)
         self._prev = None
@@ -130,4 +137,9 @@ if __name__ == "__main__":  # the one rule that matters: which stack a --policy 
                     ("zetanschy/lerobot_pi05_default_cap_to_mug_real_50", True)]:
         got = is_lerobot_checkpoint(p)
         print(f"{'ok ' if got == want else 'BAD'} {p}: {'lerobot' if got else 'openpi'}")
-    print(json.dumps(RENAME))
+    for keys, want in [(["observation.images.base_0_rgb", "observation.images.left_wrist_0_rgb",
+                         "observation.images.right_wrist_0_rgb"], RENAMES[0]),
+                       (["observation.images.camera1", "observation.images.camera2", "observation.images.camera3"], RENAMES[1]),
+                       (["observation.images.front", "observation.images.grip"], {})]:
+        got = rename_for(keys)
+        print(f"{'ok ' if got == want else 'BAD'} {keys[0].split('.')[-1]}...: {json.dumps(got)}")

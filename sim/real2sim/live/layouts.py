@@ -114,8 +114,9 @@ def organizer_gap(xy, org: dict, lid: bool = True) -> np.ndarray:
     return np.hypot(dx, dy)
 
 
-def organizer(scene, rng: np.random.Generator) -> dict:
-    """The organizer near ORG_POSE and one cap beside it (see ORG_* above)."""
+def organizer(scene, rng: np.random.Generator, cap_xy=None) -> dict:
+    """The organizer near ORG_POSE and one cap beside it (see ORG_* above). cap_xy: the cap
+    stands there (grasp_cap_xy, the in-hand start) and only the organizer is drawn, clear of it."""
     from .. import kinematics
     from ..mujoco.model import ORGANIZER as O
 
@@ -138,12 +139,23 @@ def organizer(scene, rng: np.random.Generator) -> dict:
                 or np.linalg.norm(centres, axis=1).max() > ORG_REACH
                 or organizer_gap(rest_xy, org, lid=False) < ORG_REST_CLEARANCE):
             continue
-        for _ in range(200):
-            c = _polar(rng, CAP_R)
-            if organizer_gap(c, org) >= cap_r + ORG_CAP_CLEARANCE and np.linalg.norm(c - rest_xy) >= REST_CLEARANCE:
+        for _ in range(1 if cap_xy is not None else 200):
+            c = np.asarray(cap_xy, dtype=float) if cap_xy is not None else _polar(rng, CAP_R)
+            if organizer_gap(c, org) >= cap_r + ORG_CAP_CLEARANCE and (
+                    cap_xy is not None or np.linalg.norm(c - rest_xy) >= REST_CLEARANCE):
                 cap = {"id": "A", "xy": [round(float(c[0]), 4), round(float(c[1]), 4)], "yaw": 0.0, "up": "closed"}
                 return {"kind": "organizer", "caps": [cap], "organizer": org}
     raise RuntimeError("could not place the organizer and a cap")
+
+
+def grasp_cap_xy(scene, q) -> list:
+    """Where a closed-side-up cap stands for a recorded grasp at joints q (6 URDF radians,
+    the jaw blocked on it) to hold it antipodally: model.grasp_placements' estimate."""
+    from .. import kinematics
+    from ..isaac.placement import grasp_centre
+
+    d, z0 = scene.cap_dims(), scene.table_z()
+    return [round(float(v), 4) for v in grasp_centre(kinematics.default(), q, d["diameter"], z0, z0 + d["height"])["xy"]]
 
 
 def parse(spec: str, scene, rng: np.random.Generator) -> dict:
