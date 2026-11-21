@@ -90,6 +90,12 @@ benchmark. Scale anything unmeasured by DLPerf from the 6000 Ada row, as
 | 2× RTX 4090 | 2.61 | W&B `openpi_pi05_lora_cap_to_cup_200`, 2026-07-30 |
 | 1× RTX 5090 | 1.69 | W&B `dagger_r1`, 2026-09-19 (the user's own 5090, not rented) |
 
+Other jobs, not comparable with the rows above:
+
+| job | GPU | s/step | source |
+|---|---|---|---|
+| SmolVLA (`lerobot/smolvla_base`), batch 64, 14.4 GB | 1× RTX 5090 | 0.53 | Vast.ai, 2026-11-21, Thailand host, `smolvla_cap_to_box`: 20k steps in 2 h 59 min, ~2 USD total |
+
 After every run, add its measured step time to this table and commit it.
 
 The dataset size changes only the number of passes (`steps × 16 / frames`), not the cost.
