@@ -5,6 +5,8 @@
 #   ./robot infer --policy <repo> --task "..." --rtc          # Real-Time Chunking (best for slow VLAs)
 #   ./robot infer --policy <repo> --task "..." --async         # decoupled policy-server + robot-client
 #   ./robot infer ... --duration 60 --cams 2 --no-display
+#   ./robot infer --policy <smolvla repo> --task "..." --rtc --no-dtype \
+#       --rename-map '{"observation.images.front": "observation.images.camera1", "observation.images.grip": "observation.images.camera2"}'
 #
 # Modes:
 #   (default) sync  — lerobot-rollout, one policy call per control tick. Simple;
@@ -21,7 +23,7 @@ cd "$(dirname "$0")"
 source ./common.sh
 
 policy="zetanschy/pi05_lora_cap_tu_cup"; task=""; duration=60; cams=2; mode=sync
-display="${DISPLAY_DATA}"; recname=""; isteps=""; horizon=10; extra=()
+display="${DISPLAY_DATA}"; recname=""; isteps=""; horizon=10; dtype=bfloat16; extra=()
 rename='{"observation.images.front": "observation.images.base_0_rgb", "observation.images.grip": "observation.images.left_wrist_0_rgb"}'
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -38,12 +40,14 @@ while [ $# -gt 0 ]; do
     --no-display) display=false; shift ;;
     --rename-map) rename="$2"; shift 2 ;;
     --no-rename)  rename=""; shift ;;
+    --no-dtype)   dtype=""; shift ;;       # policies without a dtype field (SmolVLA)
     *) extra+=("$1"); shift ;;
   esac
 done
 [ -n "$task" ] || { echo "need --task \"<instruction>\"  (VLAs like pi05 require it)" >&2; exit 1; }
 camjson="$(cameras_json "$cams")"
 [ -n "$rename" ] && renameargs=(--rename_map="$rename") || renameargs=()
+[ -n "$dtype" ] && dtypeargs=(--policy.dtype="$dtype") || dtypeargs=()
 [ -n "$isteps" ] && stepargs=(--policy.num_inference_steps="$isteps") || stepargs=()
 [ -n "$recname" ] && recargs=(--dataset.repo_id="eval_${recname}" --dataset.single_task="$task" --dataset.num_episodes=1) || recargs=()
 
@@ -58,7 +62,7 @@ case "$mode" in
       --task="$task" \
       --duration="$duration" \
       --policy.device=cuda \
-      --policy.dtype=bfloat16 \
+      "${dtypeargs[@]}" \
       --display_data="$display" \
       "${inf[@]}" \
       "${renameargs[@]}" \
