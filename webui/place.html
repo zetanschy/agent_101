@@ -21,7 +21,7 @@
   .view img { width:100%; aspect-ratio:4/3; object-fit:contain; background:var(--tile); border:1px solid var(--line); border-radius:8px; display:block; }
   .where { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; margin-top:10px; font-size:14px; }
   .where .k { font-weight:700; }
-  .where .k.cap { color:var(--cap); } .where .k.mug { color:var(--mug); }
+  .where .k.cap { color:var(--cap); } .where .k.mug { color:var(--mug); } .where .k.organizer { color:#5ae15a; }
   .ctl { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
   button { font:inherit; cursor:pointer; border:1px solid var(--line); background:#232936; color:var(--fg); padding:8px 12px; border-radius:8px; font-weight:600; }
   button:hover:not(:disabled) { border-color:var(--acc); }
@@ -80,7 +80,8 @@ async function poll() {
     $('phase').className = 'pill' + (s.recording ? ' rec' : ph === 'correcting' ? ' drive' : '');
     const key = `${s.seed}:${F()}`;
     if (key !== stageKey) { stageKey = key; $('stageImg').src = '/api/place/stage.jpg?flip=' + F() + '&s=' + s.seed + '&t=' + Date.now(); }
-    $('where').innerHTML = `<span class="k cap">Cap</span><span>${s.where.cap}</span><span class="k mug">Mug</span><span>${s.where.mug}</span>`;
+    $('where').innerHTML = Object.entries(s.where).map(([k, v]) =>
+      `<span class="k ${k}">${k[0].toUpperCase() + k.slice(1)}</span><span>${v}</span>`).join('');
   } catch (e) {}
 }
 setInterval(poll, 1000);

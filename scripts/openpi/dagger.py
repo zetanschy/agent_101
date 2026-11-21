@@ -7,6 +7,8 @@
     ./robot dagger --dataset ... --mode sync             # no overlap, no RTC
     ./robot dagger --dataset ... --stages                # a page shows where to put the cap
                                                          # and mug for every episode
+    ./robot dagger --dataset ... --stages --stage-layout organizer   # ... the organizer and the cap
+    ./robot dagger --dataset ... --stages --no-policy    # demos only: you drive every episode
 
     space  pause / resume the policy       tab    take over / hand back
     right  task complete: save the episode  left   the attempt failed: throw it away
@@ -210,7 +212,7 @@ class Placement:
         self.note, self.homing, self._last = "", False, (0, False, "paused")
         self.COMMAND.unlink(missing_ok=True)  # a request left from an earlier session is not this one's
         env = {**os.environ, "WEBUI_PORT": "8000", "PLACE_SEED": str(args.stage_seed), "PLACE_DATASET": args.dataset,
-               "PLACE_ONLY": "1"}
+               "PLACE_ONLY": "1", "STAGE_LAYOUT": args.stage_layout}
         log = open(ROOT / "outputs" / "dagger_place.log", "ab", buffering=0)
         self.server = subprocess.Popen([sys.executable, "webui/app.py"], cwd=str(ROOT), env=env,
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
@@ -337,10 +339,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="compress images before logging: less bandwidth, more CPU on the "
                         "control thread")
     p.add_argument("--push", action="store_true", help="push the dataset to the hub at the end")
+    p.add_argument("--no-policy", action="store_true",
+                   help="teleop demos only: load no policy (no JIT warmup, no GPU), space does nothing, "
+                        "tab drives with the leader as in a correction (recorded with intervention=1)")
     p.add_argument("--stages", action="store_true",
                    help="serve the placement page (http://localhost:PORT/place): a random stage per "
                         "episode, drawn by MuJoCo and outlined on the live camera. Needs the stage "
                         "renderer `./robot dagger --stages` starts")
+    p.add_argument("--stage-layout", default="random:1",
+                   help="the live sim's layout the stages are drawn from: random:1 (a cap and the mug) or "
+                        "organizer (the compartment organizer and a cap)")
     p.add_argument("--stage-seed", type=int, default=5000,
                    help="episode k uses seed stage_seed + k. Keep it away from the eval stages "
                         "(1000-1099) so no rollout is collected on a stage you score on")
@@ -386,15 +394,17 @@ def main(argv: list[str] | None = None) -> int:
             ) from None
 
     fps = args.fps or int(ev.env("CAM_FPS", "30"))
-    config_name = args.config or ev.infer_config(args.policy)
-    print(f"loading {args.policy}  (config {config_name})", flush=True)
-    # ev.load_policy, as webui/openpi_worker.py: a checkpoint trained with --data.repo-id
-    # overridden (any DAgger, Sirius or sim round) files its norm stats under that dataset,
-    # not the config's, and create_trained_policy alone would not find them.
-    policy = ev.load_policy(pi0_config.get_config(config_name), args.policy)
-
-    chunker = None
-    if args.mode == "rtc":
+    policy = chunker = None
+    if args.no_policy:
+        print("no policy: teleop demos only (tab drives, space is off)", flush=True)
+    else:
+        config_name = args.config or ev.infer_config(args.policy)
+        print(f"loading {args.policy}  (config {config_name})", flush=True)
+        # ev.load_policy, as webui/openpi_worker.py: a checkpoint trained with --data.repo-id
+        # overridden (any DAgger, Sirius or sim round) files its norm stats under that dataset,
+        # not the config's, and create_trained_policy alone would not find them.
+        policy = ev.load_policy(pi0_config.get_config(config_name), args.policy)
+    if policy is not None and args.mode == "rtc":
         from openpi.policies.rtc import RealTimeChunker
 
         # No prefix_attention_horizon: it defaults to the whole leftover, which is PI's
@@ -434,7 +444,10 @@ def main(argv: list[str] | None = None) -> int:
     }
     features["intervention"] = dict(INTERVENTION_FEATURE)
     if args.resume:
-        dataset = LeRobotDataset.resume(args.dataset, root=args.root)
+        from lerobot.utils.constants import HF_LEROBOT_HOME
+
+        # resume() refuses root=None (lerobot 0.6.1); create() without --root wrote here.
+        dataset = LeRobotDataset.resume(args.dataset, root=args.root or HF_LEROBOT_HOME / args.dataset)
     else:
         dataset = LeRobotDataset.create(
             args.dataset, fps=fps, features=features, root=args.root,
@@ -452,14 +465,15 @@ def main(argv: list[str] | None = None) -> int:
     # Warm up BOTH traces before the arm is live: the guided sampler is a second trace,
     # and compiling it at the first replan would freeze the arm mid-motion. No action is
     # sent from here.
-    warm = ev.build_observation(robot, robot.get_observation(), args.task)
-    started = time.perf_counter()
-    policy.infer(warm)
-    if chunker is not None:
-        chunker.infer(warm, prefix_start=0, inference_delay=0)
-        chunker.infer(warm, prefix_start=1, inference_delay=1)
-        chunker.reset()
-    print(f"warmup   : {time.perf_counter() - started:.0f} s (jit compile)", flush=True)
+    if policy is not None:
+        warm = ev.build_observation(robot, robot.get_observation(), args.task)
+        started = time.perf_counter()
+        policy.infer(warm)
+        if chunker is not None:
+            chunker.infer(warm, prefix_start=0, inference_delay=0)
+            chunker.infer(warm, prefix_start=1, inference_delay=1)
+            chunker.reset()
+        print(f"warmup   : {time.perf_counter() - started:.0f} s (jit compile)", flush=True)
 
     schedule = chunk_loop.ChunkSchedule(
         args.actions, overlap=args.mode in ("async", "rtc"), rtc=chunker is not None
@@ -491,6 +505,9 @@ def main(argv: list[str] | None = None) -> int:
             return
         event = EVENTS.get(key)
         if event is None:
+            return
+        if event == "pause_resume" and policy is None:
+            print("\nno policy loaded (--no-policy): tab drives, right saves", flush=True)
             return
         phase = state["phase"]
         nxt = TRANSITIONS.get((phase, event))

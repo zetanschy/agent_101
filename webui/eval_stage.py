@@ -31,6 +31,7 @@ RUNS = ROOT / "outputs" / "real_eval"
 CAUSES = ["never picked up", "pushed the cap away", "dropped on the way", "missed the mug",
           "still holding at timeout", "mug knocked over", "cap fell off the table", "other"]
 CAP_COL, MUG_COL = (214, 120, 42), (52, 104, 235)  # BGR: blue cap, orange mug (as the reports)
+ORG_COL = (90, 225, 90)  # BGR: the organizer (layout STAGE_LAYOUT=organizer)
 
 _scene = None
 
@@ -68,7 +69,8 @@ def prepare(seed: int) -> tuple[dict, np.ndarray]:
     sock = protocol.connect(path, 60.0)
     try:
         warp = watch._warper(protocol.call(sock, "hello", warp=True))
-        layout = protocol.call(sock, "reset", layout="random:1", seed=int(seed))["layout"]
+        spec = os.environ.get("STAGE_LAYOUT", "random:1")  # dagger.py --stage-layout
+        layout = protocol.call(sock, "reset", layout=spec, seed=int(seed))["layout"]
         r = protocol.call(sock, "observe", images=["front"], pinhole=warp is not None)
         img = r["images"]["front"]
         return layout, (warp("front", img) if (r.get("pinhole") and warp) else img)
@@ -92,27 +94,56 @@ def sim_caps_in_mug() -> bool | None:
 
 # --- geometry --------------------------------------------------------------------------
 def object_points(layout: dict) -> dict:
-    """World points (base frame, m) of what the overhead camera sees of each object."""
+    """World points (base frame, m) of what the overhead camera sees of each object: the
+    cap's up-facing end, the mug's rim and handle, the organizer's rim, inner grid and lid."""
     sc = scene()
-    tz, cd, md = sc.table_z(), sc.cap_dims(), sc.mug_dims()
-    cap, mug = layout["caps"][0], layout["mug"]
+    tz, cd = sc.table_z(), sc.cap_dims()
+    cap = layout["caps"][0]
     th = np.linspace(0, 2 * np.pi, 48, endpoint=False)
     rc = (cd["diameter_open_end"] if cap["up"] == "open" else cd["diameter"]) / 2
     cz = tz + cd["height"]
-    R = md["outer_diameter"] / 2
-    mz = tz + md["height"]
-    yaw = math.radians(mug["handle_yaw_deg"])  # the handle is the mug's local +x
-    h = md["handle"]
-    hz = tz + (h["z_bottom"] + h["z_top"]) / 2
-    return {
-        "cap_ring": np.c_[cap["xy"][0] + rc * np.cos(th), cap["xy"][1] + rc * np.sin(th), np.full_like(th, cz)],
-        "cap_centre": np.array([*cap["xy"], cz]),
-        "mug_rim": np.c_[mug["xy"][0] + R * np.cos(th), mug["xy"][1] + R * np.sin(th), np.full_like(th, mz)],
-        "mug_centre": np.array([*mug["xy"], mz]),
-        "handle": np.array([[mug["xy"][0] + R * math.cos(yaw), mug["xy"][1] + R * math.sin(yaw), hz],
-                            [mug["xy"][0] + (R + h["protrusion"]) * math.cos(yaw),
-                             mug["xy"][1] + (R + h["protrusion"]) * math.sin(yaw), hz]]),
-    }
+    out = {"cap_ring": np.c_[cap["xy"][0] + rc * np.cos(th), cap["xy"][1] + rc * np.sin(th), np.full_like(th, cz)],
+           "cap_centre": np.array([*cap["xy"], cz])}
+    if "mug" in layout:
+        md, mug = sc.mug_dims(), layout["mug"]
+        R = md["outer_diameter"] / 2
+        mz = tz + md["height"]
+        yaw = math.radians(mug["handle_yaw_deg"])  # the handle is the mug's local +x
+        h = md["handle"]
+        hz = tz + (h["z_bottom"] + h["z_top"]) / 2
+        out.update({
+            "mug_rim": np.c_[mug["xy"][0] + R * np.cos(th), mug["xy"][1] + R * np.sin(th), np.full_like(th, mz)],
+            "mug_centre": np.array([*mug["xy"], mz]),
+            "handle": np.array([[mug["xy"][0] + R * math.cos(yaw), mug["xy"][1] + R * math.sin(yaw), hz],
+                                [mug["xy"][0] + (R + h["protrusion"]) * math.cos(yaw),
+                                 mug["xy"][1] + (R + h["protrusion"]) * math.sin(yaw), hz]])})
+    if "organizer" in layout:
+        from real2sim.mujoco.model import ORGANIZER as O
+
+        o = layout["organizer"]
+        a = math.radians(o["yaw_deg"])
+        L, D, H, w = O["length"], O["depth"], O["height"], O["wall"]
+        rz = tz + H
+
+        def at(lx, ly, z):  # organizer frame (x along it, +y its front) -> base frame
+            return [o["xy"][0] + lx * math.cos(a) - ly * math.sin(a), o["xy"][1] + lx * math.sin(a) + ly * math.cos(a), z]
+
+        back = D / 2 + math.sqrt(max(O["lid_depth"] ** 2 - H ** 2, 0.0))  # the open lid's far edge, on the table
+        li, di = L - 2 * w, D - 2 * w
+        grid = [[at(li / 2 - k * li / O["cols"], -di / 2, rz), at(li / 2 - k * li / O["cols"], di / 2, rz)]
+                for k in range(1, O["cols"])]
+        grid += [[at(-li / 2, di / 2 - k * di / O["rows"], rz), at(li / 2, di / 2 - k * di / O["rows"], rz)]
+                 for k in range(1, O["rows"])]
+        out.update({
+            "organizer_rim": np.array([at(-L / 2, -D / 2, rz), at(L / 2, -D / 2, rz), at(L / 2, D / 2, rz),
+                                       at(-L / 2, D / 2, rz)]),
+            "organizer_lid": np.array([at(-L / 2, -D / 2, rz), at(L / 2, -D / 2, rz), at(L / 2, -back, tz),
+                                       at(-L / 2, -back, tz)]),
+            "organizer_grid": np.array(grid),
+            "organizer_centre": np.array(at(0.0, 0.0, rz)),
+            "organizer_axis": np.array([at(L / 2, 0.0, rz), at(-L / 2, 0.0, rz)]),  # its +x end -> -x end
+        })
+    return out
 
 
 def draw_targets(img_bgr: np.ndarray, layout: dict, label: bool = True, flip: bool = False) -> np.ndarray:
@@ -122,25 +153,39 @@ def draw_targets(img_bgr: np.ndarray, layout: dict, label: bool = True, flip: bo
     import cv2
 
     cam = camera()
-    P = {k: cam.project(v) for k, v in object_points(layout).items()}
+    pts3 = object_points(layout)
+    P = {k: (np.stack([cam.project(seg) for seg in v]) if k == "organizer_grid" else cam.project(v))
+         for k, v in pts3.items()}
     sx, sy = img_bgr.shape[1] / cam.width, img_bgr.shape[0] / cam.height
     px = lambda a: np.round(np.asarray(a) * [sx, sy]).astype(np.int32)  # noqa: E731
+
+    def poly(pts, col, closed=True, width=2):
+        cv2.polylines(img_bgr, [pts], closed, (16, 16, 16), width + 2, cv2.LINE_AA)  # dark halo: readable on any mat
+        cv2.polylines(img_bgr, [pts], closed, col, width, cv2.LINE_AA)
+
+    if "organizer_rim" in P:
+        poly(px(P["organizer_lid"]), ORG_COL, width=1)
+        for seg in P["organizer_grid"]:
+            poly(px(seg), ORG_COL, closed=False, width=1)
+        poly(px(P["organizer_rim"]), ORG_COL)
     for ring, col in (("mug_rim", MUG_COL), ("cap_ring", CAP_COL)):
-        pts = px(P[ring])
-        cv2.polylines(img_bgr, [pts], True, (16, 16, 16), 4, cv2.LINE_AA)  # dark halo: readable on any mat
-        cv2.polylines(img_bgr, [pts], True, col, 2, cv2.LINE_AA)
-    a, b = px(P["handle"])
-    cv2.line(img_bgr, tuple(a), tuple(b), (16, 16, 16), 6, cv2.LINE_AA)
-    cv2.line(img_bgr, tuple(a), tuple(b), MUG_COL, 3, cv2.LINE_AA)
+        if ring in P:
+            poly(px(P[ring]), col)
+    if "handle" in P:
+        a, b = px(P["handle"])
+        cv2.line(img_bgr, tuple(a), tuple(b), (16, 16, 16), 6, cv2.LINE_AA)
+        cv2.line(img_bgr, tuple(a), tuple(b), MUG_COL, 3, cv2.LINE_AA)
     H, W = img_bgr.shape[:2]
     if flip:
         img_bgr = np.ascontiguousarray(img_bgr[::-1, ::-1])
     if label:
-        for k, txt, col in (("cap_centre", "cap", CAP_COL), ("mug_centre", "mug", MUG_COL)):
+        for k, txt, col, r in (("cap_centre", "cap", CAP_COL, 22), ("mug_centre", "mug", MUG_COL, 48),
+                               ("organizer_centre", "organizer", ORG_COL, 0)):
+            if k not in P:
+                continue
             u, v = px(P[k])
             if flip:
                 u, v = W - 1 - u, H - 1 - v
-            r = 22 if k == "cap_centre" else 48
             cv2.putText(img_bgr, txt, (u + r, v + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (16, 16, 16), 4, cv2.LINE_AA)
             cv2.putText(img_bgr, txt, (u + r, v + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 1, cv2.LINE_AA)
     return img_bgr
@@ -163,7 +208,8 @@ def describe(layout: dict, flip: bool = False) -> dict:
     turn = (lambda d: _FLIPPED[d]) if flip else (lambda d: d)  # noqa: E731
     cam, tz = camera(), scene().table_z()
     out = {}
-    for key, xy in (("cap", layout["caps"][0]["xy"]), ("mug", layout["mug"]["xy"])):
+    objs = [("cap", layout["caps"][0]["xy"])] + [(k, layout[k]["xy"]) for k in ("mug", "organizer") if k in layout]
+    for key, xy in objs:
         x, y = xy
         r, az = math.hypot(x, y), math.degrees(math.atan2(x, -y))
         # which side of straight ahead it lands on in the overhead image
@@ -172,8 +218,16 @@ def describe(layout: dict, flip: bool = False) -> dict:
                     f"{abs(az):.0f}° off straight ahead, to the image {turn(side)}"))
     out["cap"] += ", " + ("OPEN side up (cavity facing up)" if layout["caps"][0]["up"] == "open"
                           else "closed side up (rim on the mat)")
-    pts = object_points(layout)["handle"]
-    out["mug"] += f", handle toward image {turn(_image_direction(cam, pts[0], pts[1]))}"
+    pts = object_points(layout)
+    if "mug" in layout:
+        out["mug"] += f", handle toward image {turn(_image_direction(cam, pts['handle'][0], pts['handle'][1]))}"
+    if "organizer" in layout:  # the tilt of its long side in the image: a turn is the same either way up
+        (u0, v0), (u1, v1) = cam.project(pts["organizer_axis"][0]), cam.project(pts["organizer_axis"][1])
+        tilt = math.degrees(math.atan2(-(v1 - v0), u1 - u0))
+        tilt = (tilt + 90) % 180 - 90  # long side vs image horizontal, -90..90
+        out["organizer"] += (", long side level in the image" if abs(tilt) < 2 else
+                             f", long side turned {abs(tilt):.0f}° {'counter-clockwise' if tilt > 0 else 'clockwise'}"
+                             " in the image") + "; latches toward the robot, lid open behind"
     return out
 
 
