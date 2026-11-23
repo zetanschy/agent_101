@@ -230,6 +230,30 @@ cd ../.. && ./robot sim-eval --policy /workspace/sim/outputs/mjlab/students/bc_d
   textured material its texture's mean colour; `flat=False` keeps the textures for
   MuJoCo's own renderer.
 
+### Cap-to-organizer teacher
+
+`Mjlab-CapToOrganizer-So101-Twin` (`cap_to_organizer_{mdp,cfgs}.py`) is the organizer
+task's state teacher:
+- **Task:** put the cap into one of the 12 compartments of the twin's clear organizer.
+  The cap is always closed side up, the organizer is drawn as `layouts.organizer` draws
+  it, and the target compartment is drawn per episode.
+- **What it keeps from cap-to-mug:** the physics, the action (dead time, slew, wrist
+  roll), the finger sensors, the reach/grasp/lift/home stages and the PPO.
+- **What changes:** the mug's terms become the target compartment's. The observation
+  keeps the same 35 values in the same order (rim → target centre at rim height,
+  handle → organizer yaw).
+- **Success:** `model.organizer_cell` == target, as sim-eval grades it
+  (`tests/test_so101_cap_to_organizer.py` checks that the two agree).
+- **W&B metrics:** `Episode_Metrics/cap_in_target`, `cap_in_target_and_home` and
+  `cap_in_wrong_cell`.
+- **Speed:** it steps ~1.75x slower than cap-to-mug (3.9k vs 6.9k env-steps/s at
+  4096 envs on the 3060; the organizer's walls rest on the table), so ~5-7 h for 3000
+  iterations on the 5090.
+- **Not yet adapted:** `eval_teacher.py` and `collect.py` still build cap-to-mug only.
+
+Train it as the cap-to-mug teacher, from `thirdparty/mjlab`:
+`env -u PYTHONPATH MUJOCO_GL=egl uv run --frozen --no-sync train Mjlab-CapToOrganizer-So101-Twin --env.scene.num-envs 4096`.
+
 ## Common commands
 
 ```bash
